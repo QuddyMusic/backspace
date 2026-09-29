@@ -26,6 +26,7 @@ import { friendRequestTarget } from '../../utils/friendRequestTarget';
 import { replaceEmojiShortcodes } from '../../utils/emojiShortcodes';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { presenceLabel } from '../../i18n/presence';
+import { BotBadge } from '../ui/BotBadge';
 
 type SocialT = TFunction<['social', 'common']>;
 
@@ -820,7 +821,10 @@ function UserDiscoverCard({
       {/* Content */}
       <div className="px-4 pt-1.5 pb-3.5 flex flex-col flex-1">
         <button onClick={handleOpenProfile} className="text-left group">
-          <h3 className="text-[14px] font-bold text-txt-primary truncate group-hover:underline">{displayName}</h3>
+	  <div className="flex items-center gap-1.5">
+	    <h3 className="text-[14px] font-bold text-txt-primary truncate group-hover:underline">{displayName}</h3>
+	    {user.isBot && <BotBadge />}
+	  </div>
           <p className="text-[12px] text-txt-tertiary truncate">@{user.username}</p>
         </button>
 
@@ -851,15 +855,15 @@ function UserDiscoverCard({
         )}
 
         {/* Action button */}
-        {user.relationship === 'none' && (
-          <button
-            onClick={handleSendRequest}
-            disabled={actionLoading}
-            className="w-full py-1.5 bg-accent-primary hover:bg-accent-primary-hover text-white text-[13px] font-medium rounded transition-colors disabled:opacity-50"
-          >
-            {actionLoading ? t('social:request.sending') : t('social:request.send')}
-          </button>
-        )}
+	{user.relationship === 'none' && !user.isBot && (
+	  <button
+	    onClick={handleSendRequest}
+	    disabled={actionLoading}
+	    className="w-full py-1.5 bg-accent-primary hover:bg-accent-primary-hover text-white text-[13px] font-medium rounded transition-colors disabled:opacity-50"
+	  >
+	    {actionLoading ? t('social:request.sending') : t('social:request.send')}
+	  </button>
+	)}
         {user.relationship === 'outbound_pending' && (
           <button
             onClick={handleCancelRequest}
@@ -926,9 +930,10 @@ function FriendItem({ friend, onRemove, onDm }: { friend: TaggedFriend, onRemove
         <Avatar src={canonical.avatar} name={friendDisplayName} size={32} status={canonical.status} userId={canonical.homeUserId ?? canonical.id} avatarColor={canonical.avatarColor} />
         <div className="flex flex-col leading-tight">
           <div className="flex items-center gap-1.5">
-            <span className="text-txt-primary font-semibold text-[15px]">{friendDisplayName}</span>
-            <span className="text-txt-tertiary text-[13px] opacity-60 group-hover:opacity-100 transition-opacity font-medium">@{friend.username}</span>
-          </div>
+	    <span className="text-txt-primary font-semibold text-[15px]">{friendDisplayName}</span>
+	    {friend.isBot && <BotBadge />}
+	    <span className="text-txt-tertiary text-[13px] opacity-60 group-hover:opacity-100 transition-opacity font-medium">@{friend.username}</span>
+	  </div>
           <div className="flex items-center gap-1.5">
             <span className="text-[12px] text-txt-tertiary font-medium">{presenceLabel(t, friend.status)}</span>
             {instanceLabel && (

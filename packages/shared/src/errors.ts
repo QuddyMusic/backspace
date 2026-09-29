@@ -29,6 +29,7 @@ export const ERROR_CODES = [
   'bot_limit_reached',
   'bot_not_found',
   'bots_native_only',
+  'bots_no_friends',
 
   // Auth and accounts
   'username_required',

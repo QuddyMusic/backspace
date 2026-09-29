@@ -212,5 +212,6 @@
   "bot_name_invalid": "Bot-Namen müssen {{min}} bis {{max}} Zeichen lang sein: Kleinbuchstaben, Zahlen und Unterstriche.",
   "bot_limit_reached": "Du kannst höchstens {{max}} Bots haben.",
   "bot_not_found": "Dieser Bot wurde nicht gefunden.",
-  "bots_native_only": "Bots können nur mit einem Konto verwaltet werden, das auf dieser Instanz erstellt wurde."
+  "bots_native_only": "Bots können nur mit einem Konto verwaltet werden, das auf dieser Instanz erstellt wurde.",
+  "bots_no_friends": "Freundschaftsanfragen an Bots sind nicht möglich"
 }

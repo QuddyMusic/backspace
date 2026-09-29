@@ -237,6 +237,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   bot_limit_reached: 'You can have at most {{max}} bots',
   bot_not_found: 'Bot not found',
   bots_native_only: 'Bots can only be managed from an account native to this instance',
+  bots_no_friends: 'Cannot send friend requests to bots',
 };
 
 function fillPlaceholders(text: string, details: ErrorDetails | undefined): string {

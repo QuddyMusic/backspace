@@ -417,6 +417,7 @@ export const useSocialStore = create<SocialState>((set, get) => ({
   },
 
   // Called from WS handler on user_updated to keep friend profile data live
+    // Called from WS handler on user_updated to keep friend profile data live
   updateFriendProfile: (user: User) => {
     set((state) => ({
       friends: state.friends.map(f =>
@@ -424,7 +425,8 @@ export const useSocialStore = create<SocialState>((set, get) => ({
           ? { ...f, displayName: user.displayName, avatar: user.avatar,
               banner: user.banner, accentColor: user.accentColor,
               avatarColor: user.avatarColor, bio: user.bio,
-              customStatus: user.customStatus, status: user.status }
+              customStatus: user.customStatus, status: user.status,
+              isBot: user.isBot }
           : f
       ),
     }));

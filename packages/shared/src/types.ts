@@ -805,6 +805,7 @@ export interface Friend {
   addedAt: number;
   homeUserId: string | null;
   homeInstance: string | null;
+  isBot?: boolean;
 }
 
 export interface DiscoverUser {
@@ -823,6 +824,7 @@ export interface DiscoverUser {
   mutualFriendCount: number;
   mutualSpaceCount: number;
   relationship: 'none' | 'friends' | 'outbound_pending' | 'inbound_pending';
+  isBot?: boolean;
   requestId?: string;
 }
 
