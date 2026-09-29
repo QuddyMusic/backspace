@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import type { User } from '@backspace/shared';
 import { Avatar } from '../ui/Avatar';
 import { Username } from '../ui/Username';
+import { BotBadge } from './BotBadge';
 import { ProfileBio } from './ProfileBio';
 import { useSpaceStore, getApiForOrigin, resolveUserOrigin } from '../../stores/spaceStore';
 import { api } from '../../api/client';
@@ -20,6 +21,7 @@ import { useProfileMemberRoles } from '../../hooks/useProfileMember';
 import { useShownStatus } from '../../hooks/useShownStatus';
 import { viewerCanEditMemberRoles } from '../../utils/roleHierarchy';
 import { ProfileRoles } from './ProfileRoles';
+
 
 /** Gap between the card and the element it was opened from. */
 const ANCHOR_OFFSET = 8;
@@ -200,7 +202,10 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
 
         {/* Name & info */}
         <div>
-          <span className="text-[16px] font-semibold leading-tight">{displayName}</span>
+	  <div className="flex items-center gap-2">
+	    <span className="text-[16px] font-semibold leading-tight">{displayName}</span>
+            {user.isBot && <BotBadge />}
+          </div>
           <div className="text-[13px] text-txt-tertiary">
             <Username username={user.username} showAt className="text-[13px] text-txt-tertiary" />
           </div>
@@ -259,12 +264,14 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
         </div>
 
         {/* Actions */}
-        <button
-          onClick={handleSendMessage}
-          className="w-full mt-3 py-2 rounded-lg text-[13px] font-medium text-txt-primary bg-white/[0.06] hover:bg-white/[0.10] border border-white/[0.08] transition-colors"
-        >
-          {t('social:profile.sendMessage')}
-        </button>
+        {!user.isBot && (
+          <button
+            onClick={handleSendMessage}
+            className="w-full mt-3 py-2 rounded-lg text-[13px] font-medium text-txt-primary bg-white/[0.06] hover:bg-white/[0.10] border border-white/[0.08] transition-colors"
+          >
+            {t('social:profile.sendMessage')}
+          </button>
+        )}
         {canEditRoles && (
           <button
             onClick={handleEditRoles}

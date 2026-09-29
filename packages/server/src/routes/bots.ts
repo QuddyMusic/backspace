@@ -85,14 +85,15 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     const id = generateSnowflake();
     try {
       db.insert(schema.users).values({
-        id,
-        username,
-        displayName: raw,
-        passwordHash: BOT_PASSWORD_MARKER,
-        avatarColor: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
-        isBot: 1,
-        botOwnerId: request.userId,
-        createdAt: Date.now(),
+	id,
+	username,
+	displayName: raw,
+	passwordHash: BOT_PASSWORD_MARKER,
+	avatarColor: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
+	isBot: 1,
+	botOwnerId: request.userId,
+	discoverable: 1,
+	createdAt: Date.now(),
       }).run();
     } catch (err) {
       if (err instanceof Error && err.message.includes('UNIQUE')) {
