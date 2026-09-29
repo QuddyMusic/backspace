@@ -232,6 +232,11 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   directory_unreachable: 'The directory could not be reached',
   directory_private_space: 'A private space cannot be listed in the directory',
   directory_requires_discovery: 'Turn on space discovery before enabling the directory',
+  // bots
+  bot_name_invalid: 'Bot name must be {{min}}-{{max}} characters: lowercase letters, numbers and underscores',
+  bot_limit_reached: 'You can have at most {{max}} bots',
+  bot_not_found: 'Bot not found',
+  bots_native_only: 'Bots can only be managed from an account native to this instance',
 };
 
 function fillPlaceholders(text: string, details: ErrorDetails | undefined): string {

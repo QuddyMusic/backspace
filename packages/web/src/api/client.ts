@@ -80,6 +80,10 @@ import type {
   ReattachResponse,
   TelemetryPayload,
   TelemetryStatus,
+  BotSummary,
+  CreateBotRequest,
+  CreateBotResponse,
+  RegenerateBotTokenResponse,
 } from '@backspace/shared';
 import { getApiForOrigin, getOwnerInstanceForDm } from '../utils/crossStoreResolvers';
 
@@ -368,6 +372,13 @@ export class BackspaceApiClient {
     peeringNotifications: (unreadOnly?: boolean) => Promise<{ notifications: PeeringNotification[] }>;
     markPeeringNotificationRead: (id: string) => Promise<{ success: boolean }>;
     markAllPeeringNotificationsRead: () => Promise<{ success: boolean; count: number }>;
+  };
+
+  readonly bots: {
+    list: () => Promise<{ bots: BotSummary[] }>;
+    create: (data: CreateBotRequest) => Promise<CreateBotResponse>;
+    regenerateToken: (id: string) => Promise<RegenerateBotTokenResponse>;
+    delete: (id: string) => Promise<{ success: boolean }>;
   };
 
   readonly invites: {
@@ -853,6 +864,13 @@ export class BackspaceApiClient {
         request<{ success: boolean; count: number }>(
           'POST', '/federation/peering-notifications/read-all'
         ),
+    };
+
+    this.bots = {
+      list: () => request<{ bots: BotSummary[] }>('GET', '/bots'),
+      create: (data: CreateBotRequest) => request<CreateBotResponse>('POST', '/bots', data),
+      regenerateToken: (id: string) => request<RegenerateBotTokenResponse>('POST', `/bots/${id}/token`),
+      delete: (id: string) => request<{ success: boolean }>('DELETE', `/bots/${id}`),
     };
 
     this.invites = {

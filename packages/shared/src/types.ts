@@ -10,6 +10,8 @@ export const AVATAR_COLORS = ['mint', 'sky', 'lavender', 'coral', 'rose', 'teal'
 export type AvatarColor = (typeof AVATAR_COLORS)[number];
 
 export interface User {
+  /** Bot account (no password login). Optional: older servers and relay stubs omit it. */
+  isBot?: boolean;
   id: string;
   username: string;
   displayName: string | null;
@@ -1775,4 +1777,26 @@ export interface TelemetryStatus {
    * after a yes, and after a no again from the next minor release on.
    */
   askDue: boolean;
+}
+
+export interface BotSummary {
+  id: string;
+  username: string;
+  displayName: string | null;
+  avatarColor: string | null;
+  createdAt: number;
+}
+
+export interface CreateBotRequest {
+  name: string;
+}
+
+export interface CreateBotResponse {
+  bot: BotSummary;
+  /** Shown once; never stored in readable form. */
+  token: string;
+}
+
+export interface RegenerateBotTokenResponse {
+  token: string;
 }

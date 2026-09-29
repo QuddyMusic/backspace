@@ -34,6 +34,10 @@ export const users = sqliteTable('users', {
   federationRegistryUpdatedAt: integer('federation_registry_updated_at').default(0),
   federationHealPending: integer('federation_heal_pending').default(0),
   federationHomeOrphaned: integer('federation_home_orphaned').default(0),
+  /** 1 = bot account: no password login, authenticates with an owner-issued token. */
+  isBot: integer('is_bot').notNull().default(0),
+  /** users.id of the human who created the bot. No FK: tombstoneUser keeps the row. */
+  botOwnerId: text('bot_owner_id'),
   /** UTC day (YYYY-MM-DD) of the last authenticated WebSocket activity; written at most once per day. */
   lastActiveDay: text('last_active_day'),
   /** 'web' | 'desktop' | 'mobile', from the client's auth message. */
@@ -48,6 +52,7 @@ export const users = sqliteTable('users', {
    * composite's second column cannot be used.
    */
   homeUserIdx: index('idx_users_home_user_id').on(table.homeUserId),
+  botOwnerIdx: index('idx_users_bot_owner_id').on(table.botOwnerId),
 }));
 
 export const spaces = sqliteTable('spaces', {

@@ -130,7 +130,8 @@
       "connections": "Connections",
       "keybinds": "Keybinds",
       "desktop": "Desktop",
-      "instance": "Instance"
+      "instance": "Instance",
+      "bots": "Bots"
     },
     "logOut": "Log Out",
     "backToMenu": "Back to settings menu"
@@ -429,5 +430,33 @@
     },
     "version": "Version {{version}}",
     "allReleases": "All releases on GitHub"
+  },
+  "bots": {
+    "title": "Bots",
+    "description": "A bot is an account that a program controls with a token. Create one, copy its token and connect your program. Bots answer in direct messages.",
+    "create": {
+      "sectionTitle": "Create a bot",
+      "nameLabel": "Bot username",
+      "submit": "Create bot",
+      "hint": "{{min}} to {{max}} characters: lowercase letters, numbers and underscores. You can create up to {{limit}} bots."
+    },
+    "list": {
+      "sectionTitle": "Your bots",
+      "empty": "You have no bots yet.",
+      "createdOn": "Created {{date}}"
+    },
+    "token": {
+      "title": "Token for {{name}}",
+      "warning": "Copy the token now. It is shown only once, and anyone who has it controls the bot.",
+      "copy": "Copy token",
+      "copied": "Copied",
+      "dismiss": "I have saved it"
+    },
+    "actions": {
+      "regenerate": "New token",
+      "delete": "Delete",
+      "confirmDelete": "Confirm delete",
+      "cancel": "Cancel"
+    }
   }
 }

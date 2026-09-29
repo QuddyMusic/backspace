@@ -20,9 +20,9 @@ export interface JwtPayload {
   iat?: number;
 }
 
-export function signJwt(payload: JwtPayload): string {
+export function signJwt(payload: JwtPayload, opts?: { expiresIn?: string }): string {
   const options: jwt.SignOptions = {
-    expiresIn: config.jwtExpiresIn as unknown as jwt.SignOptions['expiresIn'],
+    expiresIn: (opts?.expiresIn ?? config.jwtExpiresIn) as unknown as jwt.SignOptions['expiresIn'],
   };
   return jwt.sign(payload, config.jwtSecret, options);
 }

@@ -208,5 +208,9 @@
   "directory_disabled": "This instance is not connected to a directory.",
   "directory_unreachable": "Outer Space is not reachable right now. Inner Space still works.",
   "directory_private_space": "Set the space to public or request to join before listing it.",
-  "directory_requires_discovery": "Turn on space discovery first."
+  "directory_requires_discovery": "Turn on space discovery first.",
+  "bot_name_invalid": "Bot names must be {{min}} to {{max}} characters: lowercase letters, numbers and underscores.",
+  "bot_limit_reached": "You can have at most {{max}} bots.",
+  "bot_not_found": "That bot could not be found.",
+  "bots_native_only": "Bots can only be managed from an account created on this instance."
 }
