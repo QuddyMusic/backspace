@@ -369,6 +369,17 @@ describe('a bot in direct and group conversations on its home', () => {
   });
 });
 
+describe('the Bot authorization scheme', () => {
+  it('accepts a bot token as `Authorization: Bot <token>` and rejects other schemes', async () => {
+    const ok = await fetch(`${A.origin}/api/spaces`, { headers: { Authorization: `Bot ${bot.token}` } });
+    expect(ok.status).toBe(200);
+    const bearer = await fetch(`${A.origin}/api/spaces`, { headers: { Authorization: `Bearer ${bot.token}` } });
+    expect(bearer.status).toBe(200);
+    const other = await fetch(`${A.origin}/api/spaces`, { headers: { Authorization: `Basic ${bot.token}` } });
+    expect(other.status).toBe(401);
+  });
+});
+
 describe('cutting a bot off from the host', () => {
   it('a token regeneration on the home tombstones the host account and kills its JWT', async () => {
     const oldHomeToken = bot.token;

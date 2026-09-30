@@ -101,12 +101,14 @@ export async function authenticate(
   reply: FastifyReply,
 ): Promise<void> {
   const authHeader = request.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  // `Bot` is the scheme documented for bot tokens; it is an alias of `Bearer`.
+  const scheme = authHeader?.startsWith('Bearer ') ? 'Bearer ' : authHeader?.startsWith('Bot ') ? 'Bot ' : null;
+  if (!authHeader || scheme === null) {
     reply.code(401).send({ error: 'Missing or invalid authorization header', code: 'unauthorized', statusCode: 401 });
     return;
   }
 
-  const token = authHeader.slice(7);
+  const token = authHeader.slice(scheme.length);
   try {
     const identity = await verifyJwtAndUser(token);
     (request as FastifyRequest & { userId: string; username: string }).userId = identity.userId;
