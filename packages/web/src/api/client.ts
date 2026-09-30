@@ -82,6 +82,8 @@ import type {
   TelemetryStatus,
   BotSummary,
   CreateBotRequest,
+  UpdateBotRequest,
+  UpdateBotResponse,
   CreateBotResponse,
   RegenerateBotTokenResponse,
 } from '@backspace/shared';
@@ -378,6 +380,7 @@ export class BackspaceApiClient {
     list: () => Promise<{ bots: BotSummary[] }>;
     create: (data: CreateBotRequest) => Promise<CreateBotResponse>;
     regenerateToken: (id: string) => Promise<RegenerateBotTokenResponse>;
+    update: (id: string, data: UpdateBotRequest) => Promise<UpdateBotResponse>;
     delete: (id: string) => Promise<{ success: boolean }>;
   };
 
@@ -870,6 +873,7 @@ export class BackspaceApiClient {
       list: () => request<{ bots: BotSummary[] }>('GET', '/bots'),
       create: (data: CreateBotRequest) => request<CreateBotResponse>('POST', '/bots', data),
       regenerateToken: (id: string) => request<RegenerateBotTokenResponse>('POST', `/bots/${id}/token`),
+      update: (id: string, data: UpdateBotRequest) => request<UpdateBotResponse>('PATCH', `/bots/${id}`, data),
       delete: (id: string) => request<{ success: boolean }>('DELETE', `/bots/${id}`),
     };
 

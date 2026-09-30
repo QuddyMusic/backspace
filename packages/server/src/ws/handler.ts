@@ -29,6 +29,7 @@ import { statusOnConnect } from '../utils/presenceStatus.js';
 import { presenceIdentityOf, presenceUpdateFor, snapshotActivities } from './presenceEvent.js';
 import { touchUserActivity, parseClientKind } from '../telemetry/activity.js';
 import { utcDay } from '../telemetry/day.js';
+import { mentionTokenIds } from '../utils/mentionScan.js';
 
 // ─── Heartbeat State ──────────────────────────────────────────────────────────
 const wsIsAlive: WeakMap<WebSocket, boolean> = new WeakMap();
@@ -91,6 +92,8 @@ class ConnectionManager {
   // userId → Set of space IDs the user belongs to
   private userSpaces: Map<string, Set<string>> = new Map();
   // ws → userId (reverse lookup)
+  /** userId → is_bot, filled lazily; `is_bot` never changes, dropped on forceDisconnectUser. */
+  private botFlagCache: Map<string, boolean> = new Map();
   private wsToUser: Map<WebSocket, string> = new Map();
   // Unified voice room tracking (replaces voiceStates + activeCalls)
   private voiceRooms: Map<string, VoiceRoom> = new Map();
@@ -866,12 +869,34 @@ class ConnectionManager {
       }
     }
   }
+  
+    private isBotUser(userId: string): boolean {
+    const cached = this.botFlagCache.get(userId);
+    if (cached !== undefined) return cached;
+    const row = getDb().select({ isBot: schema.users.isBot })
+      .from(schema.users).where(eq(schema.users.id, userId)).get();
+    if (!row) return false;
+    const isBot = row.isBot === 1;
+    this.botFlagCache.set(userId, isBot);
+    return isBot;
+  }
+
+  /**
+   * Space-scoped delivery to a bot: only message create/edit that mentions it.
+   * Everything else (other messages, typing, voice, presence) is withheld, so
+   * a bot cannot observe a space it was not addressed in. Humans are unaffected.
+   */
+  private botMayReceive(userId: string, event: ServerEvent): boolean {
+    if (!this.isBotUser(userId)) return true;
+    if (event.type !== 'message_created' && event.type !== 'message_updated') return false;
+    return mentionTokenIds(event.message.content ?? '').includes(userId);
+  }
 
   /** Send to all members of a space. */
   sendToSpace(spaceId: string, event: ServerEvent, excludeUserId?: string): void {
     const message = JSON.stringify(event);
     for (const [userId, spaceIds] of this.userSpaces) {
-      if (spaceIds.has(spaceId) && userId !== excludeUserId) {
+      if (spaceIds.has(spaceId) && userId !== excludeUserId && this.botMayReceive(userId, event)) {
         const connections = this.getUserConnections(userId);
         for (const ws of connections) {
           if (ws.readyState === 1) {
@@ -886,7 +911,7 @@ class ConnectionManager {
   sendToChannel(spaceId: string, channelId: string, event: ServerEvent, excludeUserId?: string): void {
     const message = JSON.stringify(event);
     for (const [userId, spaceIds] of this.userSpaces) {
-      if (spaceIds.has(spaceId) && userId !== excludeUserId) {
+      if (spaceIds.has(spaceId) && userId !== excludeUserId && this.botMayReceive(userId, event)) {
         const perms = computePermissions(userId, spaceId, channelId);
         if ((perms & PermissionBits.VIEW_CHANNEL) !== 0n) {
           const connections = this.getUserConnections(userId);
@@ -1031,6 +1056,7 @@ class ConnectionManager {
     }
 
     // Clean up user spaces
+    this.botFlagCache.delete(userId);
     this.userSpaces.delete(userId);
   }
 

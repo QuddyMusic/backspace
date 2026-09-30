@@ -234,10 +234,15 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   directory_requires_discovery: 'Turn on space discovery before enabling the directory',
   // bots
   bot_name_invalid: 'Bot name must be {{min}}-{{max}} characters: lowercase letters, numbers and underscores',
+  bot_name_suffix_required: 'Bot name must end with "_bot"',
+  bot_forbidden: 'Bots cannot read message history',
   bot_limit_reached: 'You can have at most {{max}} bots',
   bot_not_found: 'Bot not found',
   bots_native_only: 'Bots can only be managed from an account native to this instance',
   bots_no_friends: 'Cannot send friend requests to bots',
+  bot_home_not_peered: 'The bot\'s home instance is not peered with this instance',
+  bot_proof_invalid: 'Bot identity proof is invalid or expired',
+  bot_profile_owner_only: 'A bot\'s profile can only be changed by its owner'
 };
 
 function fillPlaceholders(text: string, details: ErrorDetails | undefined): string {

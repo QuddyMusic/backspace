@@ -456,7 +456,20 @@
       "regenerate": "Neues Token",
       "delete": "Löschen",
       "confirmDelete": "Löschen bestätigen",
-      "cancel": "Abbrechen"
+      "cancel": "Abbrechen",
+      "edit": "Bearbeiten",
+      "save": "Speichern"
+    },
+    "edit": {
+      "nameLabel": "Anzeigename",
+      "hint": "Der Benutzername @{{username}} kann nicht geändert werden. Bis zu {{max}} Zeichen."
+    },
+    "avatar": {
+      "change": "Avatar ändern",
+      "remove": "Avatar entfernen",
+      "cropTitle": "Bot-Avatar zuschneiden",
+      "uploadFailed": "Avatar konnte nicht hochgeladen werden",
+      "notImage": "Wähle eine Bilddatei"
     }
   }
 }

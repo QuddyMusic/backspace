@@ -104,6 +104,14 @@ export function tombstoneUser(uid: string, options?: TombstoneOptions): string[]
   const user = db.select().from(schema.users).where(eq(schema.users.id, uid)).get();
   if (!user) return [];
 
+  // Боты умирают вместе с владельцем: иначе остаются живые токены и открытые WS.
+  const ownedBots = db.select({ id: schema.users.id }).from(schema.users)
+    .where(and(
+      eq(schema.users.botOwnerId, uid),
+      eq(schema.users.isBot, 1),
+      eq(schema.users.isDeleted, 0),
+    )).all();
+
   const filesToDelete: string[] = [];
   if (user.avatar) filesToDelete.push(user.avatar);
   if (user.banner) filesToDelete.push(user.banner);
@@ -279,6 +287,28 @@ export function tombstoneUser(uid: string, options?: TombstoneOptions): string[]
       federationHomeOrphaned: 0,
     }).where(eq(schema.users.id, uid)).run();
   });
+
+  // После коммита (tombstoneUser открывает свою транзакцию, вложенный BEGIN нельзя).
+  for (const bot of ownedBots) {
+    // Origins first: the bot's tombstone deletes its federation credentials.
+    const botOrigins = db.select({ origin: schema.userFederationCredentials.origin })
+      .from(schema.userFederationCredentials)
+      .where(eq(schema.userFederationCredentials.userId, bot.id))
+      .all()
+      .map(r => r.origin);
+    filesToDelete.push(...tombstoneUser(bot.id, options));
+    if (botOrigins.length > 0) {
+      // Dynamic import: the federation utils import this module (cycle).
+      const mode = options?.purgeContent === false ? 'soft' : 'full';
+      void import('./botFederation.js')
+        .then(({ revokeBotOnPeers }) => revokeBotOnPeers(bot.id, botOrigins, mode))
+        .catch(() => { /* best effort: owner is gone, nobody to report to */ });
+    }
+    // Ленивый импорт: ws/handler импортирует БД-слой, статический даст цикл.
+    void import('../ws/handler.js').then(({ connectionManager }) => {
+      connectionManager.forceDisconnectUser(bot.id);
+    });
+  }
 
   return filesToDelete;
 }

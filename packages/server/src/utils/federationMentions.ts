@@ -2,6 +2,9 @@ import { eq } from 'drizzle-orm';
 import type { FederationMentionRef } from '@backspace/shared';
 import { getDb, schema } from '../db/index.js';
 import { relayActorOfUser, resolveRelayActor } from '../routes/federation/identity.js';
+import { mentionScanner, mentionTokenIds } from './mentionScan.js';
+
+export { mentionTokenIds };
 
 /**
  * Mentions in relayed DM content (#347).
@@ -20,28 +23,6 @@ export const MAX_RELAYED_MENTIONS = 100;
 const MAX_FIELD_LENGTH = 255;
 
 const MENTION_ID = /^[a-zA-Z0-9_-]+$/;
-
-/**
- * Code spans (fenced, then inline) or a mention token. Code spans are matched
- * so they can be skipped: the client renders a token as a mention only outside
- * code, the same scan as `MarkdownRenderer`'s mention pass in the web package.
- */
-function mentionScanner(): RegExp {
-  return /(```[\s\S]*?```|`[^`]+`)|<@([a-zA-Z0-9_-]+)>/g;
-}
-
-/** The ids of the mention tokens in `content` outside code, once each, in order. */
-export function mentionTokenIds(content: string): string[] {
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  for (const match of content.matchAll(mentionScanner())) {
-    const id = match[2];
-    if (id === undefined || seen.has(id)) continue;
-    seen.add(id);
-    ids.push(id);
-  }
-  return ids;
-}
 
 /**
  * `content` with every token outside code whose id is a key of `localIds`

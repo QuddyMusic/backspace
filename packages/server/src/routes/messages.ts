@@ -18,6 +18,7 @@ import { sanitizeUser } from '../utils/sanitize.js';
 import { deleteAttachmentFiles } from '../utils/fileCleanup.js';
 import { sendError } from '../utils/httpErrors.js';
 import { fetchEmbedsForMessages, resolveEmbeds, reResolveEmbeds, embedRowToEmbed } from '../utils/embedResolver.js';
+import { denyBots } from '../utils/botGuard.js';
 
 /**
  * Fetch reactions for a set of message IDs.
@@ -212,7 +213,7 @@ export function buildMessageWithUser(
 export async function messageRoutes(app: FastifyInstance): Promise<void> {
   // GET /api/channels/:id/messages - Get messages with cursor pagination
   app.get<{ Params: { id: string }; Querystring: PaginatedQuery }>('/api/channels/:id/messages', {
-    preHandler: authenticate,
+    preHandler: [authenticate, denyBots],
   }, async (request, reply) => {
     const { id } = request.params;
     const before = request.query.before;

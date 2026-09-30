@@ -609,6 +609,8 @@ export interface RegisterRequest {
   homeInstance?: string;
   homeUserId?: string;
   inviteToken?: string;
+  /** Cross-instance bots: one-time attach-proof minted by the bot's home instance. */
+  botProof?: string;
 }
 
 export interface LoginRequest {
@@ -1786,7 +1788,19 @@ export interface BotSummary {
   username: string;
   displayName: string | null;
   avatarColor: string | null;
+  avatar: string | null;
   createdAt: number;
+}
+
+export interface UpdateBotRequest {
+  /** 1–32 characters after trim. The login (username, ends with `_bot`) is immutable. */
+  displayName?: string;
+  /** Bare filename from an upload, or null to clear. */
+  avatar?: string | null;
+}
+
+export interface UpdateBotResponse {
+  bot: BotSummary;
 }
 
 export interface CreateBotRequest {

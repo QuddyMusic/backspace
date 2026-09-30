@@ -456,7 +456,20 @@
       "regenerate": "New token",
       "delete": "Delete",
       "confirmDelete": "Confirm delete",
-      "cancel": "Cancel"
+      "cancel": "Cancel",
+      "edit": "Edit",
+      "save": "Save"
+    },
+    "edit": {
+      "nameLabel": "Display name",
+      "hint": "The username @{{username}} cannot be changed. Up to {{max}} characters."
+    },
+    "avatar": {
+      "change": "Change avatar",
+      "remove": "Remove avatar",
+      "cropTitle": "Crop bot avatar",
+      "uploadFailed": "Failed to upload the avatar",
+      "notImage": "Choose an image file"
     }
   }
 }

@@ -69,5 +69,6 @@ export const GROUP_DM_ICON_MAX_BYTES = 8 * 1024 * 1024; // 8 MB
 export const GROUP_DM_ICON_MIME_PREFIX = 'image/';
 
 export const MAX_BOTS_PER_USER = 10;
-export const BOT_NAME_MIN_LENGTH = 3;
+export const BOT_NAME_SUFFIX = '_bot';
+export const BOT_NAME_MIN_LENGTH = 5;
 export const BOT_NAME_MAX_LENGTH = 32;
