@@ -96,19 +96,24 @@ export async function verifyJwtAndUser(token: string): Promise<{
   };
 }
 
+/** The token of an `Authorization` header: `Bearer <token>`, or its alias `Bot <token>`. Null for anything else. */
+export function tokenFromAuthHeader(header: string | undefined): string | null {
+  if (!header) return null;
+  for (const scheme of ['Bearer ', 'Bot ']) {
+    if (header.startsWith(scheme)) return header.slice(scheme.length);
+  }
+  return null;
+}
+
 export async function authenticate(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
-  const authHeader = request.headers.authorization;
-  // `Bot` is the scheme documented for bot tokens; it is an alias of `Bearer`.
-  const scheme = authHeader?.startsWith('Bearer ') ? 'Bearer ' : authHeader?.startsWith('Bot ') ? 'Bot ' : null;
-  if (!authHeader || scheme === null) {
+  const token = tokenFromAuthHeader(request.headers.authorization);
+  if (token === null) {
     reply.code(401).send({ error: 'Missing or invalid authorization header', code: 'unauthorized', statusCode: 401 });
     return;
   }
-
-  const token = authHeader.slice(scheme.length);
   try {
     const identity = await verifyJwtAndUser(token);
     (request as FastifyRequest & { userId: string; username: string }).userId = identity.userId;
