@@ -378,6 +378,73 @@ describe('the Bot authorization scheme', () => {
     const other = await fetch(`${A.origin}/api/spaces`, { headers: { Authorization: `Basic ${bot.token}` } });
     expect(other.status).toBe(401);
   });
+  it('accepts the Bot scheme when creating an upload', async () => {
+    const meta = `filename ${Buffer.from('bot.txt').toString('base64')},filetype ${Buffer.from('text/plain').toString('base64')}`;
+    const createWith = (auth: string) => fetch(`${A.origin}/api/files/`, {
+      method: 'POST',
+      headers: { Authorization: auth, 'Tus-Resumable': '1.0.0', 'Upload-Length': '5', 'Upload-Metadata': meta },
+    });
+    expect((await createWith(`Bot ${bot.token}`)).status).toBe(201);
+    expect((await createWith(`Basic ${bot.token}`)).status).toBe(401);
+  });
+});
+
+describe('reactions over REST', () => {
+  const count = (table: 'reactions' | 'dm_reactions', column: 'message_id' | 'dm_message_id', messageId: string): number =>
+    readDb(A, db => (db.prepare(`SELECT count(*) AS n FROM ${table} WHERE ${column} = ?`).get(messageId) as { n: number }).n);
+  const emoji = encodeURIComponent('👍');
+
+  it('a bot reacts to a space message and removes the reaction; repeats change nothing', async () => {
+    const created = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', owner.token, { name: 'bot-reaction-space' });
+    const sid = (created.body.space ?? created.body).id as string;
+    expect((await api<ErrBody>(A, 'POST', `/api/bots/${bot.id}/spaces`, owner.token, { spaceId: sid })).status).toBe(200);
+    const chRes = await api<Array<{ id: string; type: string }> | { channels: Array<{ id: string; type: string }> }>(
+      A, 'GET', `/api/spaces/${sid}/channels`, owner.token,
+    );
+    const channels = Array.isArray(chRes.body) ? chRes.body : chRes.body.channels;
+    const cid = (channels.find(c => c.type === 'text') ?? channels[0]!).id;
+    const msg = await api<{ id: string }>(A, 'POST', `/api/channels/${cid}/messages`, owner.token, { content: 'react-to-me' });
+    expect(msg.status).toBe(201);
+    const mid = msg.body.id;
+
+    const add = await api<{ changed: boolean }>(A, 'PUT', `/api/messages/${mid}/reactions/${emoji}`, bot.token);
+    expect(add.status).toBe(200);
+    expect(add.body.changed).toBe(true);
+    expect(count('reactions', 'message_id', mid)).toBe(1);
+    const again = await api<{ changed: boolean }>(A, 'PUT', `/api/messages/${mid}/reactions/${emoji}`, bot.token);
+    expect(again.body.changed).toBe(false);
+
+    const remove = await api<{ changed: boolean }>(A, 'DELETE', `/api/messages/${mid}/reactions/${emoji}`, bot.token);
+    expect(remove.status).toBe(200);
+    expect(remove.body.changed).toBe(true);
+    expect(count('reactions', 'message_id', mid)).toBe(0);
+
+    // A user outside the space learns nothing about the message.
+    const stranger = await registerLocal(A, 'reactstranger');
+    const outsider = await api<ErrBody>(A, 'PUT', `/api/messages/${mid}/reactions/${emoji}`, stranger.token);
+    expect(outsider.status).toBe(404);
+    expect(outsider.body.code).toBe('message_not_found');
+  });
+
+  it('a bot reacts to a message in its 1-on-1 DM', async () => {
+    const dm = await api<{ id?: string; dmChannel?: { id: string } }>(A, 'POST', '/api/dm', owner.token, { userId: bot.id });
+    const dmId = (dm.body.dmChannel?.id ?? dm.body.id) as string;
+    const msg = await api<{ id: string }>(A, 'POST', `/api/dm/${dmId}/messages`, owner.token, { content: 'dm-react-to-me' });
+    expect(msg.status).toBe(201);
+
+    expect((await api<unknown>(A, 'PUT', `/api/messages/${msg.body.id}/reactions/${emoji}`, bot.token)).status).toBe(200);
+    expect(count('dm_reactions', 'dm_message_id', msg.body.id)).toBe(1);
+    expect((await api<unknown>(A, 'DELETE', `/api/messages/${msg.body.id}/reactions/${emoji}`, bot.token)).status).toBe(200);
+    expect(count('dm_reactions', 'dm_message_id', msg.body.id)).toBe(0);
+  });
+
+  it('rejects a bad emoji and an unknown message', async () => {
+    const tooLong = await api<ErrBody>(A, 'PUT', `/api/messages/1/reactions/${'x'.repeat(65)}`, bot.token);
+    expect(tooLong.status).toBe(400);
+    const unknown = await api<ErrBody>(A, 'PUT', `/api/messages/999999999999/reactions/${emoji}`, bot.token);
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.code).toBe('message_not_found');
+  });
 });
 
 describe('cutting a bot off from the host', () => {
