@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { BotSummary } from '@backspace/shared';
-import { BOT_NAME_MAX_LENGTH, BOT_NAME_MIN_LENGTH, BOT_NAME_SUFFIX, MAX_BOTS_PER_USER } from '@backspace/shared/src/constants';
+import { BOT_NAME_MAX_LENGTH, BOT_NAME_SUFFIX, MAX_BOTS_PER_USER } from '@backspace/shared/src/constants';
 import { api } from '../../../api/client';
 import { describeError } from '../../../i18n/errors';
 import { useFormatters } from '../../../i18n/formatters';
@@ -65,7 +65,7 @@ export function BotsPanel() {
     setBusy(true);
     setError(null);
     try {
-      const res = await api.bots.create({ name });
+      const res = await api.bots.create({ name: stemOf(name) + BOT_NAME_SUFFIX });
       setBots((prev) => [...prev, res.bot]);
       setRevealed({ username: res.bot.username, token: res.token });
       setCopied(false);
@@ -237,18 +237,24 @@ export function BotsPanel() {
             {t('settings:bots.create.nameLabel')}
           </label>
           <div className="flex gap-2">
-            <input
-              id="bot-name"
-              className="input-standard flex-1 min-w-0"
-              value={name}
-              maxLength={BOT_NAME_MAX_LENGTH}
-              autoComplete="off"
-              onChange={(e) => setName(e.target.value.toLowerCase())}
-            />
+            <div className="flex flex-1 min-w-0 items-center gap-1">
+              <input
+                id="bot-name"
+                className="input-standard flex-1 min-w-0"
+                value={name}
+                maxLength={BOT_NAME_MAX_LENGTH - BOT_NAME_SUFFIX.length}
+                autoComplete="off"
+                onChange={(e) => setName(e.target.value.toLowerCase())}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && stemOf(name).length > 0 && !busy) void handleCreate();
+                }}
+              />
+              <span className="shrink-0 text-sm text-txt-tertiary select-none">{BOT_NAME_SUFFIX}</span>
+            </div>
             <button
               type="button"
               className={buttonClass}
-              disabled={busy || name.trim().length === 0}
+              disabled={busy || stemOf(name).length === 0}
               onClick={() => void handleCreate()}
             >
               {t('settings:bots.create.submit')}
@@ -256,8 +262,8 @@ export function BotsPanel() {
           </div>
           <div className="text-xs text-txt-tertiary">
             {t('settings:bots.create.hint', {
-              min: BOT_NAME_MIN_LENGTH,
-              max: BOT_NAME_MAX_LENGTH,
+              min: 1,
+              max: BOT_NAME_MAX_LENGTH - BOT_NAME_SUFFIX.length,
               limit: MAX_BOTS_PER_USER,
             })}
           </div>

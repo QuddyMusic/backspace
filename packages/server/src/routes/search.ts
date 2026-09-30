@@ -8,7 +8,7 @@ import { fetchReactionsForMessages, fetchReplyToMessages, buildMessageWithUser }
 import { fetchDmReactionsForMessages, fetchDmReplyToMessages, buildDmMessageWithUser } from './dm.js';
 import type { MessageWithUser, DmMessageWithUser } from '@backspace/shared';
 import { fetchEmbedsForMessages, fetchDmEmbedsForMessages } from '../utils/embedResolver.js';
-import { denyBots } from '../utils/botGuard.js';
+import { denyBots, denyBotsInGroupDm } from '../utils/botGuard.js';
 
 interface SearchQuery {
   q?: string;
@@ -164,7 +164,7 @@ export async function searchRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /api/dm/:id/search — Search messages in a DM channel
   app.get<{ Params: { id: string }; Querystring: SearchQuery }>('/api/dm/:id/search', {
-    preHandler: authenticate,
+    preHandler: [authenticate, denyBotsInGroupDm],
   }, async (request, reply) => {
     const { id } = request.params;
     const { q, from, has, before, after } = request.query;
@@ -398,7 +398,7 @@ export async function searchRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /api/dm/:id/messages/around — Load DM messages around a target message
   app.get<{ Params: { id: string }; Querystring: AroundQuery }>('/api/dm/:id/messages/around', {
-    preHandler: authenticate,
+    preHandler: [authenticate, denyBotsInGroupDm],
   }, async (request, reply) => {
     const { id } = request.params;
     const { messageId } = request.query;

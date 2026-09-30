@@ -174,11 +174,20 @@ export function loadOpenDmChannels(db: Db, userId: string, openMemberships?: DmM
   const members = membersByChannel(db, dmChannelIds);
   const previews = newestMessagePreviews(db, dmChannelIds);
 
+  // A bot never gets an unaddressed group message as a channel preview.
+  const viewerIsBot = db.select({ isBot: schema.users.isBot })
+    .from(schema.users)
+    .where(eq(schema.users.id, userId))
+    .get()?.isBot === 1;
+
   const dmChannels: DmChannel[] = [];
   for (const membership of memberships) {
     const channel = channelMap.get(membership.dmChannelId);
     if (!channel) continue;
-    dmChannels.push(toDmChannelWire(channel, members.get(channel.id) ?? [], previews.get(channel.id) ?? null));
+    const isGroup = channel.ownerId !== null
+      || (channel.federatedId !== null && channel.federatedId.length === 36);
+    const preview = viewerIsBot && isGroup ? null : (previews.get(channel.id) ?? null);
+    dmChannels.push(toDmChannelWire(channel, members.get(channel.id) ?? [], preview));
   }
   return dmChannels;
 }

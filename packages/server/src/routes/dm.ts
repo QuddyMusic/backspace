@@ -24,6 +24,7 @@ import {
 import { fetchSpaceInviteSnapshot, getLocalInviteSnapshot } from '../utils/spaceInviteSnapshot.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { loadDmChannelWire, loadOpenDmChannels } from '../utils/dmChannelWire.js';
+import { denyBotsInGroupDm } from '../utils/botGuard.js';
 import { findOrCreateOneOnOne, mintGroupKey, type OneOnOneResult } from '../utils/dmConversation.js';
 import { sendError } from '../utils/httpErrors.js';
 
@@ -1484,7 +1485,8 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
       ),
     ).get();
 
-    if (!friendship) {
+    const isOwnBot = targetUser.isBot === 1 && targetUser.botOwnerId === request.userId;
+    if (!friendship && !isOwnBot) {
       return sendError(reply, 403, 'not_a_friend');
     }
 
@@ -1898,7 +1900,7 @@ export async function dmRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // GET /api/dm/:id/messages - Get DM messages with pagination
-  app.get<{ Params: { id: string }; Querystring: PaginatedQuery }>('/api/dm/:id/messages', async (request, reply) => {
+  app.get<{ Params: { id: string }; Querystring: PaginatedQuery }>('/api/dm/:id/messages', { preHandler: denyBotsInGroupDm }, async (request, reply) => {
     const { id } = request.params;
     const before = request.query.before;
     const limit = Math.min(Math.max(Number(request.query.limit) || 50, 1), 100);

@@ -86,6 +86,7 @@ import type {
   UpdateBotResponse,
   CreateBotResponse,
   RegenerateBotTokenResponse,
+  BotSpacesResponse,
 } from '@backspace/shared';
 import { getApiForOrigin, getOwnerInstanceForDm } from '../utils/crossStoreResolvers';
 
@@ -381,6 +382,8 @@ export class BackspaceApiClient {
     create: (data: CreateBotRequest) => Promise<CreateBotResponse>;
     regenerateToken: (id: string) => Promise<RegenerateBotTokenResponse>;
     update: (id: string, data: UpdateBotRequest) => Promise<UpdateBotResponse>;
+    spaces: (id: string) => Promise<BotSpacesResponse>;
+    addToSpace: (id: string, spaceId: string) => Promise<{ success: boolean }>;
     delete: (id: string) => Promise<{ success: boolean }>;
   };
 
@@ -874,6 +877,8 @@ export class BackspaceApiClient {
       create: (data: CreateBotRequest) => request<CreateBotResponse>('POST', '/bots', data),
       regenerateToken: (id: string) => request<RegenerateBotTokenResponse>('POST', `/bots/${id}/token`),
       update: (id: string, data: UpdateBotRequest) => request<UpdateBotResponse>('PATCH', `/bots/${id}`, data),
+      spaces: (id: string) => request<BotSpacesResponse>('GET', `/bots/${id}/spaces`),
+      addToSpace: (id: string, spaceId: string) => request<{ success: boolean }>('POST', `/bots/${id}/spaces`, { spaceId }),
       delete: (id: string) => request<{ success: boolean }>('DELETE', `/bots/${id}`),
     };
 

@@ -16,6 +16,8 @@ import { resizeProfileImage } from '../utils/thumbnail.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { queueProfileUpdateRelay } from '../utils/profileRelay.js';
 import type { BotSummary, UpdateBotRequest, UpdateBotResponse } from '@backspace/shared';
+import { hasPermission, isBanned, isMember, PermissionBits } from '../utils/permissions.js';
+import { addUserToSpace } from '../utils/spaceMembership.js';
 
 /** Not a bcrypt hash, so password login is impossible (same idea as '!federation-replicated'). */
 const BOT_PASSWORD_MARKER = '!bot';
@@ -78,13 +80,11 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const db = getDb();
     const raw = typeof request.body?.name === 'string' ? request.body.name.trim() : '';
-    const username = raw.toLowerCase();
+    const lowered = raw.toLowerCase();
+    // The suffix is added for the caller; a name that already carries it is kept.
+    const username = lowered.endsWith(BOT_NAME_SUFFIX) ? lowered : `${lowered}${BOT_NAME_SUFFIX}`;
     if (username.length < BOT_NAME_MIN_LENGTH || username.length > BOT_NAME_MAX_LENGTH || !BOT_NAME_RE.test(username)) {
       return sendError(reply, 400, 'bot_name_invalid', { min: BOT_NAME_MIN_LENGTH, max: BOT_NAME_MAX_LENGTH });
-    }
-
-    if (!username.endsWith(BOT_NAME_SUFFIX)) {
-      return sendError(reply, 400, 'bot_name_suffix_required', { suffix: BOT_NAME_SUFFIX });
     }
 
     const owned = db.select({ n: sql<number>`count(*)` }).from(schema.users).where(and(
@@ -196,6 +196,53 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
 
     const response: UpdateBotResponse = { bot: toSummary(updated) };
     return reply.send(response);
+  });
+
+  // Spaces the caller may bring this bot into (MANAGE_SPACE), with membership.
+  app.get<{ Params: { id: string } }>('/api/bots/:id/spaces', { preHandler: pre }, async (request, reply) => {
+    const bot = findOwnedBot(request.userId, request.params.id);
+    if (!bot) return sendError(reply, 404, 'bot_not_found');
+    const db = getDb();
+    const mine = db.select({ id: schema.spaces.id, name: schema.spaces.name, icon: schema.spaces.icon })
+      .from(schema.spaceMembers)
+      .innerJoin(schema.spaces, eq(schema.spaceMembers.spaceId, schema.spaces.id))
+      .where(eq(schema.spaceMembers.userId, request.userId))
+      .all();
+    const botSpaceIds = new Set(
+      db.select({ spaceId: schema.spaceMembers.spaceId })
+        .from(schema.spaceMembers)
+        .where(eq(schema.spaceMembers.userId, bot.id))
+        .all()
+        .map(r => r.spaceId),
+    );
+    const spaces = mine
+      .filter(s => hasPermission(request.userId, s.id, PermissionBits.MANAGE_SPACE))
+      .map(s => ({ id: s.id, name: s.name, icon: s.icon, botIsMember: botSpaceIds.has(s.id) }));
+    return reply.send({ spaces });
+  });
+
+  // Owner brings the bot into a space they manage. Same result as the bot
+  // joining by invite, without handing out a code.
+  app.post<{ Params: { id: string }; Body: { spaceId?: unknown } }>('/api/bots/:id/spaces', {
+    preHandler: pre,
+    config: { rateLimit: { max: 30, timeWindow: '15 minutes' } },
+  }, async (request, reply) => {
+    const bot = findOwnedBot(request.userId, request.params.id);
+    if (!bot) return sendError(reply, 404, 'bot_not_found');
+    const spaceId = typeof request.body?.spaceId === 'string' ? request.body.spaceId : '';
+    if (!spaceId) {
+      return sendError(reply, 400, 'validation_failed', { field: 'spaceId', reason: 'is required' });
+    }
+    const space = getDb().select({ id: schema.spaces.id }).from(schema.spaces)
+      .where(eq(schema.spaces.id, spaceId)).get();
+    if (!space) return sendError(reply, 404, 'space_not_found');
+    if (!hasPermission(request.userId, spaceId, PermissionBits.MANAGE_SPACE)) {
+      return sendError(reply, 403, 'missing_permission', { permission: 'MANAGE_SPACE' });
+    }
+    if (isBanned(spaceId, bot.id)) return sendError(reply, 403, 'user_banned');
+    if (isMember(spaceId, bot.id)) return sendError(reply, 409, 'already_member');
+    addUserToSpace(spaceId, bot.id);
+    return reply.send({ success: true });
   });
 
   app.post<{ Params: { id: string } }>('/api/bots/:id/token', {

@@ -30,6 +30,7 @@ import { presenceIdentityOf, presenceUpdateFor, snapshotActivities } from './pre
 import { touchUserActivity, parseClientKind } from '../telemetry/activity.js';
 import { utcDay } from '../telemetry/day.js';
 import { mentionTokenIds } from '../utils/mentionScan.js';
+import { isGroupDmChannel } from '../utils/dmKind.js';
 
 // ─── Heartbeat State ──────────────────────────────────────────────────────────
 const wsIsAlive: WeakMap<WebSocket, boolean> = new WeakMap();
@@ -82,6 +83,28 @@ export interface VoiceRoom {
 /** Whole occupied seconds for the wire protocol; never exposes a server clock timestamp. */
 export function getVoiceRoomElapsedSeconds(room: VoiceRoom, now = Date.now()): number {
   return Math.max(0, Math.floor((now - room.startedAt) / 1_000));
+}
+
+/** Group-DM events a bot still receives: the channel lifecycle it needs, never content. */
+const GROUP_DM_BOT_PASSTHROUGH: ReadonlySet<string> = new Set([
+  'dm_channel_closed',
+  'dm_channel_updated',
+  'dm_member_added',
+  'dm_member_removed',
+  'dm_owner_updated',
+]);
+
+/** The DM channel an event belongs to, or null when it is not a DM event. */
+function dmChannelIdOf(event: ServerEvent): string | null {
+  const loose = event as unknown as {
+    dmChannelId?: unknown;
+    message?: { dmChannelId?: unknown };
+    dmChannel?: { id?: unknown };
+  };
+  if (typeof loose.dmChannelId === 'string') return loose.dmChannelId;
+  if (typeof loose.message?.dmChannelId === 'string') return loose.message.dmChannelId;
+  if (typeof loose.dmChannel?.id === 'string') return loose.dmChannel.id;
+  return null;
 }
 
 // ─── ConnectionManager ─────────────────────────────────────────────────────
@@ -861,8 +884,10 @@ class ConnectionManager {
 
   /** Send to a specific user (all their connections). */
   sendToUser(userId: string, event: ServerEvent): void {
+    const outgoing = this.filterForBot(userId, event);
+    if (outgoing === null) return;
     const connections = this.getUserConnections(userId);
-    const message = JSON.stringify(event);
+    const message = JSON.stringify(outgoing);
     for (const ws of connections) {
       if (ws.readyState === 1) { // WebSocket.OPEN
         ws.send(message);
@@ -879,6 +904,26 @@ class ConnectionManager {
     const isBot = row.isBot === 1;
     this.botFlagCache.set(userId, isBot);
     return isBot;
+  }
+  
+  /**
+   * Egress gate for everything sent to a bot with sendToUser. In a 1-on-1 DM
+   * the bot sees all (it is addressed directly). In a group DM it only gets
+   * messages that mention it plus channel lifecycle events, and the channel
+   * preview is stripped so `lastMessage` cannot leak an unaddressed message.
+   * Typing, calls, deletions and the like are withheld.
+   */
+  private filterForBot(userId: string, event: ServerEvent): ServerEvent | null {
+    if (!this.isBotUser(userId)) return event;
+    const dmChannelId = dmChannelIdOf(event);
+    if (dmChannelId === null || !isGroupDmChannel(dmChannelId)) return event;
+    if (event.type === 'dm_message_created' || event.type === 'dm_message_updated') {
+      return mentionTokenIds(event.message.content ?? '').includes(userId) ? event : null;
+    }
+    if (event.type === 'dm_channel_created') {
+      return { ...event, dmChannel: { ...event.dmChannel, lastMessage: null } };
+    }
+    return GROUP_DM_BOT_PASSTHROUGH.has(event.type) ? event : null;
   }
 
   /**
@@ -940,6 +985,9 @@ class ConnectionManager {
 
     for (const member of dmMembers) {
       if (member.userId !== excludeUserId) {
+        // An event that names no channel (a reaction, say) cannot be classified
+        // by the egress gate in sendToUser; a bot gets none of those in a group.
+        if (this.isBotUser(member.userId) && dmChannelIdOf(event) === null && isGroupDmChannel(dmChannelId)) continue;
         this.sendToUser(member.userId, event);
       }
     }

@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import {
   bootTransportPeered,
   readDb,
   waitUntil,
+  withWritableDb,
   type PeeredHarness,
 } from './helpers/federationE2E.js';
 import { registerLocal, type TestUser } from './helpers/testUsers.js';
@@ -292,6 +294,113 @@ describe('editing a bot on its home', () => {
       (db.prepare('SELECT display_name AS name FROM users WHERE id = ?').get(hostBot.id) as { name: string | null } | undefined)?.name,
     ) === 'echo_prime_bot', 15_000);
     expect(reached).toBe(true);
+  });
+
+  it('the _bot suffix is added on creation when missing', async () => {
+    const plain = await api<BotCreated>(A, 'POST', '/api/bots', owner.token, { name: 'plainname' });
+    expect(plain.status).toBe(201);
+    expect(plain.body.bot.username).toBe('plainname_bot');
+    const already = await api<BotCreated>(A, 'POST', '/api/bots', owner.token, { name: 'Has_Bot' });
+    expect(already.body.bot.username).toBe('has_bot');
+    const noStem = await api<ErrBody>(A, 'POST', '/api/bots', owner.token, { name: '_bot' });
+    expect(noStem.status).toBe(400);
+    expect(noStem.body.code).toBe('bot_name_invalid');
+  });
+});
+
+describe('bringing a bot into a space by button', () => {
+  it('the owner adds their bot to a space they manage, once', async () => {
+    const created = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', owner.token, { name: 'bot-button-space' });
+    expect(created.status).toBeLessThan(300);
+    const sid = (created.body.space ?? created.body).id as string;
+
+    const before = await api<{ spaces: Array<{ id: string; botIsMember: boolean }> }>(A, 'GET', `/api/bots/${bot.id}/spaces`, owner.token);
+    expect(before.body.spaces.find(s => s.id === sid)?.botIsMember).toBe(false);
+
+    const add = await api<ErrBody>(A, 'POST', `/api/bots/${bot.id}/spaces`, owner.token, { spaceId: sid });
+    expect(add.status).toBe(200);
+    const again = await api<ErrBody>(A, 'POST', `/api/bots/${bot.id}/spaces`, owner.token, { spaceId: sid });
+    expect(again.status).toBe(409);
+
+    const after = await api<{ spaces: Array<{ id: string; botIsMember: boolean }> }>(A, 'GET', `/api/bots/${bot.id}/spaces`, owner.token);
+    expect(after.body.spaces.find(s => s.id === sid)?.botIsMember).toBe(true);
+  });
+
+  it("someone else's bot, or a space the caller does not manage, is refused", async () => {
+    const stranger = await registerLocal(A, 'stranger2');
+    const foreign = await api<ErrBody>(A, 'POST', `/api/bots/${bot.id}/spaces`, stranger.token, { spaceId: 'x' });
+    expect(foreign.status).toBe(404);
+    expect(foreign.body.code).toBe('bot_not_found');
+
+    const strangerBot = await api<BotCreated>(A, 'POST', '/api/bots', stranger.token, { name: 'strangers' });
+    const ownSpace = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', owner.token, { name: 'not-yours' });
+    const sid = (ownSpace.body.space ?? ownSpace.body).id as string;
+    const noPerm = await api<ErrBody>(A, 'POST', `/api/bots/${strangerBot.body.bot.id}/spaces`, stranger.token, { spaceId: sid });
+    expect(noPerm.status).toBe(403);
+  });
+});
+
+describe('a bot in direct and group conversations on its home', () => {
+  let botWs: WsCapture;
+  let groupId: string;
+
+  const dmDelivered = (marker: string): boolean =>
+    botWs.events.some(e =>
+      e.type === 'dm_message_created'
+      && ((e.message as { content?: string } | undefined)?.content ?? '').includes(marker));
+
+  it('in a group DM the bot gets only messages that mention it', async () => {
+    const member = await registerLocal(A, 'groupmate');
+    groupId = `e2e-group-${Date.now()}`;
+    withWritableDb(A, db => {
+      db.prepare('INSERT INTO dm_channels (id, owner_id, federated_id, created_at) VALUES (?, ?, ?, ?)')
+        .run(groupId, owner.id, randomUUID(), Date.now());
+      const add = db.prepare('INSERT INTO dm_members (dm_channel_id, user_id, closed) VALUES (?, ?, 0)');
+      for (const uid of [owner.id, bot.id, member.id]) add.run(groupId, uid);
+    });
+
+    botWs = await connectWs(A.origin, bot.token);
+    sockets.push(botWs);
+    await botWs.waitForEvent('ready');
+
+    const say = (content: string) =>
+      api<unknown>(A, 'POST', `/api/dm/${groupId}/messages`, owner.token, { content });
+    // The plain message goes first: if it leaked it would arrive before the mention.
+    await say('group-plain-marker');
+    await say(`<@${bot.id}> group-mention-marker`);
+
+    expect(await waitUntil(() => dmDelivered('group-mention-marker'), 5_000)).toBe(true);
+    expect(dmDelivered('group-plain-marker')).toBe(false);
+  });
+
+  it('a bot cannot read a group DM and its channel list shows no preview', async () => {
+    const hist = await api<ErrBody>(A, 'GET', `/api/dm/${groupId}/messages`, bot.token);
+    expect(hist.status).toBe(403);
+    expect(hist.body.code).toBe('bot_forbidden');
+
+    const list = await api<Array<{ id: string; lastMessage: unknown }>>(A, 'GET', '/api/dm', bot.token);
+    expect(list.status).toBe(200);
+    const entry = list.body.find(c => c.id === groupId);
+    expect(entry).toBeDefined();
+    expect(entry?.lastMessage ?? null).toBeNull();
+
+    const human = await api<unknown>(A, 'GET', `/api/dm/${groupId}/messages`, owner.token);
+    expect(human.status).toBe(200);
+  });
+
+  it('in a 1-on-1 DM the bot still gets every message and can read it', async () => {
+    const dm = await api<{ id?: string; dmChannel?: { id: string } }>(
+      A, 'POST', '/api/dm', owner.token, { userId: bot.id },
+    );
+    expect(dm.status).toBeLessThan(300);
+    const dmId = (dm.body.dmChannel?.id ?? dm.body.id) as string;
+    expect(dmId).toBeTruthy();
+
+    await api<unknown>(A, 'POST', `/api/dm/${dmId}/messages`, owner.token, { content: 'one-on-one-marker' });
+    expect(await waitUntil(() => dmDelivered('one-on-one-marker'), 5_000)).toBe(true);
+
+    const hist = await api<unknown>(A, 'GET', `/api/dm/${dmId}/messages`, bot.token);
+    expect(hist.status).toBe(200);
   });
 });
 

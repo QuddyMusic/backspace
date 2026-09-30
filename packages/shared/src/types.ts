@@ -1803,6 +1803,18 @@ export interface UpdateBotResponse {
   bot: BotSummary;
 }
 
+export interface BotSpaceOption {
+  id: string;
+  name: string;
+  icon: string | null;
+  /** Whether the bot is already a member. */
+  botIsMember: boolean;
+}
+
+export interface BotSpacesResponse {
+  spaces: BotSpaceOption[];
+}
+
 export interface CreateBotRequest {
   name: string;
 }
