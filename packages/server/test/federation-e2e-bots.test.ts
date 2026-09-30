@@ -207,8 +207,8 @@ describe('the bot flag on a host instance', () => {
   });
 });
 
-describe('the mention gate and history ban on the host', () => {
-  it('the bot joins a space on the host by invite and only sees messages that mention it', async () => {
+describe('a bot in a space on the host', () => {
+  it('joins by invite and receives the space messages it can view', async () => {
     const created = await api<{ id?: string; inviteCode?: string; space?: { id: string; inviteCode: string } }>(
       B, 'POST', '/api/spaces', hostHuman.token, { name: 'bot-host-space' },
     );
@@ -216,8 +216,6 @@ describe('the mention gate and history ban on the host', () => {
     const space = created.body.space ?? created.body;
     spaceId = space.id as string;
     const inviteCode = space.inviteCode as string;
-    expect(spaceId).toBeTruthy();
-    expect(inviteCode).toBeTruthy();
 
     const chRes = await api<Array<{ id: string; type: string }> | { channels: Array<{ id: string; type: string }> }>(
       B, 'GET', `/api/spaces/${spaceId}/channels`, hostHuman.token,
@@ -228,29 +226,21 @@ describe('the mention gate and history ban on the host', () => {
     const ws = await connectWs(B.origin, hostBot.token);
     sockets.push(ws);
     await ws.waitForEvent('ready');
-
-    const join = await api<ErrBody>(B, 'POST', '/api/spaces/join', hostBot.token, { inviteCode });
-    expect(join.status).toBe(200);
+    expect((await api<ErrBody>(B, 'POST', '/api/spaces/join', hostBot.token, { inviteCode })).status).toBe(200);
 
     const say = (content: string) =>
       api<unknown>(B, 'POST', `/api/channels/${channelId}/messages`, hostHuman.token, { content });
-    // The plain message goes first: if it leaked, it would arrive before the
-    // mention does, so no sleep is needed to prove its absence.
-    await say('plain-no-mention-marker');
-    await say(`<@${hostBot.id}> real-mention-marker`);
-
-    expect(await waitUntil(() => delivered(ws, 'real-mention-marker'), 5_000)).toBe(true);
-    expect(delivered(ws, 'plain-no-mention-marker')).toBe(false);
+    await say('plain-marker');
+    await say(`<@${hostBot.id}> mention-marker`);
+    // What to do with a message is the bot's code's decision, not the server's.
+    expect(await waitUntil(() => delivered(ws, 'plain-marker') && delivered(ws, 'mention-marker'), 5_000)).toBe(true);
   });
 
-  it('the bot cannot read channel history or search on the host', async () => {
-    const hist = await api<ErrBody>(B, 'GET', `/api/channels/${channelId}/messages`, hostBot.token);
-    expect(hist.status).toBe(403);
-    expect(hist.body.code).toBe('bot_forbidden');
-    const search = await api<ErrBody>(B, 'GET', `/api/channels/${channelId}/search?q=marker`, hostBot.token);
-    expect(search.status).toBe(403);
-    const human = await api<unknown>(B, 'GET', `/api/channels/${channelId}/messages`, hostHuman.token);
-    expect(human.status).toBe(200);
+  it('reads history like any member, and can post', async () => {
+    const hist = await api<unknown>(B, 'GET', `/api/channels/${channelId}/messages`, hostBot.token);
+    expect(hist.status).toBe(200);
+    const post = await api<unknown>(B, 'POST', `/api/channels/${channelId}/messages`, hostBot.token, { content: 'bot-post-marker' });
+    expect(post.status).toBe(201);
   });
 });
 
@@ -349,7 +339,7 @@ describe('a bot in direct and group conversations on its home', () => {
       e.type === 'dm_message_created'
       && ((e.message as { content?: string } | undefined)?.content ?? '').includes(marker));
 
-  it('in a group DM the bot gets only messages that mention it', async () => {
+  it('in a group DM the bot receives every message and can read it', async () => {
     const member = await registerLocal(A, 'groupmate');
     groupId = `e2e-group-${Date.now()}`;
     withWritableDb(A, db => {
@@ -358,49 +348,24 @@ describe('a bot in direct and group conversations on its home', () => {
       const add = db.prepare('INSERT INTO dm_members (dm_channel_id, user_id, closed) VALUES (?, ?, 0)');
       for (const uid of [owner.id, bot.id, member.id]) add.run(groupId, uid);
     });
-
     botWs = await connectWs(A.origin, bot.token);
     sockets.push(botWs);
     await botWs.waitForEvent('ready');
 
-    const say = (content: string) =>
-      api<unknown>(A, 'POST', `/api/dm/${groupId}/messages`, owner.token, { content });
-    // The plain message goes first: if it leaked it would arrive before the mention.
-    await say('group-plain-marker');
-    await say(`<@${bot.id}> group-mention-marker`);
-
-    expect(await waitUntil(() => dmDelivered('group-mention-marker'), 5_000)).toBe(true);
-    expect(dmDelivered('group-plain-marker')).toBe(false);
+    await api<unknown>(A, 'POST', `/api/dm/${groupId}/messages`, owner.token, { content: 'group-marker' });
+    expect(await waitUntil(() => dmDelivered('group-marker'), 5_000)).toBe(true);
+    expect((await api<unknown>(A, 'GET', `/api/dm/${groupId}/messages`, bot.token)).status).toBe(200);
   });
 
-  it('a bot cannot read a group DM and its channel list shows no preview', async () => {
-    const hist = await api<ErrBody>(A, 'GET', `/api/dm/${groupId}/messages`, bot.token);
-    expect(hist.status).toBe(403);
-    expect(hist.body.code).toBe('bot_forbidden');
-
-    const list = await api<Array<{ id: string; lastMessage: unknown }>>(A, 'GET', '/api/dm', bot.token);
-    expect(list.status).toBe(200);
-    const entry = list.body.find(c => c.id === groupId);
-    expect(entry).toBeDefined();
-    expect(entry?.lastMessage ?? null).toBeNull();
-
-    const human = await api<unknown>(A, 'GET', `/api/dm/${groupId}/messages`, owner.token);
-    expect(human.status).toBe(200);
-  });
-
-  it('in a 1-on-1 DM the bot still gets every message and can read it', async () => {
+  it('in a 1-on-1 DM the bot receives messages and can read them', async () => {
     const dm = await api<{ id?: string; dmChannel?: { id: string } }>(
       A, 'POST', '/api/dm', owner.token, { userId: bot.id },
     );
     expect(dm.status).toBeLessThan(300);
     const dmId = (dm.body.dmChannel?.id ?? dm.body.id) as string;
-    expect(dmId).toBeTruthy();
-
     await api<unknown>(A, 'POST', `/api/dm/${dmId}/messages`, owner.token, { content: 'one-on-one-marker' });
     expect(await waitUntil(() => dmDelivered('one-on-one-marker'), 5_000)).toBe(true);
-
-    const hist = await api<unknown>(A, 'GET', `/api/dm/${dmId}/messages`, bot.token);
-    expect(hist.status).toBe(200);
+    expect((await api<unknown>(A, 'GET', `/api/dm/${dmId}/messages`, bot.token)).status).toBe(200);
   });
 });
 

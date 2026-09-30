@@ -8,7 +8,6 @@ import { fetchReactionsForMessages, fetchReplyToMessages, buildMessageWithUser }
 import { fetchDmReactionsForMessages, fetchDmReplyToMessages, buildDmMessageWithUser } from './dm.js';
 import type { MessageWithUser, DmMessageWithUser } from '@backspace/shared';
 import { fetchEmbedsForMessages, fetchDmEmbedsForMessages } from '../utils/embedResolver.js';
-import { denyBots, denyBotsInGroupDm } from '../utils/botGuard.js';
 
 interface SearchQuery {
   q?: string;
@@ -28,7 +27,7 @@ interface AroundQuery {
 export async function searchRoutes(app: FastifyInstance): Promise<void> {
   // GET /api/channels/:id/search — Search messages in a space channel
   app.get<{ Params: { id: string }; Querystring: SearchQuery }>('/api/channels/:id/search', {
-    preHandler: [authenticate, denyBots],
+    preHandler: authenticate,
   }, async (request, reply) => {
     const { id } = request.params;
     const { q, from, has, before, after } = request.query;
@@ -164,7 +163,7 @@ export async function searchRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /api/dm/:id/search — Search messages in a DM channel
   app.get<{ Params: { id: string }; Querystring: SearchQuery }>('/api/dm/:id/search', {
-    preHandler: [authenticate, denyBotsInGroupDm],
+    preHandler: authenticate,
   }, async (request, reply) => {
     const { id } = request.params;
     const { q, from, has, before, after } = request.query;
@@ -293,7 +292,7 @@ export async function searchRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /api/channels/:id/messages/around — Load messages around a target message
   app.get<{ Params: { id: string }; Querystring: AroundQuery }>('/api/channels/:id/messages/around', {
-    preHandler: [authenticate, denyBots],
+    preHandler: authenticate,
   }, async (request, reply) => {
     const { id } = request.params;
     const { messageId } = request.query;
@@ -398,7 +397,7 @@ export async function searchRoutes(app: FastifyInstance): Promise<void> {
 
   // GET /api/dm/:id/messages/around — Load DM messages around a target message
   app.get<{ Params: { id: string }; Querystring: AroundQuery }>('/api/dm/:id/messages/around', {
-    preHandler: [authenticate, denyBotsInGroupDm],
+    preHandler: authenticate,
   }, async (request, reply) => {
     const { id } = request.params;
     const { messageId } = request.query;
