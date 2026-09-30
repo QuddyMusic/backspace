@@ -637,3 +637,17 @@ POST /csp-report     (no auth) -> 204
 ```
 
 **`POST /api/csp-report`** is the Content Security Policy violation sink named by the policy's `report-uri` and `report-to`. Unauthenticated on purpose: a violation can happen on the login screen before any token exists. It registers content-type parsers for `application/csp-report` and `application/reports+json` in addition to the built-in `application/json`. Fastify ships parsers for neither of the first two and would otherwise answer 415, leaving an empty report log that looks exactly like a clean policy. It answers `204` to everything, including a malformed body, because a browser cannot act on an error and would only retry. It reads at most 16 KB off the wire and logs at most 4096 characters per report at `warn` level with the message `CSP violation reported`. Registered after `@fastify/rate-limit` so the shared 200/minute limit applies; that ordering is load-bearing. See `docs/systems/web-security.md`.
+
+## Bots (`routes/bots.ts`, `routes/reactions.ts`)
+
+Full reference in [bots.md](bots.md). Owner endpoints need the JWT of a native human account.
+GET /bots → { bots: BotSummary[] }
+POST /bots { name } → 201 { bot, token } [5 per 15 min; the _bot suffix is appended when missing; max 10 per owner]
+PATCH /bots/:id { displayName?, avatar? } → { bot } [owner; displayName must end with _bot]
+POST /bots/:id/token → { token, federation } [5 per 15 min; revokes earlier tokens, cuts the bot off on other instances]
+DELETE /bots/:id → { success, federation }
+GET /bots/:id/spaces → { spaces: [{ id, name, icon, botIsMember }] } [spaces where the caller holds MANAGE_SPACE]
+POST /bots/:id/spaces { spaceId } → { success } [MANAGE_SPACE]
+PUT /messages/:id/reactions/:emoji → { success, changed } [ADD_REACTIONS for space messages; channel or DM message, found by id]
+DELETE /messages/:id/reactions/:emoji → { success, changed } [own reaction]
+`Authorization: Bot <token>` is accepted wherever `Bearer <token>` is (including tus uploads). `POST /auth/register` also takes `botProof` for a bot registering on another instance (bots.md, section 7).
