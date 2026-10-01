@@ -492,6 +492,84 @@ describe('taking a bot out of a space', () => {
   });
 });
 
+describe('slash command registration', () => {
+  interface CommandsBody { commands: Array<{ id: string; name: string; description: string; options: Array<{ name: string; required: boolean }> }> }
+  interface InvalidBody { code?: string; details?: { field?: string; reason?: string } }
+
+  const play = {
+    name: 'play',
+    description: 'Play a track',
+    options: [
+      { name: 'query', description: 'What to play', type: 'string', required: true },
+      { name: 'volume', description: 'Volume', type: 'integer', choices: [{ name: 'low', value: 20 }, { name: 'high', value: 80 }] },
+    ],
+  };
+
+  it('a bot registers its commands and reads them back; a second call replaces them and keeps ids', async () => {
+    const put = await api<CommandsBody>(A, 'PUT', '/api/bots/@me/commands', bot.token, {
+      commands: [play, { name: 'stop', description: 'Stop playing' }],
+    });
+    expect(put.status).toBe(200);
+    expect(put.body.commands.map(c => c.name)).toEqual(['play', 'stop']);
+    expect(put.body.commands[0]!.options.map(o => o.name)).toEqual(['query', 'volume']);
+    expect(put.body.commands[0]!.options[0]!.required).toBe(true);
+    expect(put.body.commands[0]!.options[1]!.required).toBe(false);
+
+    const read = await api<CommandsBody>(A, 'GET', '/api/bots/@me/commands', bot.token);
+    expect(read.body.commands.map(c => c.name)).toEqual(['play', 'stop']);
+
+    const stopId = put.body.commands.find(c => c.name === 'stop')!.id;
+    const replaced = await api<CommandsBody>(A, 'PUT', '/api/bots/@me/commands', bot.token, {
+      commands: [{ name: 'stop', description: 'Stop it now' }],
+    });
+    expect(replaced.body.commands).toHaveLength(1);
+    expect(replaced.body.commands[0]!.id).toBe(stopId);
+    expect(replaced.body.commands[0]!.description).toBe('Stop it now');
+  });
+
+  it('rejects an invalid definition and says which field is wrong', async () => {
+    const bad: Array<[string, unknown]> = [
+      ['an uppercase name', [{ name: 'Play Now', description: 'x' }]],
+      ['duplicate names', [{ name: 'a', description: 'x' }, { name: 'a', description: 'y' }]],
+      ['an empty description', [{ name: 'a', description: '' }]],
+      ['a required option after an optional one', [{ name: 'a', description: 'x', options: [
+        { name: 'o1', description: 'x', type: 'string' },
+        { name: 'o2', description: 'x', type: 'string', required: true },
+      ] }]],
+      ['a choice of the wrong type', [{ name: 'a', description: 'x', options: [
+        { name: 'o', description: 'x', type: 'integer', choices: [{ name: 'n', value: 'text' }] },
+      ] }]],
+      ['a fractional integer choice', [{ name: 'a', description: 'x', options: [
+        { name: 'o', description: 'x', type: 'integer', choices: [{ name: 'n', value: 1.5 }] },
+      ] }]],
+      ['choices on a boolean', [{ name: 'a', description: 'x', options: [
+        { name: 'o', description: 'x', type: 'boolean', choices: [{ name: 'n', value: 1 }] },
+      ] }]],
+      ['an unknown option type', [{ name: 'a', description: 'x', options: [{ name: 'o', description: 'x', type: 'user' }] }]],
+      ['eleven options', [{ name: 'a', description: 'x', options: Array.from({ length: 11 }, (_, i) => ({ name: `o${i}`, description: 'x', type: 'string' })) }]],
+      ['a list that is not an array', 'play'],
+    ];
+    for (const [label, commands] of bad) {
+      const res = await api<InvalidBody>(A, 'PUT', '/api/bots/@me/commands', bot.token, { commands });
+      expect(res.status, label).toBe(400);
+      expect(res.body.code, label).toBe('validation_failed');
+      expect(typeof res.body.details?.field, label).toBe('string');
+    }
+    const named = await api<InvalidBody>(A, 'PUT', '/api/bots/@me/commands', bot.token, {
+      commands: [{ name: 'Play Now', description: 'x' }],
+    });
+    expect(named.body.details?.field).toBe('commands[0].name');
+  });
+
+  it('only a bot account may register or read commands', async () => {
+    const human = await api<InvalidBody>(A, 'PUT', '/api/bots/@me/commands', owner.token, { commands: [] });
+    expect(human.status).toBe(403);
+    expect(human.body.code).toBe('bot_account_required');
+    const read = await api<InvalidBody>(A, 'GET', '/api/bots/@me/commands', owner.token);
+    expect(read.status).toBe(403);
+  });
+});
+
 describe('cutting a bot off from the host', () => {
   it('a token regeneration on the home tombstones the host account and kills its JWT', async () => {
     const oldHomeToken = bot.token;

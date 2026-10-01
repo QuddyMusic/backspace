@@ -27,6 +27,7 @@ export const ERROR_CODES = [
   // Bots
   'bot_name_invalid',
   'bot_name_suffix_required',
+  'bot_account_required',
   'bot_forbidden',
   'bot_limit_reached',
   'bot_not_found',

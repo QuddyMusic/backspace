@@ -1829,3 +1829,43 @@ export interface CreateBotResponse {
 export interface RegenerateBotTokenResponse {
   token: string;
 }
+
+export type BotCommandOptionType = 'string' | 'integer' | 'number' | 'boolean';
+
+export interface BotCommandChoice {
+  name: string;
+  value: string | number;
+}
+
+export interface BotCommandOption {
+  name: string;
+  description: string;
+  type: BotCommandOptionType;
+  required: boolean;
+  /** Static choices (string, integer and number options only), at most 25. */
+  choices?: BotCommandChoice[];
+}
+
+/** What a bot sends when registering a command. */
+export interface BotCommandDefinition {
+  name: string;
+  description: string;
+  options?: Array<Omit<BotCommandOption, 'required'> & { required?: boolean }>;
+}
+
+export interface BotCommand {
+  id: string;
+  botId: string;
+  name: string;
+  description: string;
+  options: BotCommandOption[];
+  updatedAt: number;
+}
+
+export interface SetBotCommandsRequest {
+  commands: BotCommandDefinition[];
+}
+
+export interface BotCommandsResponse {
+  commands: BotCommand[];
+}

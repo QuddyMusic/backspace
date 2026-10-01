@@ -235,6 +235,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   // bots
   bot_name_invalid: 'Bot name must be {{min}}-{{max}} characters: lowercase letters, numbers and underscores',
   bot_name_suffix_required: 'Bot name must end with "_bot"',
+  bot_account_required: 'Only a bot account can do this',
   bot_forbidden: 'Bots cannot read message history',
   bot_limit_reached: 'You can have at most {{max}} bots',
   bot_not_found: 'Bot not found',

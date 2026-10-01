@@ -218,5 +218,6 @@
   "bots_no_friends": "Freundschaftsanfragen an Bots sind nicht möglich",
   "bot_home_not_peered": "Die Heimatinstanz des Bots ist nicht mit dieser Instanz verbunden",
   "bot_proof_invalid": "Der Identitätsnachweis des Bots ist ungültig oder abgelaufen",
-  "bot_profile_owner_only": "Das Profil eines Bots kann nur von seinem Besitzer geändert werden"
+  "bot_profile_owner_only": "Das Profil eines Bots kann nur von seinem Besitzer geändert werden",
+  "bot_account_required": "Das kann nur ein Bot-Konto"
 }

@@ -636,3 +636,16 @@ export const inviteRedemptions = sqliteTable('invite_redemptions', {
   inviteIdx: index('idx_invite_redemptions_invite_id').on(table.inviteId),
   userIdx: index('idx_invite_redemptions_user_id').on(table.userId),
 }));
+
+/** Slash commands a bot registers for itself (replace-all through PUT /api/bots/@me/commands). */
+export const botCommands = sqliteTable('bot_commands', {
+  id: text('id').primaryKey(),
+  botId: text('bot_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  description: text('description').notNull(),
+  /** JSON array of BotCommandOption. */
+  options: text('options').notNull().default('[]'),
+  updatedAt: integer('updated_at').notNull(),
+}, (table) => ({
+  botNameIdx: uniqueIndex('idx_bot_commands_bot_name').on(table.botId, table.name),
+}));

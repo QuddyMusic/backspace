@@ -218,5 +218,6 @@
   "bots_no_friends": "无法向机器人发送好友请求",
   "bot_home_not_peered": "该机器人的主实例尚未与本实例建立联邦",
   "bot_proof_invalid": "机器人身份证明无效或已过期",
-  "bot_profile_owner_only": "机器人资料只能由其所有者修改"
+  "bot_profile_owner_only": "机器人资料只能由其所有者修改",
+  "bot_account_required": "只有机器人账号可以执行此操作"
 }
