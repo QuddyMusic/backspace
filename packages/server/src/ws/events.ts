@@ -158,6 +158,12 @@ export function handleClientEvent(
     case 'voice_leave':
       handleVoiceLeave(userId);
       break;
+    case 'bot_voice_join':
+      handleBotVoiceJoin(event, userId);
+      break;
+    case 'bot_voice_leave':
+      handleBotVoiceLeave(event, userId);
+      break;
     case 'dm_message_create':
       handleDmMessageCreate(event, userId);
       break;
@@ -505,6 +511,76 @@ function broadcastRoomLeave(roomId: string, room: VoiceRoom, userId: string): vo
  * are out of. A refusal aimed at any *other* channel leaves the live session
  * alone, which is what it has always done.
  */
+/** Voice channels one bot may sit in at the same time. */
+export const MAX_BOT_VOICE_ROOMS = 25;
+
+function isBotAccount(userId: string): boolean {
+  return getDb().select({ isBot: schema.users.isBot })
+    .from(schema.users).where(eq(schema.users.id, userId)).get()?.isBot === 1;
+}
+
+/**
+ * A bot takes a seat in a voice channel without leaving the others: one
+ * instance per channel. Same checks as `voice_join` (channel, membership,
+ * CONNECT); the audio itself is the bot's own LiveKit connection per room, with
+ * a token from `POST /api/livekit/token { channelId }`.
+ */
+function handleBotVoiceJoin(event: Record<string, unknown>, userId: string): void {
+  const channelId = event.channelId;
+  if (typeof channelId !== 'string' || channelId.length === 0) {
+    connectionManager.sendToUser(userId, { type: 'error', message: 'channelId is required' });
+    return;
+  }
+  if (!isBotAccount(userId)) {
+    connectionManager.sendToUser(userId, { type: 'error', message: 'Only bots can join several voice channels', code: 'bot_account_required' });
+    return;
+  }
+  const spaceId = getChannelSpaceId(channelId);
+  if (!spaceId) {
+    connectionManager.sendToUser(userId, { type: 'error', message: 'Channel not found' });
+    return;
+  }
+  if (!isMember(spaceId, userId) || !hasPermission(userId, spaceId, PermissionBits.CONNECT, channelId)) {
+    connectionManager.sendToUser(userId, { type: 'error', message: 'Missing CONNECT permission' });
+    return;
+  }
+  if (connectionManager.getBotRoomIds(userId).length >= MAX_BOT_VOICE_ROOMS
+      && !connectionManager.getBotRoomIds(userId).includes(channelId)) {
+    connectionManager.sendToUser(userId, { type: 'error', message: `A bot can be in at most ${MAX_BOT_VOICE_ROOMS} voice channels` });
+    return;
+  }
+  if (!connectionManager.botJoinRoom(userId, channelId, spaceId)) return; // already there
+
+  const room = connectionManager.getRoom(channelId);
+  connectionManager.sendToRoom(channelId, {
+    type: 'voice_state_update',
+    channelId,
+    userId,
+    action: 'join',
+    channelElapsedSeconds: room ? getVoiceRoomElapsedSeconds(room) : undefined,
+  });
+
+  // A bot has no SPEAK-less listener mode of its own: a role without SPEAK mutes it like anyone.
+  const perms = computePermissions(userId, spaceId, channelId);
+  const canSpeak = (perms & PermissionBits.SPEAK) !== 0n || (perms & PermissionBits.ADMINISTRATOR) !== 0n;
+  connectionManager.setPermissionMuted(spaceId, userId, !canSpeak);
+  if (!canSpeak) {
+    connectionManager.sendToUser(userId, { type: 'voice_permission_muted', userId, spaceId, muted: true });
+  }
+}
+
+function handleBotVoiceLeave(event: Record<string, unknown>, userId: string): void {
+  const channelId = event.channelId;
+  if (typeof channelId !== 'string' || channelId.length === 0) {
+    connectionManager.sendToUser(userId, { type: 'error', message: 'channelId is required' });
+    return;
+  }
+  const room = connectionManager.botLeaveRoom(userId, channelId);
+  if (!room) return; // not in that channel
+  broadcastRoomLeave(channelId, room, userId);
+  if (connectionManager.getBotRoomIds(userId).length === 0) connectionManager.clearVoiceUserStatus(userId);
+}
+
 function rejectVoiceJoin(userId: string, channelId: string): void {
   if (connectionManager.getUserRoom(userId)?.roomId === channelId) {
     handleVoiceLeave(userId);

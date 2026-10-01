@@ -727,6 +727,98 @@ describe('invoking a slash command', () => {
   });
 });
 
+describe('a bot in several voice channels', () => {
+  interface VoiceBody { token?: string; url?: string; code?: string }
+  let sid: string;
+  let voiceA: string;
+  let voiceB: string;
+  let botWs: WsCapture;
+
+  const voiceEvent = (channelId: string, action: string): boolean =>
+    botWs.events.some(e => e.type === 'voice_state_update' && e.channelId === channelId && e.userId === bot.id && e.action === action);
+
+  it('sits in two voice channels at once, each with its own LiveKit token', async () => {
+    const created = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', owner.token, { name: 'bot-voice-space' });
+    sid = (created.body.space ?? created.body).id as string;
+    expect((await api<ErrBody>(A, 'POST', `/api/bots/${bot.id}/spaces`, owner.token, { spaceId: sid })).status).toBe(200);
+
+    const makeVoice = async (name: string): Promise<string> => {
+      const r = await api<{ id: string }>(A, 'POST', `/api/spaces/${sid}/channels`, owner.token, { name, type: 'voice' });
+      expect(r.status).toBeLessThan(300);
+      return r.body.id;
+    };
+    voiceA = await makeVoice('radio-one');
+    voiceB = await makeVoice('radio-two');
+
+    botWs = await connectWs(A.origin, bot.token);
+    sockets.push(botWs);
+    await botWs.waitForEvent('ready');
+
+    botWs.send({ type: 'bot_voice_join', channelId: voiceA });
+    botWs.send({ type: 'bot_voice_join', channelId: voiceB });
+    expect(await waitUntil(() => voiceEvent(voiceA, 'join') && voiceEvent(voiceB, 'join'), 5_000)).toBe(true);
+    // Joining the second channel did not push the bot out of the first.
+    expect(voiceEvent(voiceA, 'leave')).toBe(false);
+
+    const tokenA = await api<VoiceBody>(A, 'POST', '/api/livekit/token', bot.token, { channelId: voiceA });
+    const tokenB = await api<VoiceBody>(A, 'POST', '/api/livekit/token', bot.token, { channelId: voiceB });
+    expect(tokenA.status).toBe(200);
+    expect(tokenB.status).toBe(200);
+    expect(tokenA.body.token).not.toBe(tokenB.body.token);
+  });
+
+  it('a person sees the bot in both channels, and leaving one keeps the other', async () => {
+    const watcher = await connectWs(A.origin, owner.token);
+    sockets.push(watcher);
+    const ready = await watcher.waitForEvent('ready');
+    const states = (ready as { voiceStates?: Record<string, string[]> }).voiceStates ?? {};
+    expect(states[voiceA]).toContain(bot.id);
+    expect(states[voiceB]).toContain(bot.id);
+
+    botWs.send({ type: 'bot_voice_leave', channelId: voiceA });
+    expect(await waitUntil(() => voiceEvent(voiceA, 'leave'), 5_000)).toBe(true);
+    expect(voiceEvent(voiceB, 'leave')).toBe(false);
+    expect(await waitUntil(() => watcher.events.some(e => e.type === 'voice_state_update' && e.channelId === voiceA && e.userId === bot.id && e.action === 'leave'), 5_000)).toBe(true);
+  });
+
+  it('refuses a person using the bot-only events and a channel the bot cannot reach', async () => {
+    const humanWs = await connectWs(A.origin, owner.token);
+    sockets.push(humanWs);
+    await humanWs.waitForEvent('ready');
+    humanWs.send({ type: 'bot_voice_join', channelId: voiceB });
+    expect(await waitUntil(() => humanWs.events.some(e => e.type === 'error' && e.code === 'bot_account_required'), 5_000)).toBe(true);
+
+    botWs.send({ type: 'bot_voice_join', channelId: 'no-such-channel' });
+    expect(await waitUntil(() => botWs.events.some(e => e.type === 'error' && e.message === 'Channel not found'), 5_000)).toBe(true);
+  });
+
+  it('removing the bot from the space takes it out of that space\'s voice channels', async () => {
+    expect((await api<ErrBody>(A, 'DELETE', `/api/bots/${bot.id}/spaces/${sid}`, owner.token)).status).toBe(200);
+    expect(await waitUntil(() => voiceEvent(voiceB, 'leave'), 5_000)).toBe(true);
+  });
+  it('a bot that drops its connection leaves every voice channel it sat in', async () => {
+    // Back in the space, in two channels, on a fresh connection.
+    expect((await api<ErrBody>(A, 'POST', `/api/bots/${bot.id}/spaces`, owner.token, { spaceId: sid })).status).toBe(200);
+    const second = await connectWs(A.origin, bot.token);
+    sockets.push(second);
+    await second.waitForEvent('ready');
+    second.send({ type: 'bot_voice_join', channelId: voiceA });
+    second.send({ type: 'bot_voice_join', channelId: voiceB });
+
+    const watcher = await connectWs(A.origin, owner.token);
+    sockets.push(watcher);
+    const gone = (channelId: string): boolean =>
+      watcher.events.some(e => e.type === 'voice_state_update' && e.channelId === channelId && e.userId === bot.id && e.action === 'leave');
+    await waitUntil(() => second.events.some(e => e.type === 'voice_state_update' && e.channelId === voiceB && e.action === 'join'), 5_000);
+
+    second.close();
+    // The old socket from the first test is still open, so the bot stays online and
+    // keeps its seats; close that one too and the bot is gone for real.
+    botWs.close();
+    expect(await waitUntil(() => gone(voiceA) && gone(voiceB), 10_000)).toBe(true);
+  });
+});
+
 describe('cutting a bot off from the host', () => {
   it('a token regeneration on the home tombstones the host account and kills its JWT', async () => {
     const oldHomeToken = bot.token;
