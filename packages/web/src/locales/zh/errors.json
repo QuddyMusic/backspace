@@ -219,5 +219,10 @@
   "bot_home_not_peered": "该机器人的主实例尚未与本实例建立联邦",
   "bot_proof_invalid": "机器人身份证明无效或已过期",
   "bot_profile_owner_only": "机器人资料只能由其所有者修改",
-  "bot_account_required": "只有机器人账号可以执行此操作"
+  "bot_account_required": "只有机器人账号可以执行此操作",
+  "command_not_found": "该机器人没有此命令",
+  "bot_unavailable": "机器人当前未连接",
+  "interaction_not_found": "未找到交互",
+  "interaction_expired": "此交互已过期",
+  "interaction_responses_exceeded": "此交互的回复次数已达上限"
 }

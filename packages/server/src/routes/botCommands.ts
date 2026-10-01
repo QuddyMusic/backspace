@@ -1,4 +1,4 @@
-import type { FastifyReply, FastifyRequest, FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import type {
   BotCommand,
@@ -10,6 +10,7 @@ import type {
 } from '@backspace/shared';
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
+import { requireBot } from '../utils/botAuth.js';
 import { sendError } from '../utils/httpErrors.js';
 import { generateSnowflake } from '../utils/snowflake.js';
 
@@ -156,12 +157,6 @@ function commandsOf(botId: string): BotCommand[] {
  * keeps its id). Invoking a command is a separate step.
  */
 export async function botCommandRoutes(app: FastifyInstance): Promise<void> {
-  const requireBot = async (request: FastifyRequest, reply: FastifyReply) => {
-    const row = getDb().select({ isBot: schema.users.isBot })
-      .from(schema.users).where(eq(schema.users.id, request.userId)).get();
-    if (row?.isBot !== 1) return sendError(reply, 403, 'bot_account_required');
-  };
-
   app.get('/api/bots/@me/commands', { preHandler: [authenticate, requireBot] }, async (request, reply) => {
     const response: BotCommandsResponse = { commands: commandsOf(request.userId) };
     return reply.send(response);

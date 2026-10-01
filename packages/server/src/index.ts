@@ -24,6 +24,7 @@ import { invitesRoutes } from './routes/invites.js';
 import { botRoutes } from './routes/bots.js';
 import { reactionRoutes } from './routes/reactions.js';
 import { botCommandRoutes } from './routes/botCommands.js';
+import { interactionRoutes } from './routes/interactions.js';
 import { exploreRoutes } from './routes/explore.js';
 import { directoryRoutes } from './routes/directory.js';
 import { searchRoutes } from './routes/search.js';
@@ -224,6 +225,7 @@ async function main(): Promise<void> {
   await app.register(botRoutes);
   await app.register(reactionRoutes);
   await app.register(botCommandRoutes);
+  await app.register(interactionRoutes);
   await app.register(exploreRoutes);
   await app.register(directoryRoutes);
   await app.register(searchRoutes);

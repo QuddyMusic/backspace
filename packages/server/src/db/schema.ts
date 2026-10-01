@@ -649,3 +649,20 @@ export const botCommands = sqliteTable('bot_commands', {
 }, (table) => ({
   botNameIdx: uniqueIndex('idx_bot_commands_bot_name').on(table.botId, table.name),
 }));
+
+/** One slash-command invocation, kept until it expires so only the invoked bot can answer it. */
+export const interactions = sqliteTable('interactions', {
+  id: text('id').primaryKey(),
+  botId: text('bot_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  channelId: text('channel_id'),
+  dmChannelId: text('dm_channel_id'),
+  command: text('command').notNull(),
+  /** JSON object of the validated option values. */
+  options: text('options').notNull().default('{}'),
+  createdAt: integer('created_at').notNull(),
+  expiresAt: integer('expires_at').notNull(),
+  responses: integer('responses').notNull().default(0),
+}, (table) => ({
+  expiresIdx: index('idx_interactions_expires_at').on(table.expiresAt),
+}));

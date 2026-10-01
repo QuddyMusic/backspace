@@ -570,6 +570,163 @@ describe('slash command registration', () => {
   });
 });
 
+describe('invoking a slash command', () => {
+  interface InteractionEvent {
+    id: string;
+    command: string;
+    options: Record<string, unknown>;
+    user: { id: string };
+    channelId?: string;
+    dmChannelId?: string;
+    spaceId?: string;
+  }
+  interface InvokeBody { id?: string; expiresAt?: number; code?: string; details?: { field?: string } }
+  interface Listed { commands: Array<{ name: string; bot: { id: string } }> }
+
+  const play = {
+    name: 'play',
+    description: 'Play a track',
+    options: [
+      { name: 'query', description: 'What to play', type: 'string', required: true },
+      { name: 'volume', description: 'Volume', type: 'integer', choices: [{ name: 'low', value: 20 }, { name: 'high', value: 80 }] },
+    ],
+  };
+
+  let sid: string;
+  let cid: string;
+  let invocationId: string;
+  let botWs: WsCapture;
+
+  const received = (id: string): InteractionEvent | undefined => {
+    for (const e of botWs.events) {
+      if (e.type === 'interaction_created' && (e.interaction as InteractionEvent).id === id) return e.interaction as InteractionEvent;
+    }
+    return undefined;
+  };
+  const invoke = (token: string, body: unknown) => api<InvokeBody>(A, 'POST', '/api/interactions', token, body);
+  const respond = (token: string, id: string, content: string) =>
+    api<{ content?: string; code?: string }>(A, 'POST', `/api/interactions/${id}/respond`, token, { content });
+
+  it('lists the commands of the bots in a chat and delivers an invocation to the bot', async () => {
+    const created = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', owner.token, { name: 'bot-slash-space' });
+    sid = (created.body.space ?? created.body).id as string;
+    const chRes = await api<Array<{ id: string; type: string }> | { channels: Array<{ id: string; type: string }> }>(
+      A, 'GET', `/api/spaces/${sid}/channels`, owner.token,
+    );
+    const channels = Array.isArray(chRes.body) ? chRes.body : chRes.body.channels;
+    cid = (channels.find(c => c.type === 'text') ?? channels[0]!).id;
+    expect((await api<ErrBody>(A, 'POST', `/api/bots/${bot.id}/spaces`, owner.token, { spaceId: sid })).status).toBe(200);
+    expect((await api<unknown>(A, 'PUT', '/api/bots/@me/commands', bot.token, { commands: [play] })).status).toBe(200);
+
+    botWs = await connectWs(A.origin, bot.token);
+    sockets.push(botWs);
+    await botWs.waitForEvent('ready');
+
+    const listed = await api<Listed>(A, 'GET', `/api/commands?channelId=${cid}`, owner.token);
+    expect(listed.status).toBe(200);
+    expect(listed.body.commands.map(c => `${c.name}:${c.bot.id}`)).toEqual([`play:${bot.id}`]);
+
+    const res = await invoke(owner.token, { botId: bot.id, command: 'play', options: { query: 'song', volume: 80 }, channelId: cid });
+    expect(res.status).toBe(201);
+    invocationId = res.body.id!;
+    expect(invocationId).toMatch(/^[0-9a-f]{32}$/);
+    expect(await waitUntil(() => received(invocationId) !== undefined, 5_000)).toBe(true);
+    const event = received(invocationId)!;
+    expect(event.command).toBe('play');
+    expect(event.options).toEqual({ query: 'song', volume: 80 });
+    expect(event.user.id).toBe(owner.id);
+    expect(event.channelId).toBe(cid);
+    expect(event.spaceId).toBe(sid);
+  });
+
+  it('the bot answers through the ordinary message route, up to five times', async () => {
+    for (let n = 1; n <= 5; n++) {
+      const r = await respond(bot.token, invocationId, `reply ${n}`);
+      expect(r.status, `response ${n}`).toBe(201);
+      expect(r.body.content).toBe(`reply ${n}`);
+    }
+    const sixth = await respond(bot.token, invocationId, 'one too many');
+    expect(sixth.status).toBe(429);
+    expect(sixth.body.code).toBe('interaction_responses_exceeded');
+
+    const history = await api<Array<{ content: string }>>(A, 'GET', `/api/channels/${cid}/messages`, owner.token);
+    const contents = history.body.map(m => m.content);
+    expect(contents).toContain('reply 5');
+    expect(contents).not.toContain('one too many');
+  });
+
+  it('refuses a bad invocation and names the wrong option', async () => {
+    const base = { botId: bot.id, command: 'play', channelId: cid };
+    const cases: Array<[string, unknown, number, string, string?]> = [
+      ['a missing required option', { ...base, options: {} }, 400, 'validation_failed', 'options.query'],
+      ['a value outside the choices', { ...base, options: { query: 'x', volume: 50 } }, 400, 'validation_failed', 'options.volume'],
+      ['a wrongly typed value', { ...base, options: { query: 5 } }, 400, 'validation_failed', 'options.query'],
+      ['an unknown option', { ...base, options: { query: 'x', extra: 1 } }, 400, 'validation_failed', 'options.extra'],
+      ['an unknown command', { ...base, command: 'nope' }, 404, 'command_not_found'],
+      ['both chat targets', { ...base, dmChannelId: 'x', options: { query: 'x' } }, 400, 'validation_failed'],
+    ];
+    for (const [label, body, status, code, field] of cases) {
+      const res = await invoke(owner.token, body);
+      expect(res.status, label).toBe(status);
+      expect(res.body.code, label).toBe(code);
+      if (field) expect(res.body.details?.field, label).toBe(field);
+    }
+  });
+
+  it('only someone who may write in the chat can invoke, and only the invoked bot may answer', async () => {
+    const outsider = await registerLocal(A, 'slashoutsider');
+    const denied = await invoke(outsider.token, { botId: bot.id, command: 'play', options: { query: 'x' }, channelId: cid });
+    expect(denied.status).toBe(403);
+    expect(denied.body.code).toBe('missing_permission');
+
+    const rival = await createBot('rival_bot');
+    const stolen = await respond(rival.token, invocationId, 'mine now');
+    expect(stolen.status).toBe(404);
+    expect(stolen.body.code).toBe('interaction_not_found');
+    const human = await respond(owner.token, invocationId, 'x');
+    expect(human.status).toBe(403);
+    expect(human.body.code).toBe('bot_account_required');
+
+    const notInChat = await invoke(owner.token, { botId: rival.id, command: 'play', options: { query: 'x' }, channelId: cid });
+    expect(notInChat.status).toBe(404);
+    expect(notInChat.body.code).toBe('bot_not_found');
+  });
+
+  it('works in a direct message with the bot', async () => {
+    const dm = await api<{ id?: string; dmChannel?: { id: string } }>(A, 'POST', '/api/dm', owner.token, { userId: bot.id });
+    const dmId = (dm.body.dmChannel?.id ?? dm.body.id) as string;
+    const listed = await api<Listed>(A, 'GET', `/api/commands?dmChannelId=${dmId}`, owner.token);
+    expect(listed.body.commands.map(c => c.name)).toEqual(['play']);
+
+    const res = await invoke(owner.token, { botId: bot.id, command: 'play', options: { query: 'dm song' }, dmChannelId: dmId });
+    expect(res.status).toBe(201);
+    expect(await waitUntil(() => received(res.body.id!) !== undefined, 5_000)).toBe(true);
+    expect(received(res.body.id!)!.dmChannelId).toBe(dmId);
+    const answer = await respond(bot.token, res.body.id!, 'dm reply');
+    expect(answer.status).toBe(201);
+    expect(answer.body.content).toBe('dm reply');
+  });
+
+  it('refuses a late answer, and an invocation while the bot is offline', async () => {
+    withWritableDb(A, db => {
+      db.prepare('UPDATE interactions SET expires_at = ? WHERE id = ?').run(Date.now() - 1_000, invocationId);
+    });
+    const late = await respond(bot.token, invocationId, 'too late');
+    expect(late.status).toBe(410);
+    expect(late.body.code).toBe('interaction_expired');
+
+    // A bot with no open socket cannot be handed a command.
+    const quiet = await createBot('quiet_bot');
+    expect((await api<ErrBody>(A, 'POST', `/api/bots/${quiet.id}/spaces`, owner.token, { spaceId: sid })).status).toBe(200);
+    expect((await api<unknown>(A, 'PUT', '/api/bots/@me/commands', quiet.token, {
+      commands: [{ name: 'hush', description: 'Say nothing' }],
+    })).status).toBe(200);
+    const offline = await invoke(owner.token, { botId: quiet.id, command: 'hush', channelId: cid });
+    expect(offline.status).toBe(409);
+    expect(offline.body.code).toBe('bot_unavailable');
+  });
+});
+
 describe('cutting a bot off from the host', () => {
   it('a token regeneration on the home tombstones the host account and kills its JWT', async () => {
     const oldHomeToken = bot.token;

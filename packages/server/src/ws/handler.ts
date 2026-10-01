@@ -862,6 +862,14 @@ class ConnectionManager {
   // ─── Broadcasting ─────────────────────────────────────────────────────────
 
   /** Send to a specific user (all their connections). */
+  /** Whether the user has at least one open socket (a bot with none cannot be handed a command). */
+  hasLiveConnection(userId: string): boolean {
+    for (const ws of this.getUserConnections(userId)) {
+      if (ws.readyState === 1) return true;
+    }
+    return false;
+  }
+
   sendToUser(userId: string, event: ServerEvent): void {
     const connections = this.getUserConnections(userId);
     const message = JSON.stringify(event);

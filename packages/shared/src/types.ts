@@ -516,6 +516,7 @@ export interface PresenceIdentity {
 export type ServerEvent =
   | { type: 'ready'; user: User; spaces: SpaceWithChannelsAndMembers[]; dmChannels: DmChannel[]; folders?: SpaceFolder[]; spaceLayout?: SpaceLayoutItem[] | null; layoutUpdatedAt?: number; voiceStates?: Record<string, string[]>; voiceChannelElapsedSeconds?: Record<string, number>; voiceUserStates?: Record<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }>; readStates?: ReadState[]; activeCalls?: ActiveCallInfo[]; spaceVoiceStates?: Record<string, { spaceMuted: boolean; spaceDeafened: boolean }>; userActivities?: Record<string, Activity[]>; userActivityIdentities?: Record<string, PresenceIdentity>; rejectedPeerOrigins?: string[]; awaitingApprovalPeerOrigins?: string[]; activePeerOrigins?: string[]; pendingApprovalCount?: number }
   | { type: 'message_created'; message: MessageWithUser }
+  | { type: 'interaction_created'; interaction: BotInteraction }
   | { type: 'message_updated'; message: MessageWithUser }
   | { type: 'message_deleted'; messageId: string; channelId: string }
   | { type: 'typing'; channelId: string; userId: string; username: string }
@@ -1868,4 +1869,53 @@ export interface SetBotCommandsRequest {
 
 export interface BotCommandsResponse {
   commands: BotCommand[];
+}
+
+export type BotInteractionOptionValue = string | number | boolean;
+
+/** The event a bot receives when a user invokes one of its slash commands. */
+export interface BotInteraction {
+  id: string;
+  command: string;
+  options: Record<string, BotInteractionOptionValue>;
+  user: User;
+  /** Set for a space channel. */
+  channelId?: string;
+  spaceId?: string;
+  /** Set for a direct or group DM. */
+  dmChannelId?: string;
+  expiresAt: number;
+}
+
+export interface CreateInteractionRequest {
+  botId: string;
+  command: string;
+  options?: Record<string, BotInteractionOptionValue>;
+  /** Exactly one of channelId and dmChannelId. */
+  channelId?: string;
+  dmChannelId?: string;
+}
+
+export interface CreateInteractionResponse {
+  id: string;
+  expiresAt: number;
+}
+
+export interface RespondToInteractionRequest {
+  content?: string;
+  attachments?: string[];
+}
+
+export interface BotCommandListing extends BotCommand {
+  bot: {
+    id: string;
+    username: string;
+    displayName: string | null;
+    avatar: string | null;
+    avatarColor: string | null;
+  };
+}
+
+export interface ChatCommandsResponse {
+  commands: BotCommandListing[];
 }

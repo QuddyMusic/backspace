@@ -219,5 +219,10 @@
   "bot_home_not_peered": "Die Heimatinstanz des Bots ist nicht mit dieser Instanz verbunden",
   "bot_proof_invalid": "Der Identitätsnachweis des Bots ist ungültig oder abgelaufen",
   "bot_profile_owner_only": "Das Profil eines Bots kann nur von seinem Besitzer geändert werden",
-  "bot_account_required": "Das kann nur ein Bot-Konto"
+  "bot_account_required": "Das kann nur ein Bot-Konto",
+  "command_not_found": "Dieser Bot hat diesen Befehl nicht",
+  "bot_unavailable": "Der Bot ist derzeit nicht verbunden",
+  "interaction_not_found": "Interaktion nicht gefunden",
+  "interaction_expired": "Diese Interaktion ist abgelaufen",
+  "interaction_responses_exceeded": "Das Antwortlimit für diese Interaktion ist erreicht"
 }
