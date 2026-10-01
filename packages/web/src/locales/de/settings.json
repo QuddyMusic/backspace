@@ -477,7 +477,8 @@
       "loading": "Spaces werden geladen",
       "empty": "Du verwaltest noch keine Spaces. Zum Hinzufügen eines Bots brauchst du die Berechtigung zum Verwalten des Spaces.",
       "add": "Hinzufügen",
-      "added": "Hinzugefügt"
+      "added": "Hinzugefügt",
+      "remove": "Entfernen"
     }
   }
 }

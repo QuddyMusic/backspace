@@ -648,6 +648,7 @@ POST /bots/:id/token → { token, federation } [5 per 15 min; revokes earlier to
 DELETE /bots/:id → { success, federation }
 GET /bots/:id/spaces → { spaces: [{ id, name, icon, botIsMember }] } [spaces where the caller holds MANAGE_SPACE]
 POST /bots/:id/spaces { spaceId } → { success } [MANAGE_SPACE]
+DELETE /bots/:id/spaces/:spaceId    → { success }                     [MANAGE_SPACE]
 PUT /messages/:id/reactions/:emoji → { success, changed } [ADD_REACTIONS for space messages; channel or DM message, found by id]
 DELETE /messages/:id/reactions/:emoji → { success, changed } [own reaction]
 `Authorization: Bot <token>` is accepted wherever `Bearer <token>` is (including tus uploads). `POST /auth/register` also takes `botProof` for a bot registering on another instance (bots.md, section 7).

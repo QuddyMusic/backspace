@@ -41,6 +41,7 @@ Authorization: Bot <token>
 | DELETE | `/api/bots/:id` | -- | `{ success, federation }` |
 | GET | `/api/bots/:id/spaces` | -- | `{ spaces: [{ id, name, icon, botIsMember }] }` (spaces where the caller holds MANAGE_SPACE) |
 | POST | `/api/bots/:id/spaces` | `{ spaceId }` | `{ success }` |
+| DELETE | `/api/bots/:id/spaces/:spaceId` | -- | `{ success }` (MANAGE_SPACE; the bot gets `member_left` and no further events of that space) |
 
 `BotSummary` is `{ id, username, displayName, avatarColor, avatar, createdAt }`. `avatar` is a bare upload filename (upload through tus first) or `null`. Errors use the project format `{ error, code, statusCode, details? }`; the codes specific to bots are `bot_not_found`, `bot_limit_reached`, `bot_name_invalid`, `bot_name_suffix_required`, `bots_native_only`, `bot_profile_owner_only`, `bot_home_not_peered`, `bot_proof_invalid`.
 
@@ -51,6 +52,7 @@ A name change or an avatar change is broadcast (`user_updated`) and relayed to p
 ## 4. Getting a bot into conversations
 
 - **Space, by the owner:** `POST /api/bots/:id/spaces`. The caller needs MANAGE_SPACE in that space; the result is the same as joining (member row, `member_joined`). A banned bot is refused (`user_banned`), a member answers `409 already_member`.
+- **Taking the bot out:** `DELETE /api/bots/:id/spaces/:spaceId` by the owner (MANAGE_SPACE), or the ordinary member kick (KICK_MEMBERS) by a space manager. Both end live delivery of that space to the bot's sockets.
 - **Space, by the bot:** `POST /api/spaces/join { inviteCode }`, like any user. Request-only spaces answer `403 join_request_required`.
 - **Group DM:** any member adds the bot with `POST /api/dm/:id/members { userId }`. The friendship requirement is waived for the **owner adding their own bot**, because bots take no friends.
 - **1-on-1 DM:** a user finds the bot with `GET /api/social/search?q=<username>` and opens `POST /api/dm { userId }`. No friendship needed.

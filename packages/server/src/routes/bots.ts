@@ -16,8 +16,8 @@ import { resizeProfileImage } from '../utils/thumbnail.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { queueProfileUpdateRelay } from '../utils/profileRelay.js';
 import type { BotSummary, UpdateBotRequest, UpdateBotResponse } from '@backspace/shared';
-import { hasPermission, isBanned, isMember, PermissionBits } from '../utils/permissions.js';
-import { addUserToSpace } from '../utils/spaceMembership.js';
+import { hasPermission, isBanned, isMember, isSpaceOwner, PermissionBits } from '../utils/permissions.js';
+import { addUserToSpace, removeUserFromSpace } from '../utils/spaceMembership.js';
 
 /** Not a bcrypt hash, so password login is impossible (same idea as '!federation-replicated'). */
 const BOT_PASSWORD_MARKER = '!bot';
@@ -242,6 +242,26 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     if (isBanned(spaceId, bot.id)) return sendError(reply, 403, 'user_banned');
     if (isMember(spaceId, bot.id)) return sendError(reply, 409, 'already_member');
     addUserToSpace(spaceId, bot.id);
+    return reply.send({ success: true });
+  });
+
+  // The counterpart of the add above: the owner takes the bot out of a space they manage.
+  app.delete<{ Params: { id: string; spaceId: string } }>('/api/bots/:id/spaces/:spaceId', {
+    preHandler: pre,
+    config: { rateLimit: { max: 30, timeWindow: '15 minutes' } },
+  }, async (request, reply) => {
+    const bot = findOwnedBot(request.userId, request.params.id);
+    if (!bot) return sendError(reply, 404, 'bot_not_found');
+    const { spaceId } = request.params;
+    const space = getDb().select({ id: schema.spaces.id }).from(schema.spaces)
+      .where(eq(schema.spaces.id, spaceId)).get();
+    if (!space) return sendError(reply, 404, 'space_not_found');
+    if (!hasPermission(request.userId, spaceId, PermissionBits.MANAGE_SPACE)) {
+      return sendError(reply, 403, 'missing_permission', { permission: 'MANAGE_SPACE' });
+    }
+    if (!isMember(spaceId, bot.id)) return sendError(reply, 404, 'member_not_found');
+    if (isSpaceOwner(spaceId, bot.id)) return sendError(reply, 400, 'cannot_target_owner');
+    removeUserFromSpace(spaceId, bot.id);
     return reply.send({ success: true });
   });
 

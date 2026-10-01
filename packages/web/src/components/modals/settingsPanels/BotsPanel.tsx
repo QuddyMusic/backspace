@@ -225,6 +225,19 @@ export function BotsPanel() {
     }
   };
 
+  const handleRemoveFromSpace = async (bot: BotSummary, spaceId: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.bots.removeFromSpace(bot.id, spaceId);
+      setSpaceOptions((prev) => prev.map((s) => (s.id === spaceId ? { ...s, botIsMember: false } : s)));
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleCopy = () => {
     if (!revealed) return;
     navigator.clipboard
@@ -424,7 +437,17 @@ export function BotsPanel() {
                     <div key={space.id} className="flex items-center justify-between gap-2">
                       <span className="text-sm text-txt-primary truncate">{space.name}</span>
                       {space.botIsMember ? (
-                        <span className="text-xs text-txt-tertiary shrink-0">{t('settings:bots.spaces.added')}</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-xs text-txt-tertiary">{t('settings:bots.spaces.added')}</span>
+                          <button
+                            type="button"
+                            className={dangerButtonClass}
+                            disabled={busy}
+                            onClick={() => void handleRemoveFromSpace(bot, space.id)}
+                          >
+                            {t('settings:bots.spaces.remove')}
+                          </button>
+                        </div>
                       ) : (
                         <button
                           type="button"

@@ -477,7 +477,8 @@
       "loading": "Loading spaces",
       "empty": "You manage no spaces yet. Adding a bot needs permission to manage the space.",
       "add": "Add",
-      "added": "Added"
+      "added": "Added",
+      "remove": "Remove"
     }
   }
 }

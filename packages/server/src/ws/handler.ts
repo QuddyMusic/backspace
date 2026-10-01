@@ -363,6 +363,11 @@ class ConnectionManager {
     this.userSpaces.set(userId, new Set(spaceIds));
   }
 
+  /** Stops delivering a space's events to a user who is no longer a member. */
+  removeUserSpace(userId: string, spaceId: string): void {
+    this.userSpaces.get(userId)?.delete(spaceId);
+  }
+
   addUserSpace(userId: string, spaceId: string): void {
     if (!this.userSpaces.has(userId)) {
       this.userSpaces.set(userId, new Set());

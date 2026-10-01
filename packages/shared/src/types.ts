@@ -1118,6 +1118,7 @@ export interface CleanupResult {
 // ─── Admin User Management Types ──────────────────────────────────────────
 
 export interface AdminUser {
+  isBot: boolean;
   id: string;
   username: string;
   displayName: string | null;

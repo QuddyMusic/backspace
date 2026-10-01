@@ -447,6 +447,51 @@ describe('reactions over REST', () => {
   });
 });
 
+describe('taking a bot out of a space', () => {
+  let sid: string;
+  let cid: string;
+
+  it('the owner removes their bot: the member is gone and live events stop', async () => {
+    const created = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', owner.token, { name: 'bot-removal-space' });
+    sid = (created.body.space ?? created.body).id as string;
+    const chRes = await api<Array<{ id: string; type: string }> | { channels: Array<{ id: string; type: string }> }>(
+      A, 'GET', `/api/spaces/${sid}/channels`, owner.token,
+    );
+    const channels = Array.isArray(chRes.body) ? chRes.body : chRes.body.channels;
+    cid = (channels.find(c => c.type === 'text') ?? channels[0]!).id;
+
+    const ws = await connectWs(A.origin, bot.token);
+    sockets.push(ws);
+    await ws.waitForEvent('ready');
+    expect((await api<ErrBody>(A, 'POST', `/api/bots/${bot.id}/spaces`, owner.token, { spaceId: sid })).status).toBe(200);
+
+    const say = (content: string) => api<unknown>(A, 'POST', `/api/channels/${cid}/messages`, owner.token, { content });
+    await say('before-removal-marker');
+    expect(await waitUntil(() => delivered(ws, 'before-removal-marker'), 5_000)).toBe(true);
+
+    expect((await api<ErrBody>(A, 'DELETE', `/api/bots/${bot.id}/spaces/${sid}`, owner.token)).status).toBe(200);
+    // The removed bot still hears that it is out, then nothing more from that space.
+    expect(await waitUntil(() => ws.events.some(e => e.type === 'member_left' && e.userId === bot.id), 5_000)).toBe(true);
+    await say('after-removal-marker');
+    await new Promise(r => setTimeout(r, 1_000));
+    expect(delivered(ws, 'after-removal-marker')).toBe(false);
+
+    const list = await api<{ spaces: Array<{ id: string; botIsMember: boolean }> }>(A, 'GET', `/api/bots/${bot.id}/spaces`, owner.token);
+    expect(list.body.spaces.find(s => s.id === sid)?.botIsMember).toBe(false);
+  });
+
+  it('removing a non-member, or someone else\'s bot, is refused', async () => {
+    const again = await api<ErrBody>(A, 'DELETE', `/api/bots/${bot.id}/spaces/${sid}`, owner.token);
+    expect(again.status).toBe(404);
+    expect(again.body.code).toBe('member_not_found');
+
+    const stranger = await registerLocal(A, 'removestranger');
+    const foreign = await api<ErrBody>(A, 'DELETE', `/api/bots/${bot.id}/spaces/${sid}`, stranger.token);
+    expect(foreign.status).toBe(404);
+    expect(foreign.body.code).toBe('bot_not_found');
+  });
+});
+
 describe('cutting a bot off from the host', () => {
   it('a token regeneration on the home tombstones the host account and kills its JWT', async () => {
     const oldHomeToken = bot.token;
