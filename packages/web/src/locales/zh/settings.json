@@ -457,7 +457,8 @@
       "confirmDelete": "确认删除",
       "cancel": "取消",
       "edit": "编辑",
-      "save": "保存"
+      "save": "保存",
+      "addToServer": "添加到服务器"
     },
     "edit": {
       "nameLabel": "显示名称",
@@ -469,6 +470,13 @@
       "cropTitle": "裁剪机器人头像",
       "uploadFailed": "头像上传失败",
       "notImage": "请选择图片文件"
+    },
+    "spaces": {
+      "title": "添加到空间",
+      "loading": "正在加载空间",
+      "empty": "你还没有可管理的空间。添加机器人需要空间管理权限。",
+      "add": "添加",
+      "added": "已添加"
     }
   }
 }

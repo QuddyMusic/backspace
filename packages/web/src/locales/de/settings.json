@@ -458,7 +458,8 @@
       "confirmDelete": "Löschen bestätigen",
       "cancel": "Abbrechen",
       "edit": "Bearbeiten",
-      "save": "Speichern"
+      "save": "Speichern",
+      "addToServer": "Zum Server hinzufügen"
     },
     "edit": {
       "nameLabel": "Anzeigename",
@@ -470,6 +471,13 @@
       "cropTitle": "Bot-Avatar zuschneiden",
       "uploadFailed": "Avatar konnte nicht hochgeladen werden",
       "notImage": "Wähle eine Bilddatei"
+    },
+    "spaces": {
+      "title": "Zu einem Space hinzufügen",
+      "loading": "Spaces werden geladen",
+      "empty": "Du verwaltest noch keine Spaces. Zum Hinzufügen eines Bots brauchst du die Berechtigung zum Verwalten des Spaces.",
+      "add": "Hinzufügen",
+      "added": "Hinzugefügt"
     }
   }
 }

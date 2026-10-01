@@ -458,7 +458,8 @@
       "confirmDelete": "Confirm delete",
       "cancel": "Cancel",
       "edit": "Edit",
-      "save": "Save"
+      "save": "Save",
+      "addToServer": "Add to server"
     },
     "edit": {
       "nameLabel": "Display name",
@@ -470,6 +471,13 @@
       "cropTitle": "Crop bot avatar",
       "uploadFailed": "Failed to upload the avatar",
       "notImage": "Choose an image file"
+    },
+    "spaces": {
+      "title": "Add to a space",
+      "loading": "Loading spaces",
+      "empty": "You manage no spaces yet. Adding a bot needs permission to manage the space.",
+      "add": "Add",
+      "added": "Added"
     }
   }
 }
