@@ -823,25 +823,104 @@ describe('a bot in several voice channels', () => {
     expect(await waitUntil(() => voiceEvent(voiceB, 'leave'), 5_000)).toBe(true);
   });
   it('a bot that drops its connection leaves every voice channel it sat in', async () => {
-    // Back in the space, in two channels, on a fresh connection.
-    expect((await api<ErrBody>(A, 'POST', `/api/bots/${bot.id}/spaces`, owner.token, { spaceId: sid })).status).toBe(200);
-    const second = await connectWs(A.origin, bot.token);
-    sockets.push(second);
-    await second.waitForEvent('ready');
-    second.send({ type: 'bot_voice_join', channelId: voiceA });
-    second.send({ type: 'bot_voice_join', channelId: voiceB });
+    // Self-contained: its own bot, space and channels, and ONE socket, so the bot is
+    // really offline once that socket closes (any other open socket keeps it online).
+    const lone = await createBot('dropper_bot');
+    const made = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', owner.token, { name: 'bot-drop-space' });
+    const dropSpace = (made.body.space ?? made.body).id as string;
+    expect((await api<ErrBody>(A, 'POST', `/api/bots/${lone.id}/spaces`, owner.token, { spaceId: dropSpace })).status).toBe(200);
+    const makeVoice = async (name: string): Promise<string> => {
+      const r = await api<{ id: string }>(A, 'POST', `/api/spaces/${dropSpace}/channels`, owner.token, { name, type: 'voice' });
+      expect(r.status).toBeLessThan(300);
+      return r.body.id;
+    };
+    const first = await makeVoice('drop-one');
+    const second = await makeVoice('drop-two');
 
     const watcher = await connectWs(A.origin, owner.token);
     sockets.push(watcher);
-    const gone = (channelId: string): boolean =>
-      watcher.events.some(e => e.type === 'voice_state_update' && e.channelId === channelId && e.userId === bot.id && e.action === 'leave');
-    await waitUntil(() => second.events.some(e => e.type === 'voice_state_update' && e.channelId === voiceB && e.action === 'join'), 5_000);
+    await watcher.waitForEvent('ready');
+    const seated = (channelId: string, action: string): boolean =>
+      watcher.events.some(e => e.type === 'voice_state_update' && e.channelId === channelId && e.userId === lone.id && e.action === action);
 
-    second.close();
-    // The old socket from the first test is still open, so the bot stays online and
-    // keeps its seats; close that one too and the bot is gone for real.
-    botWs.close();
-    expect(await waitUntil(() => gone(voiceA) && gone(voiceB), 10_000)).toBe(true);
+    const own = await connectWs(A.origin, lone.token);
+    await own.waitForEvent('ready');
+    own.send({ type: 'bot_voice_join', channelId: first });
+    own.send({ type: 'bot_voice_join', channelId: second });
+    expect(await waitUntil(() => seated(first, 'join') && seated(second, 'join'), 5_000)).toBe(true);
+
+    own.close();
+    // The server waits a short grace period (5 s) for a reconnect before it lets go.
+    expect(await waitUntil(() => seated(first, 'leave') && seated(second, 'leave'), 20_000)).toBe(true);
+  });
+});
+
+describe('bot accounts on their home instance', () => {
+  interface Created { bot: { id: string; username: string }; token: string }
+
+  const create = (token: string, name: string) => api<Created & ErrBody>(A, 'POST', '/api/bots', token, { name });
+  const deleteAccount = (user: TestUser) =>
+    api<ErrBody>(A, 'DELETE', '/api/users/@me', user.token, { password: user.password, username: user.username });
+
+  it('limits an owner to ten bots, and a name that is taken is refused', async () => {
+    const solo = await registerLocal(A, 'botlimit');
+    for (let n = 0; n < 10; n++) {
+      const made = await create(solo.token, `lim${n}`);
+      expect(made.status, `bot ${n}`).toBe(201);
+    }
+    const eleventh = await create(solo.token, 'lim_over');
+    expect(eleventh.status).toBe(400);
+    expect(eleventh.body.code).toBe('bot_limit_reached');
+
+    const other = await registerLocal(A, 'botclash');
+    const clash = await create(other.token, 'lim0');
+    expect(clash.status).toBe(409);
+    expect(clash.body.code).toBe('username_taken');
+  });
+
+  it('a bot cannot create bots, and a bad name is refused', async () => {
+    const byBot = await create(bot.token, 'child');
+    expect(byBot.status).toBe(403);
+    expect(byBot.body.code).toBe('bots_native_only');
+
+    const noStem = await create(owner.token, '!!');
+    expect(noStem.status).toBe(400);
+    expect(noStem.body.code).toBe('bot_name_invalid');
+  });
+
+  it('a new token revokes the old one at once', async () => {
+    const solo = await registerLocal(A, 'botrevoke');
+    const made = await create(solo.token, 'revokee');
+    const oldToken = made.body.token;
+    expect((await api<unknown>(A, 'GET', '/api/bots/@me/commands', oldToken)).status).toBe(200);
+
+    // iat is in whole seconds: revocation compares against it.
+    await new Promise((r) => setTimeout(r, 1_100));
+    const fresh = await api<{ token: string }>(A, 'POST', `/api/bots/${made.body.bot.id}/token`, solo.token);
+    expect(fresh.status).toBe(200);
+    expect((await api<unknown>(A, 'GET', '/api/bots/@me/commands', oldToken)).status).toBe(401);
+    expect((await api<unknown>(A, 'GET', '/api/bots/@me/commands', fresh.body.token)).status).toBe(200);
+  });
+
+  it('deleting the owner deletes their bots: tokens stop working and commands are gone', async () => {
+    const solo = await registerLocal(A, 'botowner');
+    const one = await create(solo.token, 'orphan_one');
+    const two = await create(solo.token, 'orphan_two');
+    expect((await api<unknown>(A, 'PUT', '/api/bots/@me/commands', one.body.token, {
+      commands: [{ name: 'ping', description: 'Ping' }],
+    })).status).toBe(200);
+
+    const gone = await deleteAccount(solo);
+    expect(gone.status).toBe(200);
+
+    expect((await api<unknown>(A, 'GET', '/api/bots/@me/commands', one.body.token)).status).toBe(401);
+    expect((await api<unknown>(A, 'GET', '/api/bots/@me/commands', two.body.token)).status).toBe(401);
+    const rows = readDb(A, db => ({
+      deleted: (db.prepare('SELECT count(*) AS n FROM users WHERE id IN (?, ?) AND is_deleted = 1').get(one.body.bot.id, two.body.bot.id) as { n: number }).n,
+      commands: (db.prepare('SELECT count(*) AS n FROM bot_commands WHERE bot_id = ?').get(one.body.bot.id) as { n: number }).n,
+    }));
+    expect(rows.deleted).toBe(2);
+    expect(rows.commands).toBe(0);
   });
 });
 
