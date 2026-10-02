@@ -11,6 +11,9 @@ Source files:
 - `packages/server/src/routes/auth.ts` -- `POST /api/auth/register` with `botProof`
 - `packages/server/src/routes/federation/handlers/attach.ts` -- `verify-attach-proof` answers `isBot`
 - `packages/web/src/components/modals/settingsPanels/BotsPanel.tsx` -- Settings > Bots
+- `packages/server/src/routes/botCommands.ts`, `routes/interactions.ts`, `utils/botAuth.ts` -- slash commands
+- `packages/server/src/ws/handler.ts`, `ws/events.ts` -- bot voice seats (`botJoinRoom`, `bot_voice_join`)
+- `packages/web/src/components/chat/CommandPopover.tsx` -- the command lists in the message box
 - `examples/bots/` -- zero-dependency Node clients
 
 ---
@@ -52,7 +55,7 @@ A name change or an avatar change is broadcast (`user_updated`) and relayed to p
 ## 4. Getting a bot into conversations
 
 - **Space, by the owner:** `POST /api/bots/:id/spaces`. The caller needs MANAGE_SPACE in that space; the result is the same as joining (member row, `member_joined`). A banned bot is refused (`user_banned`), a member answers `409 already_member`.
-- **Taking the bot out:** `DELETE /api/bots/:id/spaces/:spaceId` by the owner (MANAGE_SPACE), or the ordinary member kick (KICK_MEMBERS) by a space manager. Both end live delivery of that space to the bot's sockets.
+- **Taking the bot out:** `DELETE /api/bots/:id/spaces/:spaceId` by the owner (MANAGE_SPACE), or the ordinary member kick (KICK_MEMBERS) by a space manager. Kick, ban and the owner's removal all end live delivery of that space to the bot's sockets at once and take the bot out of that space's voice channels.
 - **Space, by the bot:** `POST /api/spaces/join { inviteCode }`, like any user. Request-only spaces answer `403 join_request_required`.
 - **Group DM:** any member adds the bot with `POST /api/dm/:id/members { userId }`. The friendship requirement is waived for the **owner adding their own bot**, because bots take no friends.
 - **1-on-1 DM:** a user finds the bot with `GET /api/social/search?q=<username>` and opens `POST /api/dm { userId }`. No friendship needed.
@@ -90,6 +93,92 @@ The reaction calls serve channel and DM messages alike (the kind is found by the
 
 Channel messages: 5 per 5 s. Reactions: 10 per 5 s. Both are counted per client address, like every limit in this app ([api.md](api.md), "Rate limiting"). Bot creation and token regeneration: 5 per 15 min per owner.
 
+## 5b. Slash commands
+
+A bot registers commands for itself. A person picks one in the message box (typing `/` opens the list), the server checks the call and hands it to the bot as an event, and the bot answers with ordinary messages. What a command does is the bot's code; the server only carries the call.
+
+### Registering
+
+```
+PUT /api/bots/@me/commands   { commands: [ { name, description, options?: [ { name, description, type, required?, choices? } ] } ] }
+GET /api/bots/@me/commands   → { commands: BotCommand[] }
+```
+
+Bot token only (`403 bot_account_required` for anyone else). `PUT` replaces the whole list in one call, so repeating it is harmless; a command that keeps its name keeps its id. 10 calls per 5 minutes.
+
+Rules: command and option names are 1 to 32 characters of `a-z 0-9 _ -` and unique; descriptions are 1 to 100 characters; at most 100 commands and 10 options per command; option types are `string`, `integer` (a safe integer), `number` and `boolean`; required options come before optional ones; a `string`, `integer` or `number` option may list up to 25 `choices` (`{ name, value }`, the value of the option's type, unique). A violation answers `400 validation_failed` and `details.field` names the field, for example `commands[0].options[1].name`.
+
+Commands are stored on the instance the bot registers them on: register them on every instance where the bot has an account.
+
+### Invoking
+
+```
+GET  /api/commands?channelId=<id>  |  ?dmChannelId=<id>   → { commands: [ { id, botId, name, description, options, bot: { id, username, displayName, avatar, avatarColor } } ] }
+POST /api/interactions   { botId, command, options?, channelId | dmChannelId }   → 201 { id, expiresAt }
+```
+
+`GET` lists the commands of the bots that are in that chat; the caller must be able to see it. `POST` checks, in this order: exactly one of `channelId` and `dmChannelId`; the caller is a member and may write there (SEND_MESSAGES in a channel); the bot is in the chat (`404 bot_not_found`); the command exists (`404 command_not_found`); each option value fits its definition, including `choices` (`400 validation_failed`, `details.field` is `options.<name>`); the bot has an open WebSocket (`409 bot_unavailable`). 5 calls per 5 seconds per client address.
+
+### The event
+
+```json
+{ "type": "interaction_created",
+  "interaction": { "id": "...", "command": "play", "options": { "query": "song", "volume": 80 },
+                   "user": { "id": "...", "username": "..." },
+                   "channelId": "...", "spaceId": "...", "expiresAt": 1790000000000 } }
+```
+
+`options` holds the parsed values with the types of the definition; an optional option that was not given is absent. A call from a space channel carries `channelId` and `spaceId`, a call from a direct or group DM carries `dmChannelId`. `user` is the person who invoked the command.
+
+### Answering
+
+```
+POST /api/interactions/:id/respond   { content?, attachments? }   → 201 (the created message)
+```
+
+Bot token only, and only the invoked bot. The message is posted through the same route as `POST /channels/:id/messages` or `POST /dm/:id/messages`, so permissions, the length limit, attachments, embeds and the rate limit are the ordinary ones. The interaction lasts 15 minutes and takes up to 5 responses. Errors: `404 interaction_not_found` (also for another bot's interaction), `410 interaction_expired`, `429 interaction_responses_exceeded`, and whatever the message route answers. The message is the bot's own; mention the invoker with `<@user.id>` if the answer is for them. A bot that never answers causes nothing more than silence until the interaction expires.
+
+### In the message box
+
+Typing `/` at the start of a message lists the commands of the bots in the chat. Choosing one writes it with its required options as `name:` ready to be filled in; after a space the optional options not used yet are offered (Tab picks one); pasting a full command works too. The form is: options first as `name:value` (several words in double quotes), then the rest of the line, which is the value of the last string option and may be any length: `/play volume:80 any long title`. The server only ever sees the parsed `options`.
+
+### Scope
+
+Chats on the instance where the bot is connected. Not built: subcommands, autocomplete, private (visible to one person) answers (a bot may message the invoker directly), buttons and forms, `user` and `channel` option types, commands of bots from other instances in direct messages.
+
+## 5c. Voice channels
+
+A person has one voice seat at a time. A bot may sit in several voice channels at once, one seat per channel, so a radio bot never has to be shared between channels. Each voice channel is its own LiveKit room, so the audio of the seats is independent.
+
+### Client events (WebSocket, bots only)
+
+| type | fields | notes |
+|------|--------|-------|
+| `bot_voice_join` | channelId | seats the bot in that voice channel without leaving the others |
+| `bot_voice_leave` | channelId | takes the bot out of that one channel |
+
+`bot_voice_join` makes the same checks as `voice_join` (the channel exists, the bot is a member of the space, CONNECT) and is idempotent. A bot may hold at most 25 seats. A refusal arrives as an `error` event; a person sending these events gets `code: 'bot_account_required'`. Space voice channels only: DM calls keep their rules.
+
+The rest of the space sees the bot like anyone else: `voice_state_update { action: 'join' | 'leave' }` per channel, and the `ready` payload lists the bot under `voiceStates` of every channel it sits in.
+
+### Audio
+
+For each channel the bot asks for a token of its own and connects to that room itself:
+
+```
+POST /api/livekit/token   { channelId }   → { token, url }
+```
+
+The call works for a bot exactly as for a person (a role without SPEAK or STREAM limits what the token may publish). One LiveKit connection per room, publishing one audio track each, is how a bot plays different audio in different channels; the track is produced by the bot's own code with a LiveKit client library, which the server neither provides nor needs. Which channel a command belongs to is the bot's decision as well: the interaction names the invoker, and `voice_state_update` and the `ready` payload say in which voice channel that person sits (`examples/bots/voice.mjs`).
+
+### When a seat ends
+
+The bot leaves a seat with `bot_voice_leave`. All its seats end when its last socket closes, when its token is regenerated or the account deleted, and the seats of one space end when the bot is removed from that space, kicked or banned.
+
+### Limits
+
+`voice_status` (mute, camera, screen share) is not wired for bot seats, and the voice moderation actions (move, disconnect, space mute) do not act on them; remove the bot from the space to take it out of its channels.
+
 ## 6. Connecting from outside
 
 `https://<instance>` for REST (`/api/...`), `wss://<instance>/ws` for the socket, both behind Caddy. The examples take `BACKSPACE_URL` and `BOT_TOKEN`.
@@ -116,8 +205,11 @@ B verifies the proof with A over the signed server-to-server channel (`POST /api
 - A regenerated token removes the bot from its spaces on other instances (the account is recreated).
 - The peer of the home instance is found by host without port; two instances on one host and different ports are not supported. `homeInstance` in `register` cannot carry a port.
 - When a person replies to a message and mentions a bot, the event carries the replied text in `replyTo`.
-- Not built: slash commands and an `interaction` event, per-bot permissions beyond roles, resume after reconnect.
+- Slash commands run only in chats on the instance where the bot is connected; the other things not built are listed in section 5b. Voice has no per-seat status or moderation (section 5c).
+- Not built: per-bot permissions beyond roles, resume after reconnect, private (visible to one person) answers to slash commands.
 
 ## 9. Database
 
 Migration `0021_familiar_mentor.sql` adds to `users`: `is_bot` (INTEGER NOT NULL DEFAULT 0) and `bot_owner_id` (TEXT, the owner's user id). Nothing else is stored per bot; the avatar and display name are the ordinary `users` columns. The cascade and revocation rules are in 1 and 7.
+
+Slash commands add two tables. `bot_commands` (migration `0022_keen_proudstar.sql`): `id` (PK), `bot_id` (FK to `users`, cascade), `name`, `description`, `options` (JSON array, default `'[]'`), `updated_at`; unique index on `(bot_id, name)`. `interactions` (migration `0023_shallow_sandman.sql`): `id` (random 32-hex string, PK), `bot_id` and `user_id` (FKs to `users`, cascade), `channel_id` / `dm_channel_id` (exactly one is set), `command`, `options` (JSON object of the parsed values), `created_at`, `expires_at`, `responses` (default 0); index on `expires_at`. A spent interaction is dropped by the first invocation that comes a day after it expired. A bot's `bot_commands` rows are deleted when the bot is tombstoned.

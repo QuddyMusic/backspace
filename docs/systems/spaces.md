@@ -413,6 +413,8 @@ All paths: insert `space_members`, register in `connectionManager`, broadcast `m
 **Owner protection:** Cannot kick the owner.
 
 **Role hierarchy:** kicking someone else needs a higher top role than theirs (`403 role_hierarchy`, permissions.md).
+**Live delivery:** leaving, being kicked and being banned all end the delivery of the space's events to the user's open sockets at once (`ConnectionManager.removeUserSpace`), not only at the next reconnect. A bot is also taken out of that space's voice channels. A kick or an owner's removal of a bot goes through `removeUserFromSpace` (`utils/spaceMembership.ts`).
+
 
 **Cleanup on removal:**
 1. Delete `space_members` row

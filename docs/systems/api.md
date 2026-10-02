@@ -652,3 +652,15 @@ DELETE /bots/:id/spaces/:spaceId    → { success }                     [MANAGE_
 PUT /messages/:id/reactions/:emoji → { success, changed } [ADD_REACTIONS for space messages; channel or DM message, found by id]
 DELETE /messages/:id/reactions/:emoji → { success, changed } [own reaction]
 `Authorization: Bot <token>` is accepted wherever `Bearer <token>` is (including tus uploads). `POST /auth/register` also takes `botProof` for a bot registering on another instance (bots.md, section 7).
+
+### Slash commands (`routes/botCommands.ts`, `routes/interactions.ts`)
+
+Full reference in [bots.md](bots.md), section 5b.
+```
+PUT    /bots/@me/commands          { commands } → { commands }          [bot token; replaces the whole list; 10 per 5 min]
+GET    /bots/@me/commands          → { commands }                       [bot token]
+GET    /commands                   ?channelId= | ?dmChannelId= → { commands } [caller sees the chat; commands of the bots in it, with `bot`]
+POST   /interactions               { botId, command, options?, channelId | dmChannelId } → 201 { id, expiresAt } [member + SEND_MESSAGES; bot in chat and connected; 5 per 5 s]
+POST   /interactions/:id/respond   { content?, attachments? } → 201 message [the invoked bot; 15 min, 5 responses; goes through the message routes]
+```
+Errors: `bot_account_required`, `command_not_found`, `bot_unavailable` (409), `interaction_not_found`, `interaction_expired` (410), `interaction_responses_exceeded` (429), and `validation_failed` with `details.field` for a bad definition or option value.

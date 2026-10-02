@@ -606,3 +606,7 @@ Per-remote credential this user's client presents when registering or logging in
 ## Bot accounts (`users`)
 
 Migration `0021_familiar_mentor.sql` adds `users.is_bot` (INTEGER NOT NULL DEFAULT 0) and `users.bot_owner_id` (TEXT, owner's user id, NULL for humans and for a bot's federated account on another instance). A bot's `password_hash` is `'!bot'`. See [bots.md](bots.md).
+
+## Slash command tables
+
+Slash commands add two tables. `bot_commands` (migration `0022_keen_proudstar.sql`): `id` (PK), `bot_id` (FK to `users`, cascade), `name`, `description`, `options` (JSON array, default `'[]'`), `updated_at`; unique index on `(bot_id, name)`. `interactions` (migration `0023_shallow_sandman.sql`): `id` (random 32-hex string, PK), `bot_id` and `user_id` (FKs to `users`, cascade), `channel_id` / `dm_channel_id` (exactly one is set), `command`, `options` (JSON object of the parsed values), `created_at`, `expires_at`, `responses` (default 0); index on `expires_at`. A spent interaction is dropped by the first invocation that comes a day after it expired. A bot's `bot_commands` rows are deleted when the bot is tombstoned.

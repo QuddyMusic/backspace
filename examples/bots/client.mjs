@@ -7,7 +7,8 @@ export function createBot({ baseUrl, token }) {
   if (!baseUrl || !token) throw new Error('set BACKSPACE_URL and BOT_TOKEN');
   const http = baseUrl.replace(/\/+$/, '');
   const wsUrl = `${http.replace(/^http/, 'ws')}/ws`;
-  const bot = { me: null, api, run };
+  let socket = null;
+  const bot = { me: null, api, run, send };
 
   /** REST call. Throws an Error with .status and .body on a non-2xx answer. */
   async function api(method, path, body) {
@@ -31,11 +32,19 @@ export function createBot({ baseUrl, token }) {
     return json;
   }
 
+  /** Sends a client event over the open socket; false when there is none. */
+  function send(event) {
+    if (!socket || socket.readyState !== 1) return false;
+    socket.send(JSON.stringify(event));
+    return true;
+  }
+
   /** Connects and calls onEvent(event) for every server event. Reconnects forever. */
   function run(onEvent) {
     let attempt = 0;
     const connect = () => {
       const ws = new WebSocket(wsUrl);
+      socket = ws;
       ws.onopen = () => ws.send(JSON.stringify({ type: 'auth', token }));
       ws.onmessage = (msg) => {
         let event;

@@ -253,3 +253,7 @@ To close this, `ConnectionManager.addUserSpace(userId, spaceId)` — the single 
 ## Bots
 
 A bot authenticates like any client (`{ type: 'auth', token }`, the token is the bot's JWT) and receives the same events as any member of the same chats; there is no bot-specific event and no server-side filtering. See [bots.md](bots.md) for what a bot author needs (self-events, mentions, reconnecting).
+
+**Client to server, bots only:** `bot_voice_join { channelId }` and `bot_voice_leave { channelId }` seat a bot in a space voice channel and take it out again without touching its other seats (up to 25); the room is told with the ordinary `voice_state_update`. See [bots.md](bots.md), section 5c.
+
+**Server to a bot:** `interaction_created { interaction: { id, command, options, user, channelId?, spaceId?, dmChannelId?, expiresAt } }` when a person invokes one of the bot's slash commands; only the invoked bot's sockets receive it. See [bots.md](bots.md), section 5b.
