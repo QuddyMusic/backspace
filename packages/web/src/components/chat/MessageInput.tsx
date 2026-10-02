@@ -60,10 +60,6 @@ function makeFileHandleKey(): string {
   return `up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function unquote(value: string): string {
-  return value.length >= 2 && value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
-}
-
 type OptionValues = Record<string, string | number | boolean>;
 
 interface OptionSuggest {
