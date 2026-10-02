@@ -5,13 +5,13 @@ import { useChatStore } from '../../stores/chatStore';
 import { isDmChannel, getChannelOrigin, useSpaceStore } from '../../stores/spaceStore';
 import { wsSend } from '../../hooks/useWebSocket';
 import { MentionPopover } from './MentionPopover';
-import { CommandPopover } from './CommandPopover';
+import { CommandOptionPopover, CommandPopover } from './CommandPopover';
 import { TypingIndicator } from './TypingIndicator';
 import { InputPopover, type InputPopoverTab } from './InputPopover';
 import { AttachmentProgress } from './AttachmentProgress';
 import { hasPermissionBit, PermissionBits } from '../../utils/permissions';
 import { MAX_MESSAGE_LENGTH } from '@backspace/shared';
-import type { BotCommandListing } from '@backspace/shared';
+import type { BotCommandListing, BotCommandOption } from '@backspace/shared';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useComposerStore } from '../../stores/composerStore';
@@ -64,44 +64,113 @@ function unquote(value: string): string {
   return value.length >= 2 && value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
 }
 
+type OptionValues = Record<string, string | number | boolean>;
+
+interface OptionSuggest {
+  command: BotCommandListing;
+  /** What has been typed of the option name so far (lowercase). */
+  query: string;
+  /** Where that partial name starts in the draft. */
+  startIndex: number;
+  selectedIndex: number;
+  /** An arrow key moved the selection: only then does Enter pick it instead of sending. */
+  touched: boolean;
+}
+
+function setOptionValue(options: OptionValues, def: BotCommandOption, raw: string): void {
+  if (raw.length === 0) return;
+  if (def.type === 'integer' || def.type === 'number') {
+    const n = Number(raw);
+    options[def.name] = Number.isNaN(n) ? raw : n;
+  } else if (def.type === 'boolean') {
+    options[def.name] = raw === 'true' || raw === '1' || raw === 'yes';
+  } else {
+    options[def.name] = raw;
+  }
+}
+
+/**
+ * Reads the options written by name at the start of `text`: `name:value`, where
+ * a value is one word, or several in double quotes. A string option written
+ * without quotes runs up to the next option written by name, or to the end, so
+ * a title or a message may be any length. `rest` is what follows the last pair.
+ */
+function readNamedPairs(command: BotCommandListing, text: string): { options: OptionValues; rest: string } {
+  const defs = new Map(command.options.map((o) => [o.name, o] as const));
+  const nextNamed = new RegExp('\\s(?:' + command.options.map((o) => o.name).join('|') + '):', 'i');
+  const options: OptionValues = {};
+  let remaining = text.trim();
+  for (;;) {
+    const head = /^([a-z0-9_-]+):/i.exec(remaining);
+    const def = head ? defs.get(head[1]!.toLowerCase()) : undefined;
+    if (!head || !def) break;
+    let body = remaining.slice(head[0].length).trimStart();
+    let raw: string;
+    const close = body.startsWith('"') ? body.indexOf('"', 1) : -1;
+    if (close > 0) {
+      raw = body.slice(1, close);
+      body = body.slice(close + 1);
+    } else if (def.type === 'string') {
+      const cut = body.search(nextNamed);
+      raw = (cut < 0 ? body : body.slice(0, cut)).trim();
+      body = cut < 0 ? '' : body.slice(cut);
+    } else {
+      const space = body.search(/\s/);
+      raw = space < 0 ? body : body.slice(0, space);
+      body = space < 0 ? '' : body.slice(space);
+    }
+    setOptionValue(options, def, raw);
+    remaining = body.trim();
+  }
+  return { options, rest: remaining };
+}
+
 /**
  * The option values typed after a command. Options come first as name:value
- * pairs (a value is one word, or several in double quotes), read from the left
- * while the word names an option of the command. Whatever is left, spaces and
- * all, is the value of the last string option that was not given by name, so a
- * track title or a message can be any length.
- * Returns the leftover text when the command has no string option to take it.
+ * pairs; whatever is left, spaces and all, is the value of the last string
+ * option that was not given by name. Returns the leftover text when the command
+ * has no string option to take it.
  */
 function parseCommandArgs(
   command: BotCommandListing,
   rest: string,
-): { ok: true; options: Record<string, string | number | boolean> } | { ok: false; extra: string } {
-  const defs = new Map(command.options.map((o) => [o.name, o] as const));
-  const options: Record<string, string | number | boolean> = {};
-  const pair = /^([a-z0-9_-]+):("[^"]*"|\S+)\s*/i;
-
-  let text = rest.trim();
-  for (;;) {
-    const match = pair.exec(text);
-    const def = match ? defs.get(match[1]!.toLowerCase()) : undefined;
-    if (!match || !def) break;
-    const raw = unquote(match[2]!);
-    if (def.type === 'integer' || def.type === 'number') {
-      const n = Number(raw);
-      options[def.name] = Number.isNaN(n) ? raw : n;
-    } else if (def.type === 'boolean') {
-      options[def.name] = raw === 'true' || raw === '1' || raw === 'yes';
-    } else {
-      options[def.name] = raw;
-    }
-    text = text.slice(match[0].length);
-  }
-
-  if (text.length === 0) return { ok: true, options };
+): { ok: true; options: OptionValues } | { ok: false; extra: string } {
+  const { options, rest: left } = readNamedPairs(command, rest);
+  if (left.length === 0) return { ok: true, options };
   const target = [...command.options].reverse().find((o) => o.type === 'string' && !(o.name in options));
-  if (!target) return { ok: false, extra: text };
-  options[target.name] = text;
+  if (!target) return { ok: false, extra: left };
+  options[target.name] = left;
   return { ok: true, options };
+}
+
+/** The optional options of a command that the text does not name yet. */
+function remainingOptions(command: BotCommandListing, text: string): BotCommandOption[] {
+  return command.options.filter(
+    (o) => !o.required && !new RegExp('(?:^|\\s)' + o.name + ':', 'i').test(text),
+  );
+}
+
+/**
+ * The option popover state for a draft, or null when none applies: the text must
+ * start with a known command and a space, everything after it must be options
+ * written by name, and the word being typed must not be a value.
+ */
+function suggestOptions(
+  value: string,
+  commands: BotCommandListing[],
+  picked: BotCommandListing | null,
+): OptionSuggest | null {
+  const head = /^\/([a-z0-9_-]+)\s/i.exec(value);
+  if (!head) return null;
+  const name = head[1]!.toLowerCase();
+  const command = picked && picked.name === name ? picked : commands.find((c) => c.name === name);
+  if (!command || command.options.length === 0) return null;
+  const tail = value.slice(head[0].length);
+  const cut = Math.max(tail.lastIndexOf(' '), tail.lastIndexOf('\n')) + 1;
+  const partial = tail.slice(cut);
+  if (partial.includes(':')) return null;
+  if (readNamedPairs(command, tail.slice(0, cut)).rest.length > 0) return null;
+  return { command, query: partial.toLowerCase(), startIndex: head[0].length + cut, selectedIndex: 0, touched: false };
 }
 
 export function MessageInput({ channelId, channelName, placeholder }: MessageInputProps) {
@@ -132,6 +201,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const [commandState, setCommandState] = useState<CommandState | null>(null);
   const [chatCommands, setChatCommands] = useState<BotCommandListing[] | null>(null);
   const pickedCommandRef = useRef<BotCommandListing | null>(null);
+  const [optionSuggest, setOptionSuggest] = useState<OptionSuggest | null>(null);
+  const commandsRequestRef = useRef<Promise<BotCommandListing[]> | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -261,7 +332,51 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   useEffect(() => {
     setChatCommands(null);
     setCommandState(null);
+    setOptionSuggest(null);
+    commandsRequestRef.current = null;
+    pickedCommandRef.current = null;
   }, [channelId]);
+
+  // The commands of the bots in this chat: fetched once per chat, shared by every caller.
+  const loadChatCommands = useCallback((): Promise<BotCommandListing[]> => {
+    const existing = commandsRequestRef.current;
+    if (existing) return existing;
+    const request: Promise<BotCommandListing[]> = getApiForOrigin(getChannelOrigin(channelId)).commands
+      .forChat(isDm ? { dmChannelId: channelId } : { channelId })
+      .then((res) => res.commands)
+      .catch(() => [] as BotCommandListing[])
+      .then((commands) => {
+        if (commandsRequestRef.current === request) setChatCommands(commands);
+        return commands;
+      });
+    commandsRequestRef.current = request;
+    return request;
+  }, [channelId, isDm]);
+
+  // The option popover's rows: the optional options of the typed command not written yet.
+  const optionMatches = useMemo(() => {
+    if (!optionSuggest || !draftText.startsWith('/' + optionSuggest.command.name + ' ')) return [];
+    return remainingOptions(optionSuggest.command, draftText)
+      .filter((o) => o.name.startsWith(optionSuggest.query))
+      .slice(0, 10);
+  }, [optionSuggest, draftText]);
+
+  const selectOption = useCallback(
+    (option: BotCommandOption) => {
+      if (!optionSuggest) return;
+      const text = draftText.slice(0, optionSuggest.startIndex) + option.name + ':';
+      setDraft(channelId, text);
+      setOptionSuggest(null);
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        textarea.selectionStart = text.length;
+        textarea.selectionEnd = text.length;
+      });
+    },
+    [optionSuggest, draftText, setDraft, channelId],
+  );
 
   // The command popover's rows.
   const commandMatches = useMemo(() => {
@@ -273,11 +388,24 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const selectCommand = useCallback(
     (command: BotCommandListing) => {
       pickedCommandRef.current = command;
-      setDraft(channelId, `/${command.name} `);
+      // Required options go into the text straight away, ready to be filled in.
+      const required = command.options.filter((o) => o.required);
+      const head = `/${command.name} `;
+      const text = head + required.map((o) => `${o.name}:`).join(' ');
+      setDraft(channelId, text);
       setCommandState(null);
-      requestAnimationFrame(() => textareaRef.current?.focus());
+      // With required options the caret goes behind the first one; without, the optional ones are offered.
+      const caret = required.length > 0 ? head.length + required[0]!.name.length + 1 : text.length;
+      setOptionSuggest(required.length === 0 && chatCommands ? suggestOptions(text, chatCommands, command) : null);
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        textarea.selectionStart = caret;
+        textarea.selectionEnd = caret;
+      });
     },
-    [setDraft, channelId],
+    [setDraft, channelId, chatCommands],
   );
 
   // The popover's rows; keyboard navigation indexes the same list.
@@ -410,12 +538,14 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
 
     // A slash command of a bot in this chat: invoke it instead of posting the text.
     const commandHead = /^\/([a-z0-9_-]+)(?:\s+([\s\S]*))?$/i.exec(trimmed);
-    if (commandHead && stagedTransfers.length === 0 && chatCommands) {
+    if (commandHead && stagedTransfers.length === 0) {
+      // A pasted command may be sent before the list has loaded: wait for it.
+      const known = chatCommands ?? await loadChatCommands();
       const name = commandHead[1]!.toLowerCase();
       const picked = pickedCommandRef.current;
       const command = picked && picked.name === name
         ? picked
-        : chatCommands.find((c) => c.name === name);
+        : known.find((c) => c.name === name);
       if (command) {
         const parsed = parseCommandArgs(command, commandHead[2] ?? '');
         if (!parsed.ok) {
@@ -525,6 +655,35 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   );
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
+    // Option popover for the typed command: arrows move, Tab picks, Enter picks only after an arrow.
+    if (optionSuggest && optionMatches.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setOptionSuggest((prev) => (prev
+          ? { ...prev, touched: true, selectedIndex: Math.min(prev.selectedIndex + 1, optionMatches.length - 1) }
+          : null));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setOptionSuggest((prev) => (prev
+          ? { ...prev, touched: true, selectedIndex: Math.max(prev.selectedIndex - 1, 0) }
+          : null));
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && optionSuggest.touched)) {
+        e.preventDefault();
+        const selected = optionMatches[optionSuggest.selectedIndex];
+        if (selected) selectOption(selected);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setOptionSuggest(null);
+        return;
+      }
+    }
+
     // Slash command popover keyboard navigation
     if (commandState && commandMatches.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -674,19 +833,24 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     const cursorPos = e.target.selectionStart;
     setDraft(channelId, value);
 
+    // A pasted or typed command is looked up as soon as the text starts with "/".
+    if (value.startsWith('/') && chatCommands === null) void loadChatCommands();
+
     // Detect a slash command: "/" at the very start of the message, no space typed yet.
     const commandMatch = /^\/([a-z0-9_-]*)$/i.exec(value.slice(0, cursorPos));
     if (commandMatch && cursorPos === value.length) {
-      if (chatCommands === null) {
-        getApiForOrigin(getChannelOrigin(channelId)).commands
-          .forChat(isDm ? { dmChannelId: channelId } : { channelId })
-          .then((res) => setChatCommands(res.commands))
-          .catch(() => setChatCommands([]));
-      }
+      // The command list is loaded above, as soon as the text starts with "/".
       setCommandState((prev) => ({ query: commandMatch[1] ?? '', selectedIndex: prev ? Math.min(prev.selectedIndex, 0) : 0 }));
     } else {
       setCommandState(null);
     }
+
+    // After "/name " the options of that command are offered (only while the caret is at the end).
+    setOptionSuggest(
+      cursorPos === value.length && chatCommands
+        ? suggestOptions(value, chatCommands, pickedCommandRef.current)
+        : null,
+    );
 
     // Detect @mention trigger
     const textBeforeCursor = value.slice(0, cursorPos);
@@ -992,6 +1156,16 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
             commands={commandMatches}
             selectedIndex={commandState.selectedIndex}
             onSelect={selectCommand}
+            anchorRef={inputContainerRef}
+          />
+        )}
+
+        {/* Slash command option popover */}
+        {optionSuggest && optionMatches.length > 0 && (
+          <CommandOptionPopover
+            options={optionMatches}
+            selectedIndex={Math.min(optionSuggest.selectedIndex, optionMatches.length - 1)}
+            onSelect={selectOption}
             anchorRef={inputContainerRef}
           />
         )}
