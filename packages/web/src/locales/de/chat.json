@@ -147,5 +147,11 @@
   "notification": {
     "unknownSender": "Jemand",
     "attachmentOnly": "Hat einen Anhang gesendet"
+  },
+  "commands": {
+    "title": "Befehle",
+    "empty": "Die Bots in diesem Chat haben keine Befehle",
+    "unknownOption": "Unbekannte Option „{{name}}“ für diesen Befehl",
+    "failed": "Der Befehl konnte nicht gesendet werden"
   }
 }

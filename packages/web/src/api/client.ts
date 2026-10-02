@@ -1,3 +1,4 @@
+import type { ChatCommandsResponse, CreateInteractionRequest, CreateInteractionResponse } from '@backspace/shared';
 import { isErrorCode, type ErrorCode, type ErrorDetails } from '@backspace/shared/src/errors';
 import type {
   AuthResponse,
@@ -375,6 +376,11 @@ export class BackspaceApiClient {
     peeringNotifications: (unreadOnly?: boolean) => Promise<{ notifications: PeeringNotification[] }>;
     markPeeringNotificationRead: (id: string) => Promise<{ success: boolean }>;
     markAllPeeringNotificationsRead: () => Promise<{ success: boolean; count: number }>;
+  };
+
+  readonly commands: {
+    forChat: (target: { channelId?: string; dmChannelId?: string }) => Promise<ChatCommandsResponse>;
+    invoke: (body: CreateInteractionRequest) => Promise<CreateInteractionResponse>;
   };
 
   readonly bots: {
@@ -871,6 +877,16 @@ export class BackspaceApiClient {
         request<{ success: boolean; count: number }>(
           'POST', '/federation/peering-notifications/read-all'
         ),
+    };
+
+    this.commands = {
+      forChat: (target: { channelId?: string; dmChannelId?: string }) => {
+        const params = new URLSearchParams();
+        if (target.channelId) params.set('channelId', target.channelId);
+        if (target.dmChannelId) params.set('dmChannelId', target.dmChannelId);
+        return request<ChatCommandsResponse>('GET', `/commands?${params.toString()}`);
+      },
+      invoke: (body: CreateInteractionRequest) => request<CreateInteractionResponse>('POST', '/interactions', body),
     };
 
     this.bots = {

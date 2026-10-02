@@ -147,5 +147,11 @@
   "notification": {
     "unknownSender": "Someone",
     "attachmentOnly": "Sent an attachment"
+  },
+  "commands": {
+    "title": "Commands",
+    "empty": "The bots in this chat have no commands",
+    "unknownOption": "Unknown option \"{{name}}\" for this command",
+    "failed": "The command could not be sent"
   }
 }
