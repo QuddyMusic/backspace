@@ -151,7 +151,7 @@
   "commands": {
     "title": "Befehle",
     "empty": "Die Bots in diesem Chat haben keine Befehle",
-    "unknownOption": "Unbekannte Option „{{name}}“ für diesen Befehl",
-    "failed": "Der Befehl konnte nicht gesendet werden"
+    "failed": "Der Befehl konnte nicht gesendet werden",
+    "extraText": "Dieser Befehl nimmt keinen freien Text, aber „{{text}}“ bleibt übrig. Erst die Optionen, dann der Text"
   }
 }

@@ -60,61 +60,47 @@ function makeFileHandleKey(): string {
   return `up-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** Splits `a:1 b:"two words"` into tokens; a quoted value keeps its spaces. */
-function tokenizeCommandArgs(text: string): string[] {
-  const tokens: string[] = [];
-  const pattern = /[^\s"]+:"[^"]*"|"[^"]*"|\S+/g;
-  for (const match of text.matchAll(pattern)) tokens.push(match[0]);
-  return tokens;
-}
-
 function unquote(value: string): string {
   return value.length >= 2 && value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
 }
 
 /**
- * The option values typed after a command, matched to its definition. Pairs are
- * `name:value`; when the command has exactly one required string option and
- * the text carries no `name:`, the whole rest is that option's value.
- * Returns the unknown option name on a mistake.
+ * The option values typed after a command. Options come first as name:value
+ * pairs (a value is one word, or several in double quotes), read from the left
+ * while the word names an option of the command. Whatever is left, spaces and
+ * all, is the value of the last string option that was not given by name, so a
+ * track title or a message can be any length.
+ * Returns the leftover text when the command has no string option to take it.
  */
 function parseCommandArgs(
   command: BotCommandListing,
   rest: string,
-): { ok: true; options: Record<string, string | number | boolean> } | { ok: false; unknown: string } {
+): { ok: true; options: Record<string, string | number | boolean> } | { ok: false; extra: string } {
   const defs = new Map(command.options.map((o) => [o.name, o] as const));
   const options: Record<string, string | number | boolean> = {};
-  const trimmed = rest.trim();
-  if (trimmed.length === 0) return { ok: true, options };
+  const pair = /^([a-z0-9_-]+):("[^"]*"|\S+)\s*/i;
 
-  const hasNamed = tokenizeCommandArgs(trimmed).some((tok) => {
-    const idx = tok.indexOf(':');
-    return idx > 0 && defs.has(tok.slice(0, idx));
-  });
-  const onlyRequiredString = command.options.length >= 1
-    && command.options.filter((o) => o.required).length === 1
-    && command.options.find((o) => o.required)?.type === 'string';
-  if (!hasNamed && onlyRequiredString) {
-    const target = command.options.find((o) => o.required)!;
-    options[target.name] = unquote(trimmed);
-    return { ok: true, options };
-  }
-
-  for (const tok of tokenizeCommandArgs(trimmed)) {
-    const idx = tok.indexOf(':');
-    const name = idx > 0 ? tok.slice(0, idx) : tok;
-    const def = defs.get(name);
-    if (!def || idx <= 0) return { ok: false, unknown: name };
-    const raw = unquote(tok.slice(idx + 1));
+  let text = rest.trim();
+  for (;;) {
+    const match = pair.exec(text);
+    const def = match ? defs.get(match[1]!.toLowerCase()) : undefined;
+    if (!match || !def) break;
+    const raw = unquote(match[2]!);
     if (def.type === 'integer' || def.type === 'number') {
       const n = Number(raw);
-      options[name] = Number.isNaN(n) ? raw : n;
+      options[def.name] = Number.isNaN(n) ? raw : n;
     } else if (def.type === 'boolean') {
-      options[name] = raw === 'true' || raw === '1' || raw === 'yes';
+      options[def.name] = raw === 'true' || raw === '1' || raw === 'yes';
     } else {
-      options[name] = raw;
+      options[def.name] = raw;
     }
+    text = text.slice(match[0].length);
   }
+
+  if (text.length === 0) return { ok: true, options };
+  const target = [...command.options].reverse().find((o) => o.type === 'string' && !(o.name in options));
+  if (!target) return { ok: false, extra: text };
+  options[target.name] = text;
   return { ok: true, options };
 }
 
@@ -433,7 +419,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       if (command) {
         const parsed = parseCommandArgs(command, commandHead[2] ?? '');
         if (!parsed.ok) {
-          addToast(t('chat:commands.unknownOption', { name: parsed.unknown }), 'warning');
+          addToast(t('chat:commands.extraText', { text: parsed.extra }), 'warning');
           return;
         }
         try {
