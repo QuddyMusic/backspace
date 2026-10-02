@@ -241,7 +241,6 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   interaction_not_found: 'Interaction not found',
   interaction_expired: 'This interaction has expired',
   interaction_responses_exceeded: 'The response limit for this interaction is reached',
-  bot_forbidden: 'Bots cannot read message history',
   bot_limit_reached: 'You can have at most {{max}} bots',
   bot_not_found: 'Bot not found',
   bots_native_only: 'Bots can only be managed from an account native to this instance',

@@ -33,7 +33,6 @@ export const ERROR_CODES = [
   'interaction_not_found',
   'interaction_expired',
   'interaction_responses_exceeded',
-  'bot_forbidden',
   'bot_limit_reached',
   'bot_not_found',
   'bots_native_only',

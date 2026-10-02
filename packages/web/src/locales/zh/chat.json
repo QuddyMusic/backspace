@@ -146,7 +146,6 @@
   },
   "commands": {
     "title": "命令",
-    "empty": "此聊天中的机器人没有命令",
     "failed": "无法发送该命令",
     "extraText": "此命令没有文本参数，但剩下了“{{text}}”。请先写选项，再写文本",
     "optionsTitle": "可选参数"
