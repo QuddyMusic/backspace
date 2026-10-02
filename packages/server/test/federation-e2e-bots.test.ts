@@ -367,6 +367,32 @@ describe('a bot in direct and group conversations on its home', () => {
     expect(await waitUntil(() => dmDelivered('one-on-one-marker'), 5_000)).toBe(true);
     expect((await api<unknown>(A, 'GET', `/api/dm/${dmId}/messages`, bot.token)).status).toBe(200);
   });
+
+    it('the owner starts a group DM with their own bot without a friendship, and a stranger\'s bot is refused', async () => {
+    const friend = await registerLocal(A, 'groupfriend');
+    // owner and friend must be friends for the ordinary part of the check
+    const req = await api<ErrBody>(A, 'POST', '/api/social/requests', owner.token, { username: friend.username });
+    expect(req.status).toBeLessThan(300);
+    const incoming = await api<Array<{ id: string }> | { requests: Array<{ id: string }> }>(A, 'GET', '/api/social/requests', friend.token);
+    const list = Array.isArray(incoming.body) ? incoming.body : incoming.body.requests;
+    expect(list.length).toBeGreaterThan(0);
+    const accept = await api<ErrBody>(A, 'PATCH', `/api/social/requests/${list[0]!.id}`, friend.token, { status: 'accepted' });
+    expect(accept.status).toBeLessThan(300);
+
+    const made = await api<{ id?: string; members?: Array<{ id: string }> }>(
+      A, 'POST', '/api/dm/group', owner.token, { users: [{ id: friend.id }, { id: bot.id }] },
+    );
+    expect(made.status).toBe(201);
+    expect(made.body.members?.map(m => m.id)).toContain(bot.id);
+
+    const stranger = await registerLocal(A, 'groupstranger');
+    const strangerBot = await api<BotCreated>(A, 'POST', '/api/bots', stranger.token, { name: 'strangers2' });
+    const refused = await api<ErrBody>(
+      A, 'POST', '/api/dm/group', owner.token, { users: [{ id: friend.id }, { id: strangerBot.body.bot.id }] },
+    );
+    expect(refused.status).toBe(403);
+    expect(refused.body.code).toBe('not_a_friend');
+  });
 });
 
 describe('the Bot authorization scheme', () => {

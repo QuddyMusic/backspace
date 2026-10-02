@@ -214,7 +214,7 @@ export function AddDmMemberModal() {
     [friends, selected],
   );
 
-  const isGroup = !!dmChannel?.ownerId;
+  const isGroup = true;
 
   const filteredBots = useMemo(() => {
     if (!isGroup) return [];
@@ -279,6 +279,7 @@ export function AddDmMemberModal() {
             homeUserId: f.homeUserId,
             homeInstance: f.homeInstance,
           })),
+          ...selectedBots.map((b) => ({ id: b.id })),
         ];
         // Home checks the source 1-on-1 by its own id; without a home copy
         // there is none to name.
