@@ -22,6 +22,7 @@ import { useVisualViewportInset } from '../../hooks/useVisualViewportInset';
 import { useAuthStore } from '../../stores/authStore';
 import { findLastOwnEditableMessage } from './messageEditing';
 import { getApiForOrigin } from '../../utils/crossStoreResolvers';
+import { describeError } from '../../i18n/errors';
 import {
   filterMentionCandidates,
   useChannelMentionCandidates,
@@ -378,7 +379,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const commandMatches = useMemo(() => {
     if (!commandState || !chatCommands) return [];
     const q = commandState.query.toLowerCase();
-    return chatCommands.filter((c) => c.name.startsWith(q) || c.name.includes(q)).slice(0, 25);
+    return chatCommands.filter((c) => c.name.includes(q)).slice(0, 25);
   }, [commandState, chatCommands]);
 
   const selectCommand = useCallback(
@@ -562,8 +563,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
             textareaRef.current.focus();
           }
         } catch (err) {
-          const msg = err instanceof Error && err.message ? err.message : t('chat:commands.failed');
-          addToast(msg, 'warning');
+          addToast(err instanceof Error ? describeError(err) : t('chat:commands.failed'), 'warning');
         }
         return;
       }
@@ -836,7 +836,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     const commandMatch = /^\/([a-z0-9_-]*)$/i.exec(value.slice(0, cursorPos));
     if (commandMatch && cursorPos === value.length) {
       // The command list is loaded above, as soon as the text starts with "/".
-      setCommandState((prev) => ({ query: commandMatch[1] ?? '', selectedIndex: prev ? Math.min(prev.selectedIndex, 0) : 0 }));
+      setCommandState({ query: commandMatch[1] ?? '', selectedIndex: 0 });
     } else {
       setCommandState(null);
     }
