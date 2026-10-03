@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, like, sql } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { authenticate, signJwt } from '../utils/auth.js';
 import { sendError } from '../utils/httpErrors.js';
@@ -49,6 +49,18 @@ function findOwnedBot(ownerId: string, botId: string) {
   )).get();
 }
 
+/** Any native bot of this instance, whatever its owner: the target a space
+ * manager may invite. Federated bot accounts belong to their home instance
+ * and cannot be invited here. */
+function findInviteableBot(botId: string) {
+  return getDb().select().from(schema.users).where(and(
+    eq(schema.users.id, botId),
+    eq(schema.users.isBot, 1),
+    sql`(${schema.users.homeInstance} IS NULL OR ${schema.users.homeInstance} = '')`,
+    eq(schema.users.isDeleted, 0),
+  )).get();
+}
+
 /**
  * Bot management for the owning human. Bots are ordinary `users` rows with
  * `is_bot = 1`; they authenticate with a long-lived JWT issued here.
@@ -71,6 +83,24 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
       eq(schema.users.isBot, 1),
       eq(schema.users.isDeleted, 0),
     )).orderBy(schema.users.createdAt).all();
+    return reply.send({ bots: rows.map(toSummary) });
+  });
+
+  // Bots of this instance a manager can invite. A plain directory by username
+  // substring; what a bot does in the space stays with the bot's own code.
+  app.get<{ Querystring: { q?: unknown } }>('/api/bots/search', {
+    preHandler: [authenticate],
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    const q = typeof request.query?.q === 'string' ? request.query.q.trim() : '';
+    if (!q) return reply.send({ bots: [] });
+    const rows = getDb().select().from(schema.users).where(and(
+      eq(schema.users.isBot, 1),
+      eq(schema.users.isDeleted, 0),
+      eq(schema.users.discoverable, 1),
+      sql`(${schema.users.homeInstance} IS NULL OR ${schema.users.homeInstance} = '')`,
+      like(schema.users.username, `%${q}%`),
+    )).orderBy(schema.users.username).limit(25).all();
     return reply.send({ bots: rows.map(toSummary) });
   });
 
@@ -198,7 +228,8 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     return reply.send(response);
   });
 
-  // Spaces the caller may bring this bot into (MANAGE_SPACE), with membership.
+  // Spaces the caller may add the bot to (MANAGE_SPACE), plus every space the
+  // bot already sits in — a manager may have invited it without the owner.
   app.get<{ Params: { id: string } }>('/api/bots/:id/spaces', { preHandler: pre }, async (request, reply) => {
     const bot = findOwnedBot(request.userId, request.params.id);
     if (!bot) return sendError(reply, 404, 'bot_not_found');
@@ -208,17 +239,24 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
       .innerJoin(schema.spaces, eq(schema.spaceMembers.spaceId, schema.spaces.id))
       .where(eq(schema.spaceMembers.userId, request.userId))
       .all();
-    const botSpaceIds = new Set(
-      db.select({ spaceId: schema.spaceMembers.spaceId })
-        .from(schema.spaceMembers)
-        .where(eq(schema.spaceMembers.userId, bot.id))
-        .all()
-        .map(r => r.spaceId),
+    const botSpaces = db.select({ id: schema.spaces.id, name: schema.spaces.name, icon: schema.spaces.icon })
+      .from(schema.spaceMembers)
+      .innerJoin(schema.spaces, eq(schema.spaceMembers.spaceId, schema.spaces.id))
+      .where(eq(schema.spaceMembers.userId, bot.id))
+      .all();
+    const botSpaceIds = new Set(botSpaces.map(s => s.id));
+    // Spaces the caller may add the bot to, plus every space the bot already
+    // sits in: a manager may invite the bot without its owner taking part, so
+    // the owner's oversight must not stop at their own manageable spaces.
+    const rows = new Map(
+      mine
+        .filter(s => hasPermission(request.userId, s.id, PermissionBits.MANAGE_SPACE))
+        .map(s => [s.id, { id: s.id, name: s.name, icon: s.icon, botIsMember: botSpaceIds.has(s.id) }] as const),
     );
-    const spaces = mine
-      .filter(s => hasPermission(request.userId, s.id, PermissionBits.MANAGE_SPACE))
-      .map(s => ({ id: s.id, name: s.name, icon: s.icon, botIsMember: botSpaceIds.has(s.id) }));
-    return reply.send({ spaces });
+    for (const s of botSpaces) {
+      if (!rows.has(s.id)) rows.set(s.id, { id: s.id, name: s.name, icon: s.icon, botIsMember: true });
+    }
+    return reply.send({ spaces: [...rows.values()] });
   });
 
   // Owner brings the bot into a space they manage. Same result as the bot
@@ -227,7 +265,9 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     preHandler: pre,
     config: { rateLimit: { max: 30, timeWindow: '15 minutes' } },
   }, async (request, reply) => {
-    const bot = findOwnedBot(request.userId, request.params.id);
+    // Any space manager may bring any native bot of this instance in; the
+    // bot's owner does not take part (no consent round-trip).
+    const bot = findInviteableBot(request.params.id);
     if (!bot) return sendError(reply, 404, 'bot_not_found');
     const spaceId = typeof request.body?.spaceId === 'string' ? request.body.spaceId : '';
     if (!spaceId) {
@@ -250,13 +290,16 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     preHandler: pre,
     config: { rateLimit: { max: 30, timeWindow: '15 minutes' } },
   }, async (request, reply) => {
-    const bot = findOwnedBot(request.userId, request.params.id);
+    // The owner may take their bot out of any space; a space manager may
+    // take any bot out of a space they manage.
+    const bot = findInviteableBot(request.params.id);
     if (!bot) return sendError(reply, 404, 'bot_not_found');
     const { spaceId } = request.params;
     const space = getDb().select({ id: schema.spaces.id }).from(schema.spaces)
       .where(eq(schema.spaces.id, spaceId)).get();
     if (!space) return sendError(reply, 404, 'space_not_found');
-    if (!hasPermission(request.userId, spaceId, PermissionBits.MANAGE_SPACE)) {
+    const byBotOwner = bot.botOwnerId === request.userId;
+    if (!byBotOwner && !hasPermission(request.userId, spaceId, PermissionBits.MANAGE_SPACE)) {
       return sendError(reply, 403, 'missing_permission', { permission: 'MANAGE_SPACE' });
     }
     if (!isMember(spaceId, bot.id)) return sendError(reply, 404, 'member_not_found');

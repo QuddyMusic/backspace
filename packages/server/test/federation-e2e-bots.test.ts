@@ -316,17 +316,93 @@ describe('bringing a bot into a space by button', () => {
     expect(after.body.spaces.find(s => s.id === sid)?.botIsMember).toBe(true);
   });
 
-  it("someone else's bot, or a space the caller does not manage, is refused", async () => {
+  it('a caller without MANAGE_SPACE in the target space is refused', async () => {
     const stranger = await registerLocal(A, 'stranger2');
-    const foreign = await api<ErrBody>(A, 'POST', `/api/bots/${bot.id}/spaces`, stranger.token, { spaceId: 'x' });
-    expect(foreign.status).toBe(404);
-    expect(foreign.body.code).toBe('bot_not_found');
-
-    const strangerBot = await api<BotCreated>(A, 'POST', '/api/bots', stranger.token, { name: 'strangers' });
     const ownSpace = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', owner.token, { name: 'not-yours' });
     const sid = (ownSpace.body.space ?? ownSpace.body).id as string;
-    const noPerm = await api<ErrBody>(A, 'POST', `/api/bots/${strangerBot.body.bot.id}/spaces`, stranger.token, { spaceId: sid });
+    const noPerm = await api<ErrBody>(A, 'POST', `/api/bots/${bot.id}/spaces`, stranger.token, { spaceId: sid });
     expect(noPerm.status).toBe(403);
+    expect(noPerm.body.code).toBe('missing_permission');
+
+    const noSpace = await api<ErrBody>(A, 'POST', `/api/bots/${bot.id}/spaces`, stranger.token, { spaceId: 'x' });
+    expect(noSpace.status).toBe(404);
+    expect(noSpace.body.code).toBe('space_not_found');
+  });
+});
+
+describe('a manager invites a bot they do not own', () => {
+  it("a space manager adds someone else's native bot, and either side can take it out", async () => {
+    const other = await registerLocal(A, 'botother');
+    const otherBot = await api<BotCreated>(A, 'POST', '/api/bots', other.token, { name: 'others' });
+    expect(otherBot.status).toBe(201);
+    const manager = await registerLocal(A, 'spacemanager');
+    const made = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', manager.token, { name: 'managed-space' });
+    const sid = (made.body.space ?? made.body).id as string;
+
+    const add = await api<ErrBody>(A, 'POST', `/api/bots/${otherBot.body.bot.id}/spaces`, manager.token, { spaceId: sid });
+    expect(add.status).toBe(200);
+
+    // The owner took no part, yet sees the membership and can end it.
+    const list = await api<{ spaces: Array<{ id: string; botIsMember: boolean }> }>(A, 'GET', `/api/bots/${otherBot.body.bot.id}/spaces`, other.token);
+    expect(list.body.spaces.find(s => s.id === sid)?.botIsMember).toBe(true);
+    expect((await api<ErrBody>(A, 'DELETE', `/api/bots/${otherBot.body.bot.id}/spaces/${sid}`, other.token)).status).toBe(200);
+
+    // The manager can remove the bot they invited, too.
+    expect((await api<ErrBody>(A, 'POST', `/api/bots/${otherBot.body.bot.id}/spaces`, manager.token, { spaceId: sid })).status).toBe(200);
+    expect((await api<ErrBody>(A, 'DELETE', `/api/bots/${otherBot.body.bot.id}/spaces/${sid}`, manager.token)).status).toBe(200);
+  });
+
+  it("the bot's owner still needs MANAGE_SPACE in the target space", async () => {
+    const other = await registerLocal(A, 'botowner2');
+    const otherBot = await api<BotCreated>(A, 'POST', '/api/bots', other.token, { name: 'owners' });
+    expect(otherBot.status).toBe(201);
+    const manager = await registerLocal(A, 'spacemanager2');
+    const made = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', manager.token, { name: 'not-your-space' });
+    const sid = (made.body.space ?? made.body).id as string;
+    const res = await api<ErrBody>(A, 'POST', `/api/bots/${otherBot.body.bot.id}/spaces`, other.token, { spaceId: sid });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('missing_permission');
+  });
+
+  it('only a native bot is inviteable: a human or a federated bot account answers 404', async () => {
+    const manager = await registerLocal(A, 'spacemanager3');
+    const made = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', manager.token, { name: 'native-only' });
+    const sid = (made.body.space ?? made.body).id as string;
+    const human = await api<ErrBody>(A, 'POST', `/api/bots/${manager.id}/spaces`, manager.token, { spaceId: sid });
+    expect(human.status).toBe(404);
+    expect(human.body.code).toBe('bot_not_found');
+
+    // A federated bot account on B belongs to its home instance: not inviteable there.
+    const homeBot = await createBot('fedtarget_bot');
+    const reg = await registerOnHost(homeBot);
+    expect(reg.status).toBe(201);
+    const madeB = await api<{ id?: string; space?: { id: string } }>(B, 'POST', '/api/spaces', hostHuman.token, { name: 'native-bots-only' });
+    const sidB = (madeB.body.space ?? madeB.body).id as string;
+    const fed = await api<ErrBody>(B, 'POST', `/api/bots/${reg.body.user.id}/spaces`, hostHuman.token, { spaceId: sidB });
+    expect(fed.status).toBe(404);
+    expect(fed.body.code).toBe('bot_not_found');
+  });
+});
+
+describe('the bot search for invitations', () => {
+  it('finds native bots by username substring; humans are not listed', async () => {
+    const other = await registerLocal(A, 'botsearcher');
+    const made = await api<BotCreated>(A, 'POST', '/api/bots', other.token, { name: 'xylophone' });
+    expect(made.status).toBe(201);
+
+    const seeker = await registerLocal(A, 'searchseeker');
+    const res = await api<{ bots: Array<{ id: string; username: string }> }>(A, 'GET', '/api/bots/search?q=xyloph', seeker.token);
+    expect(res.status).toBe(200);
+    expect(res.body.bots.some(b => b.username === 'xylophone_bot')).toBe(true);
+    expect(res.body.bots.every(b => b.username.endsWith('_bot'))).toBe(true);
+
+    // The owner's own bots are listed too: a directory, not a policy.
+    const own = await api<{ bots: Array<{ id: string; username: string }> }>(A, 'GET', '/api/bots/search?q=xyloph', other.token);
+    expect(own.body.bots.some(b => b.username === 'xylophone_bot')).toBe(true);
+
+    const none = await api<{ bots: unknown[] }>(A, 'GET', `/api/bots/search?q=${seeker.username}`, seeker.token);
+    expect(none.status).toBe(200);
+    expect(none.body.bots).toHaveLength(0);
   });
 });
 
@@ -513,8 +589,8 @@ describe('taking a bot out of a space', () => {
 
     const stranger = await registerLocal(A, 'removestranger');
     const foreign = await api<ErrBody>(A, 'DELETE', `/api/bots/${bot.id}/spaces/${sid}`, stranger.token);
-    expect(foreign.status).toBe(404);
-    expect(foreign.body.code).toBe('bot_not_found');
+    expect(foreign.status).toBe(403);
+    expect(foreign.body.code).toBe('missing_permission');
   });
 });
 
