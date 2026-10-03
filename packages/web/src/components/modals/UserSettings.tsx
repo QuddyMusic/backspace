@@ -230,7 +230,7 @@ export function UserSettingsModal() {
               <button onClick={() => handleTabClick('appearance')} className={tabClass('appearance')}>{t('settings:nav.tabs.appearance')}</button>
               <button onClick={() => handleTabClick('voice')} className={tabClass('voice')}>{t('settings:nav.tabs.voice')}</button>
               <button onClick={() => handleTabClick('privacy')} className={tabClass('privacy')}>{t('settings:nav.tabs.privacy')}</button>
-            <button onClick={() => handleTabClick('bots')} className={tabClass('bots')}>{t('settings:nav.tabs.bots')}</button>
+              <button onClick={() => handleTabClick('bots')} className={tabClass('bots')}>{t('settings:nav.tabs.bots')}</button>
 
               <div className="border-t border-white/[0.04] my-2 mx-2" />
               <div className="text-[10px] font-semibold text-txt-tertiary uppercase tracking-wider px-3 py-1">{t('settings:nav.appSettings')}</div>

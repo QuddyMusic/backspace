@@ -308,6 +308,7 @@ export function UserProfileModal() {
             ring={{ width: 4, color: 'rgba(20,20,26,0.82)' }}
             className="mt-[-52px] mb-2"
           />
+
           <div className="mb-3">
             <div className="flex items-center gap-2">
               <span className="text-[20px] font-bold leading-tight">{displayName}</span>

@@ -22,7 +22,6 @@ import { useShownStatus } from '../../hooks/useShownStatus';
 import { viewerCanEditMemberRoles } from '../../utils/roleHierarchy';
 import { ProfileRoles } from './ProfileRoles';
 
-
 /** Gap between the card and the element it was opened from. */
 const ANCHOR_OFFSET = 8;
 
@@ -264,14 +263,12 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
         </div>
 
         {/* Actions */}
-        {!user.isBot && (
-          <button
-            onClick={handleSendMessage}
-            className="w-full mt-3 py-2 rounded-lg text-[13px] font-medium text-txt-primary bg-white/[0.06] hover:bg-white/[0.10] border border-white/[0.08] transition-colors"
-          >
-            {t('social:profile.sendMessage')}
-          </button>
-        )}
+        <button
+          onClick={handleSendMessage}
+          className="w-full mt-3 py-2 rounded-lg text-[13px] font-medium text-txt-primary bg-white/[0.06] hover:bg-white/[0.10] border border-white/[0.08] transition-colors"
+        >
+          {t('social:profile.sendMessage')}
+        </button>
         {canEditRoles && (
           <button
             onClick={handleEditRoles}
