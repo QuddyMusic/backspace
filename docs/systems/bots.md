@@ -6,7 +6,7 @@ Source files:
 - `packages/server/src/routes/bots.ts` -- owner endpoints (create, edit, token, delete, add to a space)
 - `packages/server/src/routes/reactions.ts` -- REST reactions, the twin of the WS events
 - `packages/server/src/utils/botFederation.ts` -- cutting a bot off from other instances
-- `packages/server/src/utils/spaceMembership.ts` -- `addUserToSpace`
+- `packages/server/src/utils/spaceMembership.ts` -- `addUserToSpace`, `removeUserFromSpace`
 - `packages/server/src/utils/auth.ts` -- `tokenFromAuthHeader` (`Bearer` / `Bot`)
 - `packages/server/src/routes/auth.ts` -- `POST /api/auth/register` with `botProof`
 - `packages/server/src/routes/federation/handlers/attach.ts` -- `verify-attach-proof` answers `isBot`
@@ -29,7 +29,10 @@ Source files:
 - The owner's profile rules do not apply to the bot: a bot cannot edit its own durable profile fields through `PATCH /api/users/@me` (`403 bot_profile_owner_only`); the owner does it through `PATCH /api/bots/:id`.
 
 ## 2. Authentication
+
+```
 Authorization: Bot <token>
+```
 
 `Bearer <token>` is accepted as an alias everywhere (REST and tus uploads). WebSocket: first message `{"type":"auth","token":"<token>"}`, no scheme.
 
@@ -47,7 +50,7 @@ Authorization: Bot <token>
 | POST | `/api/bots/:id/spaces` | `{ spaceId }` | `{ success }` (any native bot of this instance; MANAGE_SPACE in the space) |
 | DELETE | `/api/bots/:id/spaces/:spaceId` | -- | `{ success }` (the bot's owner, or MANAGE_SPACE in the space; the bot gets `member_left` and no further events of that space) |
 
-`BotSummary` is `{ id, username, displayName, avatarColor, avatar, createdAt }`. `avatar` is a bare upload filename (upload through tus first) or `null`. Errors use the project format `{ error, code, statusCode, details? }`; the codes specific to bots are `bot_not_found`, `bot_limit_reached`, `bot_name_invalid`, `bot_name_suffix_required`, `bots_native_only`, `bot_profile_owner_only`, `bot_home_not_peered`, `bot_proof_invalid`.
+`BotSummary` is `{ id, username, displayName, avatarColor, avatar, createdAt }`. `avatar` is a bare upload filename (upload through tus first) or `null`. Errors use the project format `{ error, code, statusCode, details? }`; the codes specific to bots are `bot_not_found`, `bot_limit_reached`, `bot_name_invalid`, `bot_name_suffix_required`, `bots_native_only`, `bot_profile_owner_only`, `bot_home_not_peered`, `bot_proof_invalid`, `bot_account_required`, `bots_no_friends`.
 
 A name change or an avatar change is broadcast (`user_updated`) and relayed to peers as a `profile_update`, so the bot's accounts on other instances follow.
 
@@ -55,8 +58,7 @@ A name change or an avatar change is broadcast (`user_updated`) and relayed to p
 
 ## 4. Getting a bot into conversations
 
-- **Space, by a manager:** `POST /api/bots/:id/spaces`. Any native human with MANAGE_SPACE in the space may add any native bot of this instance — their own or someone else's. The bot's owner takes no part and is not asked; they see every space of their bot in `GET /api/bots/:id/spaces` (their manageable spaces plus every space the bot already sits in) and can end the membership themselves. A federated bot account or a human as the target answers `404 bot_not_found`.
- The caller may be a federated human account too: inviting and removing are actions on the space. Everything about the bot itself (create, token, edit, delete) stays with the native owner account on the bot's home instance, because the bot's row and signing key live there; managing it from another instance would need a separate server-to-server design, and while the home instance is down its tokens cannot be reissued anywhere. The result is the same as joining (member row, `member_joined`). A banned bot is refused (`user_banned`), a member answers `409 already_member`.
+- **Space, by a manager:** `POST /api/bots/:id/spaces`. Any native human with MANAGE_SPACE in the space may add any native bot of this instance — their own or someone else's. The bot's owner takes no part and is not asked; they see every space of their bot in `GET /api/bots/:id/spaces` (their manageable spaces plus every space the bot already sits in) and can end the membership themselves. A federated bot account or a human as the target answers `404 bot_not_found`. The result is the same as joining (member row, `member_joined`). A banned bot is refused (`user_banned`), a member answers `409 already_member`. A federated human account with MANAGE_SPACE may also invite and remove bots, because both are actions on the space. Creating, editing, re-issuing the token of and deleting a bot stay with the native owner account on the bot's home instance, where the bot's row and signing key live. Managing a bot from another instance would need a separate server-to-server design, and while the home instance is down its tokens cannot be re-issued anywhere.
 - **Finding a bot to invite:** `GET /api/bots/search?q=<substring>` — native, discoverable bots of this instance by username substring (2-32 characters; `%` and `_` are literal; any other length answers an empty list), up to 25, ordered by username. The caller's own bots are listed too: a directory, not a policy. The web client offers the flow in Space settings → Members → "Add Bot".
 - **Taking the bot out:** `DELETE /api/bots/:id/spaces/:spaceId` — by the bot's owner (any space of their bot) or by a space manager (MANAGE_SPACE); the ordinary member kick (KICK_MEMBERS) keeps working as before. Kick, ban and both removal routes end live delivery of that space to the bot's sockets at once and take the bot out of that space's voice channels.
 - **Space, by the bot:** `POST /api/spaces/join { inviteCode }`, like any user. Request-only spaces answer `403 join_request_required`.
@@ -94,7 +96,7 @@ The reaction calls serve channel and DM messages alike (the kind is found by the
 
 ### Limits
 
-Channel messages: 5 per 5 s. Reactions: 10 per 5 s. Both are counted per client address, like every limit in this app ([api.md](api.md), "Rate limiting"). Bot creation and token regeneration: 5 per 15 min per owner.
+Messages in channels and in DMs: 5 per 5 s each. Reactions: 10 per 5 s. Both are counted per client address, like every limit in this app ([api.md](api.md), "Rate limiting"). Bot creation and token regeneration: 5 per 15 min per owner.
 
 ## 5b. Slash commands
 
