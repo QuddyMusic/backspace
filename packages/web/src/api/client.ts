@@ -385,6 +385,7 @@ export class BackspaceApiClient {
 
   readonly bots: {
     list: () => Promise<{ bots: BotSummary[] }>;
+    search: (q: string) => Promise<{ bots: BotSummary[] }>;
     create: (data: CreateBotRequest) => Promise<CreateBotResponse>;
     regenerateToken: (id: string) => Promise<RegenerateBotTokenResponse>;
     update: (id: string, data: UpdateBotRequest) => Promise<UpdateBotResponse>;
@@ -891,6 +892,7 @@ export class BackspaceApiClient {
 
     this.bots = {
       list: () => request<{ bots: BotSummary[] }>('GET', '/bots'),
+      search: (q: string) => request<{ bots: BotSummary[] }>('GET', `/bots/search?q=${encodeURIComponent(q)}`),
       create: (data: CreateBotRequest) => request<CreateBotResponse>('POST', '/bots', data),
       regenerateToken: (id: string) => request<RegenerateBotTokenResponse>('POST', `/bots/${id}/token`),
       update: (id: string, data: UpdateBotRequest) => request<UpdateBotResponse>('PATCH', `/bots/${id}`, data),

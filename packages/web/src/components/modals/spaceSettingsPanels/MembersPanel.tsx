@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Avatar } from '../../ui/Avatar';
 import { ConfirmDialog } from '../../ui/ConfirmDialog';
+import { AddBotModal } from '../AddBotModal';
 import { useSpaceStore, getApiForOrigin } from '../../../stores/spaceStore';
 import { parseFederatedUsername, isFederationGlobeApplicable } from '../../../utils/identity';
 import { useCanonicalUserView } from '../../../utils/userViewLookup';
@@ -246,11 +247,13 @@ export function MembersPanel({ spaceId }: MembersPanelProps) {
   const canManageRoles = hasPermissionBit(myPerms, PermissionBits.MANAGE_ROLES);
   const canKick = hasPermissionBit(myPerms, PermissionBits.KICK_MEMBERS);
   const canBan = hasPermissionBit(myPerms, PermissionBits.BAN_MEMBERS);
+  const canInviteBots = hasPermissionBit(myPerms, PermissionBits.MANAGE_SPACE);
 
   const [pendingRoleChanges, setPendingRoleChanges] = useState<Map<string, Set<string>>>(new Map());
   const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [pendingAction, setPendingAction] = useState<{ type: 'kick' | 'ban'; userId: string; displayName: string } | null>(null);
+  const [showAddBot, setShowAddBot] = useState(false);
 
   // Assignable roles: exclude @everyone (where role.id === spaceId)
   const assignableRoles = roles.filter((r) => r.id !== spaceId);
@@ -330,7 +333,18 @@ export function MembersPanel({ spaceId }: MembersPanelProps) {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-txt-primary mb-6">{t('common:labels.members')}</h2>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-lg font-semibold text-txt-primary">{t('common:labels.members')}</h2>
+        {canInviteBots && (
+          <button
+            type="button"
+            onClick={() => setShowAddBot(true)}
+            className="px-3 py-1.5 rounded-md border border-white/10 text-xs font-medium text-txt-secondary hover:text-txt-primary transition-colors"
+          >
+            {t('spaces:settings.members.botInvite.button')}
+          </button>
+        )}
+      </div>
       {error && (
         <div className="p-2 bg-accent-rose/10 border border-accent-rose/30 rounded text-txt-danger text-sm">{error}</div>
       )}
@@ -370,6 +384,13 @@ export function MembersPanel({ spaceId }: MembersPanelProps) {
         </div>
       </div>
 
+      <AddBotModal
+        isOpen={showAddBot}
+        onClose={() => setShowAddBot(false)}
+        origin={space?._instanceOrigin ?? ''}
+        spaceId={spaceId}
+        onAdded={() => { void loadSpaceDetail(spaceId); }}
+      />
       <ConfirmDialog
         isOpen={pendingAction !== null}
         onClose={() => setPendingAction(null)}
