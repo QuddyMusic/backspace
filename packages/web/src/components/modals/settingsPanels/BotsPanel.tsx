@@ -240,8 +240,8 @@ export function BotsPanel() {
 
   const handleCopy = () => {
     if (!revealed) return;
-    navigator.clipboard
-      .writeText(revealed.token)
+    Promise.resolve()
+      .then(() => navigator.clipboard.writeText(revealed.token))
       .then(() => setCopied(true))
       .catch(() => setCopied(false));
   };
