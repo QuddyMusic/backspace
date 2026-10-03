@@ -70,8 +70,8 @@ async function api<T>(
   return { status: res.status, body: parsed as T };
 }
 
-async function createBot(name: string): Promise<HomeBot> {
-  const res = await api<BotCreated>(A, 'POST', '/api/bots', owner.token, { name });
+async function createBot(name: string, user: TestUser = owner): Promise<HomeBot> {
+  const res = await api<BotCreated>(A, 'POST', '/api/bots', user.token, { name });
   expect(res.status).toBe(201);
   return { id: res.body.bot.id, username: res.body.bot.username, token: res.body.token };
 }
@@ -826,6 +826,62 @@ describe('invoking a slash command', () => {
     const offline = await invoke(owner.token, { botId: quiet.id, command: 'hush', channelId: cid });
     expect(offline.status).toBe(409);
     expect(offline.body.code).toBe('bot_unavailable');
+  });
+});
+
+describe('two bots with the same command name', () => {
+  it('the listing tells them apart, and an invocation reaches the bot it names', async () => {
+    // A dedicated owner: the suite's main owner is close to the ten-bot limit.
+    const clasher = await registerLocal(A, 'clashbots');
+    const first = await createBot('alpha_bot', clasher);
+    const second = await createBot('beta_bot', clasher);
+    const made = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', owner.token, { name: 'clash-space' });
+    const sid = (made.body.space ?? made.body).id as string;
+    for (const b of [first, second]) {
+      expect((await api<ErrBody>(A, 'POST', `/api/bots/${b.id}/spaces`, owner.token, { spaceId: sid })).status).toBe(200);
+    }
+    const chRes = await api<Array<{ id: string; type: string }> | { channels: Array<{ id: string; type: string }> }>(
+      A, 'GET', `/api/spaces/${sid}/channels`, owner.token,
+    );
+    const channels = Array.isArray(chRes.body) ? chRes.body : chRes.body.channels;
+    const cid = (channels.find(c => c.type === 'text') ?? channels[0]!).id;
+
+    const definition = {
+      name: 'play',
+      description: 'Play a track',
+      options: [{ name: 'query', description: 'What to play', type: 'string', required: true }],
+    };
+    for (const b of [first, second]) {
+      expect((await api<unknown>(A, 'PUT', '/api/bots/@me/commands', b.token, { commands: [definition] })).status).toBe(200);
+    }
+
+    // Both commands are listed, each with its bot, in name-then-username order.
+    const list = await api<{ commands: Array<{ name: string; botId: string; bot: { username: string } }> }>(
+      A, 'GET', `/api/commands?channelId=${cid}`, owner.token,
+    );
+    const plays = list.body.commands.filter(c => c.name === 'play');
+    expect(plays).toHaveLength(2);
+    expect(plays.map(c => c.bot.username)).toEqual([first.username, second.username]);
+    expect(plays.every(c => c.botId === (c.bot.username === first.username ? first.id : second.id))).toBe(true);
+
+    // An invocation names the bot; the clash changes nothing about that.
+    const wsFirst = await connectWs(A.origin, first.token);
+    sockets.push(wsFirst);
+    await wsFirst.waitForEvent('ready');
+    const wsSecond = await connectWs(A.origin, second.token);
+    sockets.push(wsSecond);
+    await wsSecond.waitForEvent('ready');
+
+    const got = (ws: WsCapture, id: string): boolean =>
+      ws.events.some(e => e.type === 'interaction_created' && (e.interaction as { id?: string } | undefined)?.id === id);
+    const invFirst = await api<{ id: string }>(A, 'POST', '/api/interactions', owner.token, { botId: first.id, command: 'play', options: { query: 'song-a' }, channelId: cid });
+    const invSecond = await api<{ id: string }>(A, 'POST', '/api/interactions', owner.token, { botId: second.id, command: 'play', options: { query: 'song-b' }, channelId: cid });
+    expect(invFirst.status).toBe(201);
+    expect(invSecond.status).toBe(201);
+
+    expect(await waitUntil(() => got(wsFirst, invFirst.body.id) && got(wsSecond, invSecond.body.id), 5_000)).toBe(true);
+    expect(got(wsFirst, invSecond.body.id)).toBe(false);
+    expect(got(wsSecond, invFirst.body.id)).toBe(false);
   });
 });
 

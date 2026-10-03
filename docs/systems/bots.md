@@ -120,6 +120,8 @@ POST /api/interactions   { botId, command, options?, channelId | dmChannelId }  
 
 `GET` lists the commands of the bots that are in that chat; the caller must be able to see it. `POST` checks, in this order: exactly one of `channelId` and `dmChannelId`; the caller is a member and may write there (SEND_MESSAGES in a channel); the bot is in the chat (`404 bot_not_found`); the command exists (`404 command_not_found`); each option value fits its definition, including `choices` (`400 validation_failed`, `details.field` is `options.<name>`); the bot has an open WebSocket (`409 bot_unavailable`). 5 calls per 5 seconds per client address.
 
+Command names are unique per bot, not per chat: two bots may both offer `/play`. Every listing entry names its bot, and an invocation names it too (`botId`), so a clash reaches exactly the bot it addresses; the message box shows the bot's `@username` under each command. A command typed out by hand, without picking a row from the list, runs the first of the clashing commands in the listing's order (name, then the bot's username).
+
 ### The event
 
 ```json
