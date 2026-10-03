@@ -319,18 +319,18 @@ export function MainContent() {
               </svg>
             )}
             {isGroupDm ? (
-	      <span
-	        onClick={() => openModal('groupDmSettings', { dmChannelId: currentChannelId, initialTab: 'overview' })}
-		className="font-bold text-[15px] tracking-[-0.02em] text-txt-primary truncate cursor-pointer"
-	      >
-		{dmName}
-	      </span>
-	    ) : (
-	      <div className="flex items-center gap-1.5 min-w-0">
-		<span className="font-bold text-[15px] tracking-[-0.02em] text-txt-primary truncate">{dmName}</span>
-		{!isGroupDm && firstOther?.isBot && <BotBadge />}
-	      </div>
-	    )}
+              <span
+                onClick={() => openModal('groupDmSettings', { dmChannelId: currentChannelId, initialTab: 'overview' })}
+                className="font-bold text-[15px] tracking-[-0.02em] text-txt-primary truncate cursor-pointer"
+              >
+                {dmName}
+              </span>
+            ) : (
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="font-bold text-[15px] tracking-[-0.02em] text-txt-primary truncate">{dmName}</span>
+                {firstOther?.isBot && <BotBadge />}
+              </div>
+            )}
             {!isGroupDm && firstOther && isFederationGlobeApplicable(firstOther) && (
               <Tooltip content={firstOther.username} position="bottom">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-txt-tertiary/80 flex-shrink-0">

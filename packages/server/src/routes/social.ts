@@ -1058,7 +1058,7 @@ export async function socialRoutes(app: FastifyInstance): Promise<void> {
         createdAt: u.createdAt,
         homeInstance: u.homeInstance,
         homeUserId: u.homeUserId,
-	isBot: u.isBot,
+        isBot: u.isBot,
         mutualFriendCount,
         mutualSpaceCount,
         relationship,

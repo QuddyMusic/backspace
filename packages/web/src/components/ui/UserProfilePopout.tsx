@@ -202,8 +202,8 @@ export function UserProfilePopout({ user: propUser, onClose, anchor, placement =
 
         {/* Name & info */}
         <div>
-	  <div className="flex items-center gap-2">
-	    <span className="text-[16px] font-semibold leading-tight">{displayName}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[16px] font-semibold leading-tight">{displayName}</span>
             {user.isBot && <BotBadge />}
           </div>
           <div className="text-[13px] text-txt-tertiary">

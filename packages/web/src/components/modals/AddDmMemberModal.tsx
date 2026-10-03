@@ -194,7 +194,7 @@ export function AddDmMemberModal() {
         next.delete(friendId);
       } else {
         // Enforce remaining capacity
-	if (next.size + selectedBotIds.size >= remainingSlots) return prev;
+        if (next.size + selectedBotIds.size >= remainingSlots) return prev;
         next.add(friendId);
       }
       return next;
@@ -214,16 +214,13 @@ export function AddDmMemberModal() {
     [friends, selected],
   );
 
-  const isGroup = true;
-
   const filteredBots = useMemo(() => {
-    if (!isGroup) return [];
     const q = query.trim().toLowerCase();
     return bots.filter((b) => {
       if (!q) return true;
       return (b.displayName ?? '').toLowerCase().includes(q) || b.username.toLowerCase().includes(q);
     });
-  }, [bots, query, isGroup]);
+  }, [bots, query]);
 
   const selectedBots = useMemo(
     () => bots.filter((b) => selectedBotIds.has(b.id)),
@@ -371,7 +368,7 @@ export function AddDmMemberModal() {
 
         {/* Friend list */}
         <div className="max-h-[300px] overflow-y-auto space-y-[2px]">
-	  {filteredFriends.length === 0 && filteredBots.length === 0 && (
+          {filteredFriends.length === 0 && filteredBots.length === 0 && (
             <div className="py-4 text-center text-txt-tertiary text-[14px]">
               {query.trim() ? t('dm:addMember.noMatch') : t('dm:addMember.noFriends')}
             </div>
@@ -380,7 +377,7 @@ export function AddDmMemberModal() {
           {filteredFriends.map((friend) => {
             const isInDm = currentMemberIds.has(friend.id);
             const isSelected = selected.has(friend.id);
-	    const atCapacity = !isSelected && selected.size + selectedBotIds.size >= remainingSlots;
+            const atCapacity = !isSelected && selected.size + selectedBotIds.size >= remainingSlots;
             return (
               <AddDmFriendRow
                 key={friend.id}
@@ -421,7 +418,7 @@ export function AddDmMemberModal() {
         {/* Submit button */}
         <button
           onClick={handleSubmit}
-	  disabled={totalSelected === 0 || isAdding}
+          disabled={totalSelected === 0 || isAdding}
           className="w-full py-2 rounded-md text-[13px] font-semibold transition-colors bg-accent-mint text-surface-base hover:bg-accent-mint/90 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isAdding ? t('dm:addMember.adding') : buttonText}
