@@ -382,6 +382,18 @@ describe('a manager invites a bot they do not own', () => {
     expect(fed.status).toBe(404);
     expect(fed.body.code).toBe('bot_not_found');
   });
+
+  it('inviting a bot that already sits in the space answers already_member', async () => {
+    const other = await registerLocal(A, 'dupowner');
+    const otherBot = await createBot('dupbot', other);
+    const manager = await registerLocal(A, 'dupmanager');
+    const made = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', manager.token, { name: 'dup-space' });
+    const sid = (made.body.space ?? made.body).id as string;
+    expect((await api<ErrBody>(A, 'POST', `/api/bots/${otherBot.id}/spaces`, manager.token, { spaceId: sid })).status).toBe(200);
+    const again = await api<ErrBody>(A, 'POST', `/api/bots/${otherBot.id}/spaces`, manager.token, { spaceId: sid });
+    expect(again.status).toBe(409);
+    expect(again.body.code).toBe('already_member');
+  });
 });
 
 describe('the bot search for invitations', () => {
@@ -403,6 +415,21 @@ describe('the bot search for invitations', () => {
     const none = await api<{ bots: unknown[] }>(A, 'GET', `/api/bots/search?q=${seeker.username}`, seeker.token);
     expect(none.status).toBe(200);
     expect(none.body.bots).toHaveLength(0);
+  });
+
+  it('% and _ in the query are literal characters, and out-of-range lengths find nothing', async () => {
+    const wildOwner = await registerLocal(A, 'wildowner');
+    const wild = await createBot('wildcard', wildOwner);
+    expect(wild.username).toBe('wildcard_bot');
+    const seeker = await registerLocal(A, 'wildseeker');
+    const find = async (q: string) => (await api<{ bots: Array<{ username: string }> }>(
+      A, 'GET', `/api/bots/search?q=${encodeURIComponent(q)}`, seeker.token,
+    )).body.bots;
+    expect((await find('wildc')).some(b => b.username === 'wildcard_bot')).toBe(true);
+    expect(await find('%%')).toHaveLength(0);
+    expect(await find('w_ldcard')).toHaveLength(0);
+    expect(await find('w')).toHaveLength(0);
+    expect(await find('x'.repeat(33))).toHaveLength(0);
   });
 });
 

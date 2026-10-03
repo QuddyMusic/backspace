@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { and, eq, like, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { authenticate, signJwt } from '../utils/auth.js';
 import { sendError } from '../utils/httpErrors.js';
@@ -24,6 +24,9 @@ const BOT_PASSWORD_MARKER = '!bot';
 /** Bot tokens are JWTs; revocation goes through users.passwordChangedAt. */
 const BOT_TOKEN_TTL = '3650d';
 const BOT_NAME_RE = /^[a-z0-9_]+$/;
+/** Bounds of the invite search string: a username is 5-32 characters, so nothing outside can match. */
+const BOT_SEARCH_MIN_QUERY = 2;
+const BOT_SEARCH_MAX_QUERY = 32;
 /** A bare upload filename: starts alphanumeric, so `..` and dotfiles cannot pass. */
 const AVATAR_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/;
 /** Same palette as registration (routes/auth.ts). */
@@ -93,13 +96,15 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
   }, async (request, reply) => {
     const q = typeof request.query?.q === 'string' ? request.query.q.trim() : '';
-    if (!q) return reply.send({ bots: [] });
+    if (q.length < BOT_SEARCH_MIN_QUERY || q.length > BOT_SEARCH_MAX_QUERY) return reply.send({ bots: [] });
+    // A `%` or `_` typed by the person is a literal character, not a wildcard.
+    const pattern = `%${q.replace(/[!%_]/g, '!$&')}%`;
     const rows = getDb().select().from(schema.users).where(and(
       eq(schema.users.isBot, 1),
       eq(schema.users.isDeleted, 0),
       eq(schema.users.discoverable, 1),
       sql`(${schema.users.homeInstance} IS NULL OR ${schema.users.homeInstance} = '')`,
-      like(schema.users.username, `%${q}%`),
+      sql`${schema.users.username} LIKE ${pattern} ESCAPE '!'`,
     )).orderBy(schema.users.username).limit(25).all();
     return reply.send({ bots: rows.map(toSummary) });
   });
