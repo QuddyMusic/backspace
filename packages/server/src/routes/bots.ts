@@ -78,6 +78,16 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     }
   };
   const pre = [authenticate, requireNativeHuman];
+  // Inviting or removing a bot is an action on a space of this instance, not on the
+  // bot's home: a federated human who manages the space may do it. Bots may not.
+  const requireHuman = async (request: FastifyRequest, reply: FastifyReply) => {
+    const caller = getDb().select({ isBot: schema.users.isBot })
+      .from(schema.users).where(eq(schema.users.id, request.userId)).get();
+    if (!caller || caller.isBot === 1) {
+      return sendError(reply, 403, 'bots_native_only');
+    }
+  };
+  const preSpaceAction = [authenticate, requireHuman];
   const rateLimit = { rateLimit: { max: 5, timeWindow: '15 minutes' } };
 
   app.get('/api/bots', { preHandler: pre }, async (request, reply) => {
@@ -267,7 +277,7 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
   // Owner brings the bot into a space they manage. Same result as the bot
   // joining by invite, without handing out a code.
   app.post<{ Params: { id: string }; Body: { spaceId?: unknown } }>('/api/bots/:id/spaces', {
-    preHandler: pre,
+    preHandler: preSpaceAction,
     config: { rateLimit: { max: 30, timeWindow: '15 minutes' } },
   }, async (request, reply) => {
     // Any space manager may bring any native bot of this instance in; the
@@ -292,7 +302,7 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
 
   // The counterpart of the add above: the owner takes the bot out of a space they manage.
   app.delete<{ Params: { id: string; spaceId: string } }>('/api/bots/:id/spaces/:spaceId', {
-    preHandler: pre,
+    preHandler: preSpaceAction,
     config: { rateLimit: { max: 30, timeWindow: '15 minutes' } },
   }, async (request, reply) => {
     // The owner may take their bot out of any space; a space manager may
