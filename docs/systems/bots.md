@@ -14,7 +14,7 @@ Source files:
 - `packages/server/src/routes/botCommands.ts`, `routes/interactions.ts`, `utils/botAuth.ts` -- slash commands
 - `packages/server/src/ws/handler.ts`, `ws/events.ts` -- bot voice seats (`botJoinRoom`, `bot_voice_join`)
 - `packages/web/src/components/chat/CommandPopover.tsx` -- the command lists in the message box
-- `examples/bots/` -- zero-dependency Node clients
+- `examples/bots/` -- Node clients (dependency-free, except `tts-voice/`: a voice bot that speaks English and Russian)
 
 ---
 
@@ -174,7 +174,7 @@ For each channel the bot asks for a token of its own and connects to that room i
 POST /api/livekit/token   { channelId }   → { token, url }
 ```
 
-The call works for a bot exactly as for a person (a role without SPEAK or STREAM limits what the token may publish). One LiveKit connection per room, publishing one audio track each, is how a bot plays different audio in different channels; the track is produced by the bot's own code with a LiveKit client library, which the server neither provides nor needs. Which channel a command belongs to is the bot's decision as well: the interaction names the invoker, and `voice_state_update` and the `ready` payload say in which voice channel that person sits (`examples/bots/voice.mjs`).
+The call works for a bot exactly as for a person (a role without SPEAK or STREAM limits what the token may publish). One LiveKit connection per room, publishing one audio track each, is how a bot plays different audio in different channels; the track is produced by the bot's own code with a LiveKit client library, which the server neither provides nor needs. Which channel a command belongs to is the bot's decision as well: the interaction names the invoker, and `voice_state_update` and the `ready` payload say in which voice channel that person sits (`examples/bots/voice.mjs`; a working bot with audio, which speaks with Piper and leaves after 10 idle seconds, is `examples/bots/tts-voice/`).
 
 ### When a seat ends
 
