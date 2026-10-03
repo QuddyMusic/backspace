@@ -97,6 +97,9 @@ export function AddBotModal({ isOpen, onClose, origin, spaceId, onAdded }: AddBo
           placeholder={t('settings.members.botInvite.searchPlaceholder')}
           className="input-search w-full py-2 text-[14px]"
         />
+        <div className="p-2 bg-white/[0.03] border border-white/10 rounded text-xs text-txt-secondary">
+          {t('settings.members.botInvite.warning')}
+        </div>
         {error && (
           <div className="p-2 bg-accent-rose/10 border border-accent-rose/30 rounded text-txt-danger text-sm">{error}</div>
         )}
