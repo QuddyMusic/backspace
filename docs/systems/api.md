@@ -646,9 +646,10 @@ POST /bots { name } → 201 { bot, token } [5 per 15 min; the _bot suffix is app
 PATCH /bots/:id { displayName?, avatar? } → { bot } [owner; displayName must end with _bot]
 POST /bots/:id/token → { token, federation } [5 per 15 min; revokes earlier tokens, cuts the bot off on other instances]
 DELETE /bots/:id → { success, federation }
-GET /bots/:id/spaces → { spaces: [{ id, name, icon, botIsMember }] } [spaces where the caller holds MANAGE_SPACE]
-POST /bots/:id/spaces { spaceId } → { success } [MANAGE_SPACE]
-DELETE /bots/:id/spaces/:spaceId    → { success }                     [MANAGE_SPACE]
+GET /bots/search?q= → { bots: BotSummary[] } [native discoverable bots, username substring of 2-32 chars, up to 25; 60 per min]
+GET /bots/:id/spaces → { spaces: [{ id, name, icon, botIsMember }] } [owner; the caller's MANAGE_SPACE spaces plus every space the bot already sits in]
+POST /bots/:id/spaces { spaceId } → { success } [any native bot of this instance; MANAGE_SPACE in the space]
+DELETE /bots/:id/spaces/:spaceId → { success } [the bot's owner, or MANAGE_SPACE in the space]
 PUT /messages/:id/reactions/:emoji → { success, changed } [ADD_REACTIONS for space messages; channel or DM message, found by id]
 DELETE /messages/:id/reactions/:emoji → { success, changed } [own reaction]
 `Authorization: Bot <token>` is accepted wherever `Bearer <token>` is (including tus uploads). `POST /auth/register` also takes `botProof` for a bot registering on another instance (bots.md, section 7).
