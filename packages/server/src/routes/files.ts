@@ -33,7 +33,7 @@ const createCounts = new Map<string, { count: number; windowStart: number }>();
 
 function checkCreateRateLimit(userId: string): boolean {
   const now = Date.now();
-  const entry = createCounts.get(userId); 
+  const entry = createCounts.get(userId);
   if (!entry || now - entry.windowStart > UPLOAD_CREATE_WINDOW_MS) {
     createCounts.set(userId, { count: 1, windowStart: now });
     return true;

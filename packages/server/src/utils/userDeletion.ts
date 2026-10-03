@@ -104,7 +104,7 @@ export function tombstoneUser(uid: string, options?: TombstoneOptions): string[]
   const user = db.select().from(schema.users).where(eq(schema.users.id, uid)).get();
   if (!user) return [];
 
-  // Боты умирают вместе с владельцем: иначе остаются живые токены и открытые WS.
+  // Bots die with their owner: otherwise their tokens stay valid and their sockets stay open.
   const ownedBots = db.select({ id: schema.users.id }).from(schema.users)
     .where(and(
       eq(schema.users.botOwnerId, uid),
@@ -292,7 +292,7 @@ export function tombstoneUser(uid: string, options?: TombstoneOptions): string[]
     }).where(eq(schema.users.id, uid)).run();
   });
 
-  // После коммита (tombstoneUser открывает свою транзакцию, вложенный BEGIN нельзя).
+  // After the commit: tombstoneUser opens its own transaction, so it cannot be nested.
   for (const bot of ownedBots) {
     // Origins first: the bot's tombstone deletes its federation credentials.
     const botOrigins = db.select({ origin: schema.userFederationCredentials.origin })
@@ -308,10 +308,10 @@ export function tombstoneUser(uid: string, options?: TombstoneOptions): string[]
         .then(({ revokeBotOnPeers }) => revokeBotOnPeers(bot.id, botOrigins, mode))
         .catch(() => { /* best effort: owner is gone, nobody to report to */ });
     }
-    // Ленивый импорт: ws/handler импортирует БД-слой, статический даст цикл.
+    // Lazy import: ws/handler imports the DB layer, a static import would be a cycle.
     void import('../ws/handler.js').then(({ connectionManager }) => {
       connectionManager.forceDisconnectUser(bot.id);
-    });
+    }).catch(() => { /* best effort */ });
   }
 
   return filesToDelete;

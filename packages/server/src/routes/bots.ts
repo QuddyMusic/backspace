@@ -144,15 +144,15 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     const id = generateSnowflake();
     try {
       db.insert(schema.users).values({
-	id,
-	username,
-	displayName: username,
-	passwordHash: BOT_PASSWORD_MARKER,
-	avatarColor: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
-	isBot: 1,
-	botOwnerId: request.userId,
-	discoverable: 1,
-	createdAt: Date.now(),
+        id,
+        username,
+        displayName: username,
+        passwordHash: BOT_PASSWORD_MARKER,
+        avatarColor: AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)],
+        isBot: 1,
+        botOwnerId: request.userId,
+        discoverable: 1,
+        createdAt: Date.now(),
       }).run();
     } catch (err) {
       if (err instanceof Error && err.message.includes('UNIQUE')) {
@@ -168,7 +168,7 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
   });
 
 
-    app.patch<{ Params: { id: string }; Body: UpdateBotRequest }>('/api/bots/:id', {
+  app.patch<{ Params: { id: string }; Body: UpdateBotRequest }>('/api/bots/:id', {
     preHandler: pre,
     config: { rateLimit: { max: 20, timeWindow: '15 minutes' } },
   }, async (request, reply) => {
@@ -274,8 +274,8 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ spaces: [...rows.values()] });
   });
 
-  // Owner brings the bot into a space they manage. Same result as the bot
-  // joining by invite, without handing out a code.
+  // A space manager brings a bot into a space they manage. Same result as the
+  // bot joining by invite, without handing out a code.
   app.post<{ Params: { id: string }; Body: { spaceId?: unknown } }>('/api/bots/:id/spaces', {
     preHandler: preSpaceAction,
     config: { rateLimit: { max: 30, timeWindow: '15 minutes' } },
@@ -300,7 +300,7 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     return reply.send({ success: true });
   });
 
-  // The counterpart of the add above: the owner takes the bot out of a space they manage.
+  // The counterpart of the add above: the bot's owner or a space manager takes the bot out.
   app.delete<{ Params: { id: string; spaceId: string } }>('/api/bots/:id/spaces/:spaceId', {
     preHandler: preSpaceAction,
     config: { rateLimit: { max: 30, timeWindow: '15 minutes' } },
@@ -329,20 +329,20 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     const bot = findOwnedBot(request.userId, request.params.id);
     if (!bot) return sendError(reply, 404, 'bot_not_found');
-        // Cut the bot off from every instance it registered on FIRST: a leaked
-    	// token could already have minted host JWTs there, and those outlive the
-    	// home token. The host account is tombstoned; the legitimate bot
-    	// re-registers with the new token and rejoins by invite.
-    	const origins = collectBotFederationOrigins(bot.id);
-    	const federation = await revokeBotOnPeers(bot.id, origins, 'soft');
-    	getDb().delete(schema.userFederationCredentials)
-      	  .where(eq(schema.userFederationCredentials.userId, bot.id)).run();
-    	// Revokes every earlier token: same mechanism as a password change.
-    	getDb().update(schema.users).set({ passwordChangedAt: Date.now() })
-      	  .where(eq(schema.users.id, bot.id)).run();
-    	connectionManager.forceDisconnectUser(bot.id);
-    	const token = signJwt({ userId: bot.id, username: bot.username }, { expiresIn: BOT_TOKEN_TTL });
-    	return reply.send({ token, federation });
+    // Cut the bot off from every instance it registered on FIRST: a leaked
+    // token could already have minted host JWTs there, and those outlive the
+    // home token. The host account is tombstoned; the legitimate bot
+    // re-registers with the new token and rejoins by invite.
+    const origins = collectBotFederationOrigins(bot.id);
+    const federation = await revokeBotOnPeers(bot.id, origins, 'soft');
+    getDb().delete(schema.userFederationCredentials)
+      .where(eq(schema.userFederationCredentials.userId, bot.id)).run();
+    // Revokes every earlier token: same mechanism as a password change.
+    getDb().update(schema.users).set({ passwordChangedAt: Date.now() })
+      .where(eq(schema.users.id, bot.id)).run();
+    connectionManager.forceDisconnectUser(bot.id);
+    const token = signJwt({ userId: bot.id, username: bot.username }, { expiresIn: BOT_TOKEN_TTL });
+    return reply.send({ token, federation });
   });
 
   app.delete<{ Params: { id: string } }>('/api/bots/:id', {

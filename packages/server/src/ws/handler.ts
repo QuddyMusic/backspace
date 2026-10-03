@@ -874,7 +874,6 @@ class ConnectionManager {
 
   // ─── Broadcasting ─────────────────────────────────────────────────────────
 
-  /** Send to a specific user (all their connections). */
   /** The voice rooms a bot is in. */
   getBotRoomIds(botId: string): string[] {
     return [...(this.botRooms.get(botId) ?? [])];
@@ -940,11 +939,14 @@ class ConnectionManager {
     return false;
   }
 
+  /** Send to a specific user (all their connections). */
   sendToUser(userId: string, event: ServerEvent): void {
     const connections = this.getUserConnections(userId);
     const message = JSON.stringify(event);
     for (const ws of connections) {
-      if (ws.readyState === 1) ws.send(message);
+      if (ws.readyState === 1) { // WebSocket.OPEN
+        ws.send(message);
+      }
     }
   }
 

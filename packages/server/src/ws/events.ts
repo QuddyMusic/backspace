@@ -502,15 +502,6 @@ function broadcastRoomLeave(roomId: string, room: VoiceRoom, userId: string): vo
   }
 }
 
-/**
- * A refused join is terminal for the client, so it must be terminal on the
- * server too. When the refusal concerns the room the user is still holding —
- * the resume-after-reconnect case, where CONNECT was revoked or the channel
- * deleted mid-grace — leaving them parked there until the grace period expires
- * would keep them listed in a voice channel they have already been told they
- * are out of. A refusal aimed at any *other* channel leaves the live session
- * alone, which is what it has always done.
- */
 /** Voice channels one bot may sit in at the same time. */
 export const MAX_BOT_VOICE_ROOMS = 25;
 
@@ -581,6 +572,15 @@ function handleBotVoiceLeave(event: Record<string, unknown>, userId: string): vo
   if (connectionManager.getBotRoomIds(userId).length === 0) connectionManager.clearVoiceUserStatus(userId);
 }
 
+/**
+ * A refused join is terminal for the client, so it must be terminal on the
+ * server too. When the refusal concerns the room the user is still holding —
+ * the resume-after-reconnect case, where CONNECT was revoked or the channel
+ * deleted mid-grace — leaving them parked there until the grace period expires
+ * would keep them listed in a voice channel they have already been told they
+ * are out of. A refusal aimed at any *other* channel leaves the live session
+ * alone, which is what it has always done.
+ */
 function rejectVoiceJoin(userId: string, channelId: string): void {
   if (connectionManager.getUserRoom(userId)?.roomId === channelId) {
     handleVoiceLeave(userId);
