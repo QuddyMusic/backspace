@@ -556,7 +556,7 @@ function handleBotVoiceJoin(event: Record<string, unknown>, userId: string): voi
   const canSpeak = (perms & PermissionBits.SPEAK) !== 0n || (perms & PermissionBits.ADMINISTRATOR) !== 0n;
   connectionManager.setPermissionMuted(spaceId, userId, !canSpeak);
   if (!canSpeak) {
-    connectionManager.sendToUser(userId, { type: 'voice_permission_muted', userId, spaceId, muted: true });
+    connectionManager.sendToSpace(spaceId, { type: 'voice_permission_muted', userId, spaceId, muted: true });
   }
 }
 

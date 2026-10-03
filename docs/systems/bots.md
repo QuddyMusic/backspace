@@ -162,7 +162,7 @@ A person has one voice seat at a time. A bot may sit in several voice channels a
 | `bot_voice_join` | channelId | seats the bot in that voice channel without leaving the others |
 | `bot_voice_leave` | channelId | takes the bot out of that one channel |
 
-`bot_voice_join` makes the same checks as `voice_join` (the channel exists, the bot is a member of the space, CONNECT) and is idempotent. A bot may hold at most 25 seats. A refusal arrives as an `error` event; a person sending these events gets `code: 'bot_account_required'`. Space voice channels only: DM calls keep their rules.
+`bot_voice_join` makes the same checks as `voice_join` (the channel exists, the bot is a member of the space, CONNECT) and is idempotent. A bot may hold at most 25 seats. A refusal arrives as an `error` event; a person sending these events gets `code: 'bot_account_required'`. Space voice channels only: DM calls keep their rules. Voice moderation (space mute and deafen) does not reach a seat taken with `bot_voice_join`; a bot that joined with the ordinary `voice_join` is moderated like a person, and such a restriction is not applied to its later bot seats.
 
 The rest of the space sees the bot like anyone else: `voice_state_update { action: 'join' | 'leave' }` per channel, and the `ready` payload lists the bot under `voiceStates` of every channel it sits in.
 
