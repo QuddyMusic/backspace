@@ -408,6 +408,39 @@ describe('a manager invites a bot they do not own', () => {
     expect(back.status).toBe(403);
     expect(back.body.code).toBe('user_banned');
   });
+
+  it('a federated human who manages a space on the host invites and removes a native bot; a bot caller is refused', async () => {
+    const tag = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const reg = await api<AuthBody>(B, 'POST', '/api/auth/register', null, {
+      username: `fedmgr${tag}@${aHost}`,
+      password: `pw_${tag}`,
+      homeInstance: aHost,
+      homeUserId: `home-${tag}`,
+    });
+    expect(reg.status).toBe(201);
+    const fedToken = reg.body.token;
+
+    const hostBot = await api<BotCreated>(B, 'POST', '/api/bots', hostHuman.token, { name: `hostnative${tag.slice(0, 6)}` });
+    expect(hostBot.status).toBe(201);
+    const made = await api<{ id?: string; space?: { id: string } }>(B, 'POST', '/api/spaces', fedToken, { name: 'fed-managed' });
+    expect(made.status).toBeLessThan(300);
+    const sid = (made.body.space ?? made.body).id as string;
+
+    const add = await api<ErrBody>(B, 'POST', `/api/bots/${hostBot.body.bot.id}/spaces`, fedToken, { spaceId: sid });
+    expect(add.status).toBe(200);
+    const remove = await api<ErrBody>(B, 'DELETE', `/api/bots/${hostBot.body.bot.id}/spaces/${sid}`, fedToken);
+    expect(remove.status).toBe(200);
+
+    // Managing bots themselves stays with the native owner account.
+    const create = await api<ErrBody>(B, 'POST', '/api/bots', fedToken, { name: 'fedmade' });
+    expect(create.status).toBe(403);
+    expect(create.body.code).toBe('bots_native_only');
+
+    // A bot may not invite bots.
+    const byBot = await api<ErrBody>(B, 'POST', `/api/bots/${hostBot.body.bot.id}/spaces`, hostBot.body.token, { spaceId: sid });
+    expect(byBot.status).toBe(403);
+    expect(byBot.body.code).toBe('bots_native_only');
+  });
 });
 
 describe('the bot search for invitations', () => {
