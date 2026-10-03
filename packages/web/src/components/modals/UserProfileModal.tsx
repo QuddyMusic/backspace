@@ -308,12 +308,12 @@ export function UserProfileModal() {
             ring={{ width: 4, color: 'rgba(20,20,26,0.82)' }}
             className="mt-[-52px] mb-2"
           />
-	  <div className="mb-3">
-	    <div className="flex items-center gap-2">
-	      <span className="text-[20px] font-bold leading-tight">{displayName}</span>
-	      {user.isBot && <BotBadge />}
-	    </div>
-	    <div className="text-[14px] text-txt-tertiary mt-0.5">
+          <div className="mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[20px] font-bold leading-tight">{displayName}</span>
+              {user.isBot && <BotBadge />}
+            </div>
+            <div className="text-[14px] text-txt-tertiary mt-0.5">
               <Username username={user.username} showAt className="text-[14px] text-txt-tertiary" />
             </div>
             {user.customStatus && (
@@ -503,39 +503,39 @@ export function UserProfileModal() {
 
         {/* Action buttons */}
         <div className="flex-shrink-0 px-5 py-3 border-t border-white/[0.06] flex gap-2">
-    	  <button
-      	    onClick={handleSendMessage}
-	    className="flex-1 py-2 rounded-lg text-[13px] font-medium text-white bg-accent-primary hover:bg-accent-primary/80 transition-colors"
+          <button
+            onClick={handleSendMessage}
+            className="flex-1 py-2 rounded-lg text-[13px] font-medium text-white bg-accent-primary hover:bg-accent-primary/80 transition-colors"
           >
-	    {t('social:profile.sendMessage')}
-	  </button>
+            {t('social:profile.sendMessage')}
+          </button>
 
           {!user.isBot && friendship.state === 'none' && (
-	    <button onClick={handleAddFriend} disabled={friendActionLoading}
-	      className="flex-1 py-2 rounded-lg text-[13px] font-medium text-txt-primary border border-white/[0.08] bg-white/[0.06] hover:bg-white/[0.10] transition-colors disabled:opacity-50">
-	      {friendActionLoading ? '...' : t('social:profile.addFriend')}
-	    </button>
-	  )}
+            <button onClick={handleAddFriend} disabled={friendActionLoading}
+              className="flex-1 py-2 rounded-lg text-[13px] font-medium text-txt-primary border border-white/[0.08] bg-white/[0.06] hover:bg-white/[0.10] transition-colors disabled:opacity-50">
+              {friendActionLoading ? '...' : t('social:profile.addFriend')}
+            </button>
+          )}
 
           {!user.isBot && friendship.state === 'outbound_pending' && (
-	    <button onClick={handleCancelRequest} disabled={friendActionLoading}
-	      className="flex-1 py-2 rounded-lg text-[13px] font-medium text-amber-400 border border-amber-400/30 hover:bg-amber-400/10 transition-colors disabled:opacity-50">
-	      {friendActionLoading ? '...' : t('social:request.cancel')}
-	    </button>
-	  )}
+            <button onClick={handleCancelRequest} disabled={friendActionLoading}
+              className="flex-1 py-2 rounded-lg text-[13px] font-medium text-amber-400 border border-amber-400/30 hover:bg-amber-400/10 transition-colors disabled:opacity-50">
+              {friendActionLoading ? '...' : t('social:request.cancel')}
+            </button>
+          )}
 
           {!user.isBot && friendship.state === 'inbound_pending' && (
-	    <>
-	      <button onClick={handleAcceptRequest} disabled={friendActionLoading}
-	        className="flex-1 py-2 rounded-lg text-[13px] font-medium text-white bg-accent-primary hover:bg-accent-primary/80 transition-colors disabled:opacity-50">
-	        {friendActionLoading ? '...' : t('common:actions.accept')}
-	      </button>
-	      <button onClick={handleDeclineRequest} disabled={friendActionLoading}
-	        className="py-2 px-3 rounded-lg text-[13px] font-medium text-txt-tertiary border border-white/[0.06] hover:bg-white/[0.06] transition-colors disabled:opacity-50">
-	        {friendActionLoading ? '...' : t('social:request.ignore')}
-	      </button>
-	    </>
-	  )}
+            <>
+              <button onClick={handleAcceptRequest} disabled={friendActionLoading}
+                className="flex-1 py-2 rounded-lg text-[13px] font-medium text-white bg-accent-primary hover:bg-accent-primary/80 transition-colors disabled:opacity-50">
+                {friendActionLoading ? '...' : t('common:actions.accept')}
+              </button>
+              <button onClick={handleDeclineRequest} disabled={friendActionLoading}
+                className="py-2 px-3 rounded-lg text-[13px] font-medium text-txt-tertiary border border-white/[0.06] hover:bg-white/[0.06] transition-colors disabled:opacity-50">
+                {friendActionLoading ? '...' : t('social:request.ignore')}
+              </button>
+            </>
+          )}
 
           {!user.isBot && friendship.state === 'friends' && (
             <button onClick={handleRemoveFriend} disabled={friendActionLoading}
