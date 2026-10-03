@@ -30,6 +30,8 @@ export function AddBotModal({ isOpen, onClose, origin, spaceId, onAdded }: AddBo
   const [error, setError] = useState('');
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  /** Bumped on every keystroke and on close: a slower, older answer must not overwrite a newer one. */
+  const searchSeq = useRef(0);
 
   useEffect(() => {
     if (isOpen) {
@@ -37,6 +39,9 @@ export function AddBotModal({ isOpen, onClose, origin, spaceId, onAdded }: AddBo
       setResults([]);
       setError('');
       setAddingId(null);
+      setIsSearching(false);
+      searchSeq.current += 1;
+      if (searchTimer.current) clearTimeout(searchTimer.current);
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [isOpen]);
@@ -45,19 +50,24 @@ export function AddBotModal({ isOpen, onClose, origin, spaceId, onAdded }: AddBo
     setQuery(value);
     setError('');
     if (searchTimer.current) clearTimeout(searchTimer.current);
+    const seq = ++searchSeq.current;
     if (value.trim().length < 2) {
       setResults([]);
+      setIsSearching(false);
       return;
     }
     searchTimer.current = setTimeout(async () => {
       setIsSearching(true);
       try {
         const res = await api.bots.search(value.trim());
-        setResults(res.bots);
-      } catch {
-        setResults([]);
+        if (seq === searchSeq.current) setResults(res.bots);
+      } catch (err) {
+        if (seq === searchSeq.current) {
+          setResults([]);
+          setError(describeError(err));
+        }
       } finally {
-        setIsSearching(false);
+        if (seq === searchSeq.current) setIsSearching(false);
       }
     }, 300);
   };

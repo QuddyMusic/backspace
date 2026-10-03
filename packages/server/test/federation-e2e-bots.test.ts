@@ -394,6 +394,20 @@ describe('a manager invites a bot they do not own', () => {
     expect(again.status).toBe(409);
     expect(again.body.code).toBe('already_member');
   });
+
+  it('a manager cannot bring back a bot that is banned in the space', async () => {
+    const other = await registerLocal(A, 'banowner');
+    const otherBot = await createBot('banned', other);
+    const manager = await registerLocal(A, 'banmanager');
+    const made = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', manager.token, { name: 'ban-space' });
+    const sid = (made.body.space ?? made.body).id as string;
+    expect((await api<ErrBody>(A, 'POST', `/api/bots/${otherBot.id}/spaces`, manager.token, { spaceId: sid })).status).toBe(200);
+    const ban = await api<ErrBody>(A, 'POST', `/api/spaces/${sid}/bans`, manager.token, { userId: otherBot.id });
+    expect(ban.status).toBeLessThan(300);
+    const back = await api<ErrBody>(A, 'POST', `/api/bots/${otherBot.id}/spaces`, manager.token, { spaceId: sid });
+    expect(back.status).toBe(403);
+    expect(back.body.code).toBe('user_banned');
+  });
 });
 
 describe('the bot search for invitations', () => {
