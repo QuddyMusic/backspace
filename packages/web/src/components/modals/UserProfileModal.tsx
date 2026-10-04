@@ -267,9 +267,10 @@ export function UserProfileModal() {
     navigate(`/channels/${spaceId}`);
   };
 
+  // A bot takes no friends, so it has no mutual friends to list.
   const tabs: { key: Tab; label: string; count?: number }[] = [
     { key: 'about', label: t('social:profile.tabs.about') },
-    { key: 'friends', label: t('social:profile.tabs.mutualFriends'), count: mutualFriends.length },
+    ...(user?.isBot ? [] : [{ key: 'friends' as const, label: t('social:profile.tabs.mutualFriends'), count: mutualFriends.length }]),
     { key: 'spaces', label: t('social:profile.tabs.mutualSpaces'), count: mutualSpaces.length },
   ];
 
