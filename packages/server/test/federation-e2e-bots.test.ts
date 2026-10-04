@@ -23,8 +23,8 @@ vi.setConfig({ testTimeout: 45_000 });
  *
  * Covered: the bot flag on the host comes only from the home's signed proof
  * (a client cannot claim it, a human's proof does not grant it, a proof is
- * single-use, an unpeered home is refused); the mention gate and the history
- * ban apply to that row on the host; a token regeneration on the home
+ * single-use, an unpeered home is refused); that row receives the space's
+ * messages and reads history like any member; a token regeneration on the home
  * tombstones the host account and kills its JWT, and the bot can register anew.
  */
 
@@ -257,6 +257,8 @@ describe('editing a bot on its home', () => {
     const empty = await api<ErrBody>(A, 'PATCH', `/api/bots/${bot.id}`, owner.token, { displayName: '   ' });
     expect(empty.status).toBe(400);
     const tooLong = await api<ErrBody>(A, 'PATCH', `/api/bots/${bot.id}`, owner.token, { displayName: 'x'.repeat(29) + '_bot' });
+    expect(tooLong.status).toBe(400);
+    expect(tooLong.body.code).toBe('display_name_too_long');
     for (const bad of ['Echo Prime', '_bot', '   _bot', 'bot_x', 'echo_bot_x']) {
       const r = await api<ErrBody>(A, 'PATCH', `/api/bots/${bot.id}`, owner.token, { displayName: bad });
       expect(r.status).toBe(400);
@@ -265,7 +267,6 @@ describe('editing a bot on its home', () => {
     const selfRename = await api<ErrBody>(A, 'PATCH', '/api/users/@me', bot.token, { displayName: 'renamed' });
     expect(selfRename.status).toBe(403);
     expect(selfRename.body.code).toBe('bot_profile_owner_only');
-    expect(tooLong.body.code).toBe('display_name_too_long');
     const badAvatar = await api<ErrBody>(A, 'PATCH', `/api/bots/${bot.id}`, owner.token, { avatar: '../etc/passwd' });
     expect(badAvatar.body.code).toBe('avatar_url_invalid');
     const nothing = await api<ErrBody>(A, 'PATCH', `/api/bots/${bot.id}`, owner.token, {});
@@ -409,6 +410,33 @@ describe('a manager invites a bot they do not own', () => {
     expect(back.body.code).toBe('user_banned');
   });
 
+  it('a banned bot stops receiving the space events at once', async () => {
+    const botOwner = await registerLocal(A, 'banliveowner');
+    const live = await createBot('banlive', botOwner);
+    const made = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', owner.token, { name: 'ban-live-space' });
+    const sid = (made.body.space ?? made.body).id as string;
+    const chRes = await api<Array<{ id: string; type: string }> | { channels: Array<{ id: string; type: string }> }>(
+      A, 'GET', `/api/spaces/${sid}/channels`, owner.token,
+    );
+    const channels = Array.isArray(chRes.body) ? chRes.body : chRes.body.channels;
+    const cid = (channels.find(c => c.type === 'text') ?? channels[0]!).id;
+
+    const ws = await connectWs(A.origin, live.token);
+    sockets.push(ws);
+    await ws.waitForEvent('ready');
+    expect((await api<ErrBody>(A, 'POST', `/api/bots/${live.id}/spaces`, owner.token, { spaceId: sid })).status).toBe(200);
+
+    const say = (content: string) => api<unknown>(A, 'POST', `/api/channels/${cid}/messages`, owner.token, { content });
+    await say('before-ban-marker');
+    expect(await waitUntil(() => delivered(ws, 'before-ban-marker'), 5_000)).toBe(true);
+
+    const ban = await api<ErrBody>(A, 'POST', `/api/spaces/${sid}/bans`, owner.token, { userId: live.id });
+    expect(ban.status).toBeLessThan(300);
+    await say('after-ban-marker');
+    await new Promise(r => setTimeout(r, 1_000));
+    expect(delivered(ws, 'after-ban-marker')).toBe(false);
+  });
+
   it('a federated human who manages a space on the host invites and removes a native bot; a bot caller is refused', async () => {
     const tag = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     const reg = await api<AuthBody>(B, 'POST', '/api/auth/register', null, {
@@ -531,7 +559,7 @@ describe('a bot in direct and group conversations on its home', () => {
     expect((await api<unknown>(A, 'GET', `/api/dm/${dmId}/messages`, bot.token)).status).toBe(200);
   });
 
-    it('the owner starts a group DM with their own bot without a friendship, and a stranger\'s bot is refused', async () => {
+  it('the owner starts a group DM with their own bot without a friendship, and a stranger\'s bot is refused', async () => {
     const friend = await registerLocal(A, 'groupfriend');
     // owner and friend must be friends for the ordinary part of the check
     const req = await api<ErrBody>(A, 'POST', '/api/social/requests', owner.token, { username: friend.username });
@@ -567,6 +595,7 @@ describe('the Bot authorization scheme', () => {
     const other = await fetch(`${A.origin}/api/spaces`, { headers: { Authorization: `Basic ${bot.token}` } });
     expect(other.status).toBe(401);
   });
+
   it('accepts the Bot scheme when creating an upload', async () => {
     const meta = `filename ${Buffer.from('bot.txt').toString('base64')},filetype ${Buffer.from('text/plain').toString('base64')}`;
     const createWith = (auth: string) => fetch(`${A.origin}/api/files/`, {
@@ -1041,6 +1070,7 @@ describe('a bot in several voice channels', () => {
     expect((await api<ErrBody>(A, 'DELETE', `/api/bots/${bot.id}/spaces/${sid}`, owner.token)).status).toBe(200);
     expect(await waitUntil(() => voiceEvent(voiceB, 'leave'), 5_000)).toBe(true);
   });
+
   it('a bot that drops its connection leaves every voice channel it sat in', async () => {
     // Self-contained: its own bot, space and channels, and ONE socket, so the bot is
     // really offline once that socket closes (any other open socket keeps it online).
@@ -1140,6 +1170,15 @@ describe('bot accounts on their home instance', () => {
     }));
     expect(rows.deleted).toBe(2);
     expect(rows.commands).toBe(0);
+  });
+});
+
+describe('bots and friend requests', () => {
+  it('a friend request to a bot is refused: bots take no friends', async () => {
+    const asker = await registerLocal(A, 'friendasker');
+    const res = await api<ErrBody>(A, 'POST', '/api/social/requests', asker.token, { username: bot.username });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('bots_no_friends');
   });
 });
 
