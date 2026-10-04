@@ -118,7 +118,7 @@ Commands are stored on the instance the bot registers them on: register them on 
 ### Invoking
 
 ```
-GET  /api/commands?channelId=<id>  |  ?dmChannelId=<id>   → { commands: [ { id, botId, name, description, options, bot: { id, username, displayName, avatar, avatarColor } } ] }
+GET  /api/commands?channelId=<id>  |  ?dmChannelId=<id>   → { commands: [ { id, botId, name, description, options, updatedAt, bot: { id, username, displayName, avatar, avatarColor } } ] }
 POST /api/interactions   { botId, command, options?, channelId | dmChannelId }   → 201 { id, expiresAt }
 ```
 
@@ -180,11 +180,11 @@ The call works for a bot exactly as for a person (a role without SPEAK or STREAM
 
 ### When a seat ends
 
-The bot leaves a seat with `bot_voice_leave`. All its seats end when its last socket closes, when its token is regenerated or the account deleted, and the seats of one space end when the bot is removed from that space, kicked or banned.
+The bot leaves a seat with `bot_voice_leave`. All its seats end 5 seconds after its last socket closes, and at once when its token is regenerated or the account deleted, and the seats of one space end when the bot is removed from that space, kicked or banned.
 
 ### Limits
 
-`voice_status` (mute, camera, screen share) is not wired for bot seats, and the voice moderation actions (move, disconnect, space mute) do not act on them; remove the bot from the space to take it out of its channels.
+`voice_status` (mute, camera, screen share) is not wired for bot seats, and the voice moderation actions (move, disconnect, space mute) do not act on them; a moderator takes a bot out of its channels by removing it from the space.
 
 ## 6. Connecting from outside
 
@@ -199,7 +199,7 @@ A space lives on one instance and is not relayed, so a bot reaches a space on in
 3. On B: `POST /api/auth/register { username: "x_bot@<A host>", password: <secret>, homeInstance: "<A host>", homeUserId: <bot id on A>, botProof: <token> }`. When the account exists, `POST /api/auth/login` with the same secret.
 4. Open `wss://B/ws` with the JWT B returned, join by invite, answer.
 
-B verifies the proof with A over the signed server-to-server channel (`POST /api/federation/verify-attach-proof`, whose signed answer now carries `isBot`) and takes the identity and the bot flag **from that answer**. The body's `username`, `homeUserId` and any `isBot` are ignored, so a client cannot claim to be a bot. A must already be an active peer of B, otherwise `409 bot_home_not_peered` (no handshake is started from an unauthenticated route). A spent or foreign proof answers `401 bot_proof_invalid`.
+B verifies the proof with A over the signed server-to-server channel (`POST /api/federation/verify-attach-proof`, whose signed answer now carries `isBot`) and takes the identity and the bot flag **from that answer**. The body's `username`, `homeUserId` and any `isBot` are ignored, so a client cannot claim to be a bot. A must already be an active peer of B, otherwise `409 bot_home_not_peered` (no handshake is started from an unauthenticated route). A spent, foreign or non-bot proof answers `401 bot_proof_invalid`; a malformed one answers `400`.
 
 **Cutting a bot off.** Regenerating the token (mode `soft`), deleting the bot (`full`) and deleting the owner send a signed `DELETE /api/federation/identity` to every instance where the bot holds a credential; the account there is tombstoned and its JWT stops working. After a regeneration the bot registers again with the new token and joins its spaces again. The origins are read before the tombstone, which deletes the credentials.
 
@@ -217,6 +217,6 @@ B verifies the proof with A over the signed server-to-server channel (`POST /api
 
 ## 9. Database
 
-Migration `0021_familiar_mentor.sql` adds to `users`: `is_bot` (INTEGER NOT NULL DEFAULT 0) and `bot_owner_id` (TEXT, the owner's user id). Nothing else is stored per bot; the avatar and display name are the ordinary `users` columns. The cascade and revocation rules are in 1 and 7.
+Migration `0021_familiar_mentor.sql` adds to `users`: `is_bot` (INTEGER NOT NULL DEFAULT 0) and `bot_owner_id` (TEXT, the owner's user id) and an index `idx_users_bot_owner_id` on it. Nothing else is stored per bot; the avatar and display name are the ordinary `users` columns. The cascade and revocation rules are in 1 and 7.
 
 Slash commands add two tables. `bot_commands` (migration `0022_keen_proudstar.sql`): `id` (PK), `bot_id` (FK to `users`, cascade), `name`, `description`, `options` (JSON array, default `'[]'`), `updated_at`; unique index on `(bot_id, name)`. `interactions` (migration `0023_shallow_sandman.sql`): `id` (random 32-hex string, PK), `bot_id` and `user_id` (FKs to `users`, cascade), `channel_id` / `dm_channel_id` (exactly one is set), `command`, `options` (JSON object of the parsed values), `created_at`, `expires_at`, `responses` (default 0); index on `expires_at`. A spent interaction is dropped by the first invocation that comes a day after it expired. A bot's `bot_commands` rows are deleted when the bot is tombstoned.
