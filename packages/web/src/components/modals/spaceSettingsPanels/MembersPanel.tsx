@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Avatar } from '../../ui/Avatar';
+import { BotBadge } from '../../ui/BotBadge';
 import { ConfirmDialog } from '../../ui/ConfirmDialog';
 import { AddBotModal } from '../AddBotModal';
 import { useSpaceStore, getApiForOrigin } from '../../../stores/spaceStore';
@@ -110,6 +111,7 @@ function MembersPanelRow({
           <div className="min-w-0">
             <div className="text-sm font-medium truncate">
               {displayName}
+              {member.user.isBot && <BotBadge className="ml-1.5" />}
               {isFederationGlobeApplicable(canonical) && (
                 <span className="ml-1 text-[10px] text-txt-tertiary opacity-60">@{parseFederatedUsername(canonical.username).domain}</span>
               )}
