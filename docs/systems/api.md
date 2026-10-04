@@ -641,6 +641,8 @@ POST /csp-report     (no auth) -> 204
 ## Bots (`routes/bots.ts`, `routes/reactions.ts`)
 
 Full reference in [bots.md](bots.md). Owner endpoints need the JWT of a native human account.
+
+```
 GET /bots → { bots: BotSummary[] }
 POST /bots { name } → 201 { bot, token } [5 per 15 min; the _bot suffix is appended when missing; max 10 per owner]
 PATCH /bots/:id { displayName?, avatar? } → { bot } [owner; displayName must end with _bot]
@@ -652,6 +654,8 @@ POST /bots/:id/spaces { spaceId } → { success } [any native bot of this instan
 DELETE /bots/:id/spaces/:spaceId → { success } [the bot's owner, or MANAGE_SPACE in the space]
 PUT /messages/:id/reactions/:emoji → { success, changed } [ADD_REACTIONS for space messages; channel or DM message, found by id]
 DELETE /messages/:id/reactions/:emoji → { success, changed } [own reaction]
+```
+
 `Authorization: Bot <token>` is accepted wherever `Bearer <token>` is (including tus uploads). `POST /auth/register` also takes `botProof` for a bot registering on another instance (bots.md, section 7).
 
 ### Slash commands (`routes/botCommands.ts`, `routes/interactions.ts`)
