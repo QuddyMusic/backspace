@@ -478,6 +478,19 @@ describe('the bot search for invitations', () => {
     expect(await find('w')).toHaveLength(0);
     expect(await find('x'.repeat(33))).toHaveLength(0);
   });
+
+  it('names the owner of each bot, unless the owner is not discoverable', async () => {
+    const named = await registerLocal(A, 'ownershown');
+    const bot = await createBot('ownedbot', named);
+    const seeker = await registerLocal(A, 'ownerseeker');
+    const find = async () => (await api<{ bots: Array<{ username: string; ownerUsername: string | null }> }>(
+      A, 'GET', `/api/bots/search?q=${encodeURIComponent(bot.username)}`, seeker.token,
+    )).body.bots.find(b => b.username === bot.username);
+    expect((await find())?.ownerUsername).toBe(named.username);
+    const hide = await api<ErrBody>(A, 'PATCH', '/api/users/@me', named.token, { discoverable: false });
+    expect(hide.status).toBeLessThan(300);
+    expect((await find())?.ownerUsername).toBeNull();
+  });
 });
 
 describe('a bot in direct and group conversations on its home', () => {

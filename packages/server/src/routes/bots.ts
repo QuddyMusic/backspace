@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { authenticate, signJwt } from '../utils/auth.js';
 import { sendError } from '../utils/httpErrors.js';
@@ -15,7 +15,7 @@ import { config } from '../config.js';
 import { resizeProfileImage } from '../utils/thumbnail.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { queueProfileUpdateRelay } from '../utils/profileRelay.js';
-import type { BotSummary, UpdateBotRequest, UpdateBotResponse } from '@backspace/shared';
+import type { BotSearchResult, BotSummary, UpdateBotRequest, UpdateBotResponse } from '@backspace/shared';
 import { hasPermission, isBanned, isMember, isSpaceOwner, PermissionBits } from '../utils/permissions.js';
 import { addUserToSpace, removeUserFromSpace } from '../utils/spaceMembership.js';
 
@@ -116,7 +116,22 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
       sql`(${schema.users.homeInstance} IS NULL OR ${schema.users.homeInstance} = '')`,
       sql`${schema.users.username} LIKE ${pattern} ESCAPE '!'`,
     )).orderBy(schema.users.username).limit(25).all();
-    return reply.send({ bots: rows.map(toSummary) });
+    const ownerIds = [...new Set(rows.flatMap((r) => (r.botOwnerId === null ? [] : [r.botOwnerId])))];
+    // An owner is named only while they are a visible person: a deleted or non-discoverable owner stays private.
+    const ownerNames = new Map<string, string>();
+    if (ownerIds.length > 0) {
+      const owners = getDb().select({ id: schema.users.id, username: schema.users.username }).from(schema.users).where(and(
+        inArray(schema.users.id, ownerIds),
+        eq(schema.users.isDeleted, 0),
+        eq(schema.users.discoverable, 1),
+      )).all();
+      for (const owner of owners) ownerNames.set(owner.id, owner.username);
+    }
+    const result: BotSearchResult[] = rows.map((r) => ({
+      ...toSummary(r),
+      ownerUsername: (r.botOwnerId === null ? undefined : ownerNames.get(r.botOwnerId)) ?? null,
+    }));
+    return reply.send({ bots: result });
   });
 
   app.post<{ Body: { name?: unknown } }>('/api/bots', {

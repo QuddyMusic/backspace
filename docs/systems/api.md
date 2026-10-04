@@ -648,7 +648,7 @@ POST /bots { name } → 201 { bot, token } [5 per 15 min; the _bot suffix is app
 PATCH /bots/:id { displayName?, avatar? } → { bot } [owner; displayName must end with _bot]
 POST /bots/:id/token → { token, federation } [5 per 15 min; revokes earlier tokens, cuts the bot off on other instances]
 DELETE /bots/:id → { success, federation }
-GET /bots/search?q= → { bots: BotSummary[] } [native discoverable bots, username substring of 2-32 chars, up to 25; 60 per min]
+GET /bots/search?q= → { bots: BotSearchResult[] } [native discoverable bots, username substring of 2-32 chars, up to 25; each result adds ownerUsername, null when the owner is deleted or not discoverable; 60 per min]
 GET /bots/:id/spaces → { spaces: [{ id, name, icon, botIsMember }] } [owner; the caller's MANAGE_SPACE spaces plus every space the bot already sits in]
 POST /bots/:id/spaces { spaceId } → { success } [any native bot of this instance; MANAGE_SPACE in the space]
 DELETE /bots/:id/spaces/:spaceId → { success } [the bot's owner, or MANAGE_SPACE in the space]

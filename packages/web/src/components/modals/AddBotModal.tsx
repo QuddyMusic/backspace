@@ -4,7 +4,7 @@ import { Modal } from '../ui/Modal';
 import { Avatar } from '../ui/Avatar';
 import { getApiForOrigin } from '../../stores/spaceStore';
 import { describeError } from '../../i18n/errors';
-import type { BotSummary } from '@backspace/shared';
+import type { BotSearchResult, BotSummary } from '@backspace/shared';
 
 /**
  * A space manager invites a native bot of the instance the space lives on.
@@ -24,7 +24,7 @@ export function AddBotModal({ isOpen, onClose, origin, spaceId, onAdded }: AddBo
   const { t } = useTranslation('spaces');
   const api = getApiForOrigin(origin);
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<BotSummary[]>([]);
+  const [results, setResults] = useState<BotSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -116,7 +116,11 @@ export function AddBotModal({ isOpen, onClose, origin, spaceId, onAdded }: AddBo
                 <Avatar src={bot.avatar ? api.uploads.url(bot.avatar) : null} name={bot.displayName || bot.username} />
                 <div className="min-w-0">
                   <div className="text-sm text-txt-primary truncate">{bot.displayName || bot.username}</div>
-                  <div className="text-xs text-txt-tertiary truncate">{bot.username}</div>
+                  <div className="text-xs text-txt-tertiary truncate">
+                    {bot.ownerUsername
+                      ? `${bot.username} · ${t('settings.members.botInvite.owner', { owner: bot.ownerUsername })}`
+                      : bot.username}
+                  </div>
                 </div>
               </div>
               <button

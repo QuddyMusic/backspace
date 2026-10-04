@@ -1794,6 +1794,12 @@ export interface BotSummary {
   createdAt: number;
 }
 
+/** A bot as the invite search lists it: the owner is named so a manager sees whose code they invite. */
+export interface BotSearchResult extends BotSummary {
+  /** The owner's username; null when the owner is deleted or not discoverable. */
+  ownerUsername: string | null;
+}
+
 export interface UpdateBotRequest {
   /** 1–32 characters after trim. The login (username, ends with `_bot`) is immutable. */
   displayName?: string;

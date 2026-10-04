@@ -357,6 +357,7 @@
       "rolesUnheld": "Roles with permissions you do not have cannot be given.",
       "botInvite": {
         "warning": "The bot becomes a member of this server and receives the messages and events of every channel its permissions allow. Only add bots you trust.",
+        "owner": "Owner: @{{owner}}",
         "button": "Add Bot",
         "title": "Add a Bot",
         "searchPlaceholder": "Search bots by name...",
