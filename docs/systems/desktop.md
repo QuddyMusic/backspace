@@ -846,6 +846,8 @@ Whether a System Audio share also carries Backspace's own playback (the voice ch
 
 The prompted flow stays because the desktop app loads whatever web client its instance serves: an older instance still calls `getDisplayMedia()` first, and a newer instance on an older desktop build lacks `getScreenSources` and falls back to this path (`preselectScreenSource` / `getScreenSources` are optional in `electron.d.ts` for that reason).
 
+On Linux with PipeWire the main process builds the system-audio capture itself so that Backspace is not in it (`systemAudio.ts`, `startSystemAudio()` / `stopSystemAudio()`; mechanism in `voice.md`, "Linux system-audio source"). `get-system-audio-capability` returns `excluded` while that source is available, and `@vencord/venmic` is an `optionalDependency` of this package (Linux only; its prebuilt `.node` files are covered by `asarUnpack: **/*.node`).
+
 No sources (0 results) typically means Screen Recording permission not granted on macOS.
 
 For full screen share configuration (resolution, bitrate, codec), see `voice.md`.
@@ -963,6 +965,8 @@ Detection: `typeof window.backspace !== 'undefined'` (see `platform.ts:isElectro
 | `onScreenShareSources(cb)` | listen | M->R | |
 | `selectScreenSource(id, audio?)` | fire | R->M | |
 | `getSystemAudioCapability()` | invoke | R->M | Optional (older builds lack it). Returns `Promise<'excluded' \| 'included' \| 'unavailable' \| 'unknown'>`; see "System audio and Backspace's own playback" |
+| `startSystemAudio()` | invoke | R->M | Optional. Linux: routes every other app's playback into a virtual source. Returns `Promise<{ ok: true, label } \| { ok: false, reason }>`; the renderer opens the device named `label` as a microphone |
+| `stopSystemAudio()` | invoke | R->M | Optional. Unlinks the virtual source; idempotent |
 | `getInstanceUrl()` | invoke | R->M | Returns `Promise<string \| null>` |
 | `setInstanceUrl(url)` | invoke | R->M | Returns `Promise<void>` |
 | `clearInstanceUrl()` | invoke | R->M | Returns `Promise<void>` |

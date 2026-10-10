@@ -146,6 +146,16 @@ interface BackspaceElectronAPI {
    * then keep their generic per-platform System Audio note.
    */
   getSystemAudioCapability?: () => Promise<OwnAudioInSystemAudio>;
+  /**
+   * Linux: route every other app's playback into a virtual source that the
+   * renderer opens as a microphone (`label` names the device). Optional: only
+   * desktop builds that ship it have it.
+   */
+  startSystemAudio?: () => Promise<
+    | { ok: true; label: string }
+    | { ok: false; reason: 'unsupported-platform' | 'module-missing' | 'no-pipewire' | 'link-failed' }
+  >;
+  stopSystemAudio?: () => Promise<void>;
 
   // Instance URL management
   getInstanceUrl: () => Promise<string | null>;
