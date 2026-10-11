@@ -26,6 +26,7 @@ import {
 } from './instanceUrl';
 import { getUpdateCapability, isSandboxed } from './updateCapability';
 import { ownAudioInSystemAudio } from './systemAudioCapability';
+import { createSystemAudioController, withSystemAudioSource, type PatchBayModule } from './systemAudio';
 import { loadDismissedVersion, setDismissedVersion } from './updateDismissal';
 import { purgeUpdaterCache } from './updaterCache';
 import {
@@ -453,7 +454,15 @@ function createWindow(): void {
     }
   });
 
+  // The renderer owns the system-audio link and cannot release it when it is reloaded, navigated
+  // away or killed, so the main process does.
+  mainWindow.webContents.on('render-process-gone', () => systemAudio.stop());
+  mainWindow.webContents.on('did-start-navigation', (details) => {
+    if (details.isMainFrame && !details.isSameDocument) systemAudio.stop();
+  });
+
   mainWindow.on('closed', () => {
+    systemAudio.stop();
     setMainWindow(null);
     mainWindow = null;
     // Clear recovery state so macOS dock-activate (which calls createWindow again)
@@ -568,6 +577,20 @@ interface SerializedScreenSource {
 let pendingScreenSelection: PendingScreenSelection | null = null;
 /** Loopback preference for system-picker captures (no preselection carries it there). */
 let lastSystemPickerShareAudio: boolean | null = null;
+
+// Linux: a system-audio capture built from PipeWire without Backspace's own
+// streams (systemAudio.ts). The module is optional and Linux-only, so it is
+// loaded on first use; where it is unavailable the Chromium loopback stays.
+const systemAudio = createSystemAudioController({
+  platform: process.platform,
+  // Optional, Linux-only native module: a static import would fail to load elsewhere.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  loadModule: () => require('@vencord/venmic') as PatchBayModule,
+  getPids: () => app.getAppMetrics().map((metric) => metric.pid),
+  executablePath: process.execPath,
+  isSandboxed,
+  log: (message, ...args) => console.warn('[Main:SystemAudio]', message, ...args),
+});
 /** Last enumeration, so a preselected id resolves to its DesktopCapturerSource without a second scan. */
 let lastScreenSources: Electron.DesktopCapturerSource[] = [];
 /** Last list handed to the renderer, and when: what a throttled or unfocused caller gets back. */
@@ -792,7 +815,21 @@ function registerIpcHandlers(): void {
   // (the call) to viewers; the stream settings say so before it is turned on.
   ipcMain.handle('get-system-audio-capability', (event) => {
     if (event.sender !== mainWindow?.webContents) return 'unknown';
-    return ownAudioInSystemAudio(process.platform, process.getSystemVersion());
+    return withSystemAudioSource(
+      ownAudioInSystemAudio(process.platform, process.getSystemVersion()),
+      systemAudio.isAvailable(),
+    );
+  });
+  // The virtual source that carries every other app's playback (Linux). The
+  // renderer opens it like a microphone and calls stop when the share, or its
+  // audio, ends.
+  ipcMain.handle('system-audio-start', (event) => {
+    if (event.sender !== mainWindow?.webContents) return { ok: false, reason: 'unsupported-platform' };
+    return systemAudio.start();
+  });
+  ipcMain.handle('system-audio-stop', (event) => {
+    if (event.sender !== mainWindow?.webContents) return;
+    systemAudio.stop();
   });
   // handle, not on: the renderer awaits this before calling getDisplayMedia(),
   // so the selection is guaranteed to be armed when the display-media handler
@@ -1495,6 +1532,7 @@ if (!gotTheLock) {
   });
 
   app.on('before-quit', () => {
+    systemAudio.stop();
     isQuitting = true;
     stopActivityDetection();
     keybindManager.stop();

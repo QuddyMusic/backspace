@@ -47,6 +47,7 @@ import { useChatStore } from '../../stores/chatStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useVoiceStore } from '../../stores/voiceStore';
 import { AudioManager } from '../../audio/AudioManager';
+import { isAppSystemAudioSource } from '../../utils/systemAudioSource';
 
 export function AppLayout() {
   const { t } = useTranslation('common');
@@ -128,12 +129,23 @@ export function AppLayout() {
     let pendingHandlerTimer: ReturnType<typeof setTimeout> | null = null;
     const HANDLER_DEBOUNCE_MS = 250;
 
+    // The system-audio source of a share appears and disappears with the share. It is not a
+    // device change the user made, so it must not toast or re-acquire the microphone.
+    const realDevicesSignature = (devices: MediaDeviceInfo[]): string =>
+      devices
+        .filter(d => !isAppSystemAudioSource(d))
+        .map(d => `${d.kind}:${d.deviceId}`)
+        .sort()
+        .join('|');
+    let lastRealDevices: string | null = null;
+
     const seedBaseline = async () => {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         lastInputGroupIds = new Set(
-          devices.filter(d => d.kind === 'audioinput' && d.groupId).map(d => d.groupId)
+          devices.filter(d => d.kind === 'audioinput' && d.groupId && !isAppSystemAudioSource(d)).map(d => d.groupId)
         );
+        lastRealDevices = realDevicesSignature(devices);
       } catch { /* enumeration may be blocked pre-permission; baseline is empty */ }
     };
 
@@ -141,7 +153,7 @@ export function AppLayout() {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const currentInputGroupIds = new Set(
-          devices.filter(d => d.kind === 'audioinput' && d.groupId).map(d => d.groupId)
+          devices.filter(d => d.kind === 'audioinput' && d.groupId && !isAppSystemAudioSource(d)).map(d => d.groupId)
         );
         const now = Date.now();
         const newGroups: string[] = [];
@@ -191,6 +203,11 @@ export function AppLayout() {
     const handler = () => {
       if (pendingHandlerTimer) clearTimeout(pendingHandlerTimer);
       pendingHandlerTimer = setTimeout(async () => {
+        try {
+          const signature = realDevicesSignature(await navigator.mediaDevices.enumerateDevices());
+          if (signature === lastRealDevices) return;
+          lastRealDevices = signature;
+        } catch { /* enumeration failure: treat as a change, as before */ }
         await prune();
         await reacquireLiveStream();
         if (pendingDebounceTimer) clearTimeout(pendingDebounceTimer);
