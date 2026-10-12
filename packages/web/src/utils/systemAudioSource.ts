@@ -31,6 +31,21 @@ export function canOpenAppSystemAudioSource(): boolean {
   return typeof api?.startSystemAudio === 'function' && typeof api.stopSystemAudio === 'function';
 }
 
+/**
+ * The device list as the hot-plug handler compares it, without the virtual
+ * source: that device comes and goes with a share and is no change the user
+ * made. groupId and label are part of it because a change of the OS default
+ * keeps every deviceId (the `default` entry included) and only relabels the
+ * `default` entry, and the handler must still follow it.
+ */
+export function userDevicesSignature(devices: readonly MediaDeviceInfo[]): string {
+  return devices
+    .filter((d) => !isAppSystemAudioSource(d))
+    .map((d) => JSON.stringify([d.kind, d.deviceId, d.groupId, d.label]))
+    .sort()
+    .join('\n');
+}
+
 type StartResult = Awaited<ReturnType<NonNullable<NonNullable<ReturnType<typeof getElectronAPI>>['startSystemAudio']>>>;
 
 /**

@@ -7,7 +7,7 @@ const api = vi.hoisted(() => ({
 const platform = vi.hoisted(() => ({ getElectronAPI: vi.fn() }));
 vi.mock('../platform/platform', () => platform);
 
-import { isAppSystemAudioSource } from './systemAudioSource';
+import { isAppSystemAudioSource, userDevicesSignature } from './systemAudioSource';
 
 // The module keeps the shared-link count between calls; each test gets a fresh copy.
 let acquireAppExcludedSystemAudio: typeof import('./systemAudioSource').acquireAppExcludedSystemAudio;
@@ -194,5 +194,33 @@ describe('isAppSystemAudioSource', () => {
     expect(isAppSystemAudioSource({ kind: 'audioinput', label: 'vencord-screen-share' })).toBe(true);
     expect(isAppSystemAudioSource({ kind: 'audioinput', label: 'Built-in Audio Analog Stereo' })).toBe(false);
     expect(isAppSystemAudioSource({ kind: 'audiooutput', label: 'vencord-screen-share' })).toBe(false);
+  });
+});
+
+describe('userDevicesSignature', () => {
+  const mic = { kind: 'audioinput', deviceId: 'mic-1', groupId: 'g1', label: 'USB Mic' } as MediaDeviceInfo;
+  const def = { kind: 'audioinput', deviceId: 'default', groupId: 'g1', label: 'Default - USB Mic' } as MediaDeviceInfo;
+  const source = {
+    kind: 'audioinput', deviceId: 'vs-1', groupId: 'g9', label: 'vencord-screen-share',
+  } as MediaDeviceInfo;
+
+  it('does not change when only the share source appears or goes', () => {
+    expect(userDevicesSignature([def, mic, source])).toBe(userDevicesSignature([def, mic]));
+  });
+
+  it('does not depend on the order of the list', () => {
+    expect(userDevicesSignature([mic, def])).toBe(userDevicesSignature([def, mic]));
+  });
+
+  it('changes when a device is added or removed', () => {
+    const headset = { kind: 'audioinput', deviceId: 'hs-1', groupId: 'g2', label: 'Headset' } as MediaDeviceInfo;
+    expect(userDevicesSignature([def, mic, headset])).not.toBe(userDevicesSignature([def, mic]));
+  });
+
+  it('changes when the OS default moves to another device, though no deviceId changes', () => {
+    // Chromium keeps the `default` entry's id and relabels it; the handler re-acquires on this.
+    const movedDefault = { ...def, groupId: 'g2', label: 'Default - Headset' } as MediaDeviceInfo;
+    const headset = { kind: 'audioinput', deviceId: 'hs-1', groupId: 'g2', label: 'Headset' } as MediaDeviceInfo;
+    expect(userDevicesSignature([movedDefault, mic, headset])).not.toBe(userDevicesSignature([def, mic, headset]));
   });
 });
