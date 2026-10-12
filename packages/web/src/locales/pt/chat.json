@@ -17,7 +17,8 @@
       "jump": "Ir para a mensagem original"
     },
     "mention": {
-      "unknownUser": "Usuário desconhecido"
+      "unknownUser": "Usuário desconhecido",
+      "unknownRole": "Cargo desconhecido"
     },
     "reactions": {
       "you": "Você",
@@ -172,5 +173,10 @@
     "playNamed": "Reproduzir {{title}}",
     "playUnnamed": "Reproduzir vídeo",
     "videoTitle": "Vídeo"
+  },
+  "poke": {
+    "action": "Cutucar",
+    "received": "{{actor}} cutucou {{target}}",
+    "disconnected": "Não foi possível cutucar: sem conexão com o servidor"
   }
 }
