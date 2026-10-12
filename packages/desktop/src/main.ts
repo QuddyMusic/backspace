@@ -455,10 +455,15 @@ function createWindow(): void {
   });
 
   // The renderer owns the system-audio link and cannot release it when it is reloaded, navigated
-  // away or killed, so the main process does.
+  // away or killed, so the main process does. Only once the page is really replaced: a
+  // navigation that only starts may still be refused by will-navigate below or turn into a
+  // download, and the page that keeps running may be sharing. `did-navigate` fires for a
+  // committed cross-document main-frame load; `did-fail-load` for the main frame is the error
+  // page that replaced it (-3, ERR_ABORTED, is a cancelled navigation that replaced nothing).
   mainWindow.webContents.on('render-process-gone', () => systemAudio.stop());
-  mainWindow.webContents.on('did-start-navigation', (details) => {
-    if (details.isMainFrame && !details.isSameDocument) systemAudio.stop();
+  mainWindow.webContents.on('did-navigate', () => systemAudio.stop());
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, _description, _url, isMainFrame) => {
+    if (isMainFrame && errorCode !== -3) systemAudio.stop();
   });
 
   mainWindow.on('closed', () => {
