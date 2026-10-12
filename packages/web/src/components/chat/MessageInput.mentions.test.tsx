@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DmChannel, MemberWithUser, User } from '@backspace/shared';
 import { useAuthStore } from '../../stores/authStore';
@@ -6,7 +6,6 @@ import { useChatStore } from '../../stores/chatStore';
 import { useComposerStore } from '../../stores/composerStore';
 import { useSpaceStore } from '../../stores/spaceStore';
 import { useUIStore } from '../../stores/uiStore';
-import { clearMyUserIdCache, setMyUserIdForOrigin } from '../../utils/crossStoreResolvers';
 import { MessageInput } from './MessageInput';
 
 vi.mock('../../hooks/useWebSocket', () => ({ wsSend: vi.fn() }));
@@ -70,7 +69,7 @@ beforeEach(() => {
   useAuthStore.setState({ user: me });
   useUIStore.setState({ isMobile: false });
   useComposerStore.setState({ states: new Map() });
-  setMyUserIdForOrigin(ORBIT, meOnOrbit.id);
+  useAuthStore.getState().recordMyRow(ORBIT, meOnOrbit.id);
 });
 
 afterEach(() => {
@@ -84,7 +83,7 @@ afterEach(() => {
     channelToSpaceMap: new Map(),
   });
   useAuthStore.setState({ user: null });
-  clearMyUserIdCache();
+  useAuthStore.setState({ myRowIds: new Map() });
 });
 
 describe('MessageInput mention picker (#338)', () => {
@@ -135,5 +134,45 @@ describe('MessageInput mention picker (#338)', () => {
 
     expect(screen.getByText('Mira')).toBeInTheDocument();
     expect(screen.queryByText('Zed')).not.toBeInTheDocument();
+  });
+});
+
+describe('MessageInput mention labels', () => {
+  beforeEach(() => {
+    useSpaceStore.setState({
+      dmChannels: [dm],
+      channelOriginMap: new Map([[dm.id, ORBIT]]),
+      // Stale roster of a space opened earlier in the session.
+      members: [member('space-9', zed), member('space-9', me)],
+    });
+  });
+
+  it("shows a picked member by name and stores the id on the DM's origin, keeping the picker open while the query is typed", async () => {
+    render(<MessageInput channelId={dm.id} channelName="@Kai" />);
+
+    typeInComposer('hey @k');
+    const row = screen.getByText('Kai');
+    const textbox = typeInComposer('hey @ka');
+    // The same row: the picker is not mounted again for every keystroke.
+    expect(screen.getByText('Kai')).toBe(row);
+    await act(async () => { fireEvent.keyDown(textbox, { key: 'Enter' }); });
+
+    expect(useComposerStore.getState().get(dm.id).draftText).toBe('hey <@kai-orbit> ');
+    expect(textbox).toHaveValue('hey @Kai ');
+  });
+
+  it("names the signed-in user's token in the DM's id space, and only that one", () => {
+    useComposerStore.getState().setDraft(dm.id, 'hi <@me-orbit> <@me>');
+    render(<MessageInput channelId={dm.id} channelName="@Kai" />);
+
+    // `me` is the home id: it names nobody in a DM whose ids are orbit's.
+    expect(screen.getByRole('textbox')).toHaveValue('hi @Alice <@me>');
+  });
+
+  it("never labels an id from the space roster opened last", () => {
+    useComposerStore.getState().setDraft(dm.id, 'hi <@zed>');
+    render(<MessageInput channelId={dm.id} channelName="@Kai" />);
+
+    expect(screen.getByRole('textbox')).toHaveValue('hi <@zed>');
   });
 });

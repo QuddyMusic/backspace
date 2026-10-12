@@ -39,7 +39,9 @@ Routes may tighten the limit for themselves with `config.rateLimit`; those
 overrides sit with their routes (`routes/auth.ts`, `routes/directory.ts`,
 `routes/explore.ts`, `routes/messages.ts`, `routes/dm.ts`, `routes/gif.ts`,
 `routes/users.ts`, `routes/social.ts`), and they are keyed the same way, per
-address, for the same reason. `DISABLE_RATE_LIMITS=1` or `=true`
+address, for the same reason. The WebSocket `dm_message_create` event applies
+the DM create route's limit to the socket's address in a counter of its own
+(websocket.md, "DM Messages"). `DISABLE_RATE_LIMITS=1` or `=true`
 switches every limit off and exists for test harnesses that share the loopback
 address; it is never set in production.
 
@@ -99,7 +101,7 @@ GET    /users/:id/mutuals     ?homeUserId=               → { mutualFriends[], 
 
 **Write protection:** If the authenticated user is a replicated user (`homeInstance` is set **and** `federationHomeOrphaned !== 1`), the following fields are rejected with 403: `displayName`, `avatar`, `banner`, `accentColor`, `avatarColor`, `bio`. These fields are managed by the home instance via S2S relay. **Exception — detached accounts** (`federationHomeOrphaned === 1`): a federated account whose home instance was reset/lost is a sovereign local account with no home managing its profile, so it edits these durable fields locally like a native user (detach design §4.4). Detached edits are NOT relayed (the S2S profile-relay path stays gated on `!homeInstance`).
 
-**Self-view flag:** `GET /users/@me`, the login response, and the WS `ready` payload all sanitize the row with `isSelf=true` and include `federationHomeOrphaned: boolean` (detach design §4.7) — self-view only; it is never exposed to other users and never on the deleted/tombstone branch.
+**Self-view flag:** `GET /users/@me`, the login response, and the WS `ready` payload all sanitize the row with `isSelf=true` and include `federationHomeOrphaned: boolean` (detach design §4.7) and `detachedHomeInstance: string | null` (the home a detached account was federated from; a detached account is homed on this instance, so `homeInstance` is null — `federation.md`, "Detached accounts are homed here") — self-view only; it is never exposed to other users and never on the deleted/tombstone branch.
 
 **`POST /users/@me/federation-credential`:** get-or-create the per-remote credential this account's client presents when registering or logging in as itself on another instance. Scoped to `request.userId`; the secret is never derived from and never equal to the account password. See `auth.md` §5b and `client-federation.md` §1.
 
@@ -114,22 +116,25 @@ GET    /users/:id/mutuals     ?homeUserId=               → { mutualFriends[], 
 GET    /spaces                                                                 → { spaces[] }
 POST   /spaces                { name, icon?, description? }                    → { space }
 GET    /spaces/:id                                                             → { space, channels[], members[], roles[] }
-PATCH  /spaces/:id            { name?, icon?, banner?, description?, visibility?, avatarColor?, directoryListed? } → { space }   [MANAGE_SPACE]
+PATCH  /spaces/:id            { name?, icon?, banner?, description?, visibility?, avatarColor?, directoryListed?, ownerTitle? } → { space }   [MANAGE_SPACE; ownerTitle: owner]
 DELETE /spaces/:id                                                             → { success }  [owner]
 POST   /spaces/:id/invite                                                      → { inviteCode }  [CREATE_INVITE]
 POST   /spaces/:id/join       { inviteCode }                                   → { space }
 POST   /spaces/join           { inviteCode }                                   → { space }
-GET    /spaces/invite/:code/preview                                            → invite preview
+GET    /spaces/invite/:code/preview                                            → InvitePreview (no auth)
 PATCH  /spaces/:id/transfer-ownership  { newOwnerId }                          → { space }  [owner]
 ```
+`POST /spaces/:id/invite` answers every visibility, `request` included (up to 1.9.0 it refused a request space with `403 space_uses_join_requests`). The two join routes never admit anyone to a `request` space: after the code matches they answer `403 user_banned`, `409 already_member`, then, for a request space, `409 join_request_pending` when the caller's request is waiting and otherwise `403 join_request_required` with `details: { spaceId }`, the id for `POST /spaces/:id/request-join`. They read the space's visibility on each call, so a code follows the space when its visibility changes. `InvitePreview` carries `visibility` (absent from an instance up to 1.9.0). See [spaces.md](spaces.md), "Join by Invite Code".
 `directoryListed` must be a boolean (`400 field_not_boolean`), is refused with `400 directory_private_space` when the resulting visibility is `private`, and is cleared in the same write when a listed space is switched to `private`. `Space.directoryListed` is carried on every space response and in the WebSocket ready payload. A change to the flag, to a served field (`name`, `description`, `icon`, `banner`, `avatarColor`, `visibility`) of a listed space, or a `DELETE` of a listed space marks the directory dirty so the pinger tells the hub. See [directory.md](directory.md).
+`ownerTitle` (a string, or `null` to reset) is accepted from the space's owner only: anyone else who sends it gets `403 space_owner_only` and nothing in the body is written, whatever role they hold. The owner is compared by the caller's row on this instance (`request.userId === spaces.owner_id`), so a federated owner sets it through their replicated row here. The value goes through `normalizeOwnerTitle` (`packages/shared/src/constants.ts`): `null` resets; a string is trimmed and refused with `400 space_owner_title_invalid` (`details: { max }`) when it trims to nothing, is longer than `MAX_OWNER_TITLE_LENGTH` (32 UTF-16 code units), holds a control character, a line or paragraph separator or a bidirectional control, or has no visible character. A blank string does not reset, unlike a nickname. `Space.ownerTitle` is carried on every space response and in the ready payload, `null` when unset. `PATCH /spaces/:id/transfer-ownership` clears it. Instances up to 1.10.0 omit the field and ignore it in a PATCH (`200`, nothing written).
 
 ### Members
 ```
 GET    /spaces/:id/members                               → { members[] }
-PATCH  /spaces/:id/members/:uid  { roleIds }             → { member }  [MANAGE_ROLES]
+PATCH  /spaces/:id/members/:uid  { roleIds?, nickname? } → { member }  [roleIds: MANAGE_ROLES; nickname: self, or MANAGE_SPACE]
 DELETE /spaces/:id/members/:uid                          → { success }  [KICK_MEMBERS|self]
 ```
+`PATCH /members/:uid` takes `roleIds`, `nickname` or both; a body with neither, or one that is not an object, answers `400 validation_failed`. Every field is checked before anything is written, and both are written in one transaction, so a refused field leaves the other unchanged too. `nickname` is the member's name in this space (`space_members.nickname`); the account name is not touched. Anyone may set their own. Setting another member's needs `MANAGE_SPACE` (`403 missing_permission`), never reaches the owner (`403 space_owner_only`) and needs a higher rank (`403 role_hierarchy`). The value goes through `normalizeMemberNickname` (`packages/shared/src/constants.ts`): `null` or a string that trims to nothing clears it; otherwise it is trimmed and refused with `400 member_nickname_invalid` (`details: { max }`) when longer than `MAX_MEMBER_NICKNAME_LENGTH` (32 UTF-16 code units), when it holds a control character, a line or paragraph separator or a bidirectional control, or when it has no visible character. The answer is followed by `member_updated` to the space (websocket.md); a role change is also followed by `space_access_changed`. Instances up to 1.9.x read only `roleIds` and refuse a nickname-only body (`role_ids_invalid`, `cannot_change_own_roles` or `missing_permission`).
 
 ### Bans
 ```
@@ -141,12 +146,14 @@ DELETE /spaces/:id/bans/:uid                             → { success }  [BAN_M
 ### Roles
 ```
 POST   /spaces/:id/roles              { name, color?, permissions? }              → { role }  [MANAGE_ROLES]
-PATCH  /spaces/:id/roles/:rid         { name?, color?, position?, above?, below?, permissions? }  → { role }  [MANAGE_ROLES]
+PATCH  /spaces/:id/roles/:rid         { name?, color?, position?, above?, below?, permissions?, permissionsVersion? }  → { role }  [MANAGE_ROLES]
 DELETE /spaces/:id/roles/:rid                                                     → { success }  [MANAGE_ROLES]
 POST   /spaces/:id/members/:uid/roles { roleId }                                 → { success }  [MANAGE_ROLES]
 DELETE /spaces/:id/members/:uid/roles/:rid                                        → { success }  [MANAGE_ROLES]
 ```
-Kick, ban, the member role routes and the role routes also enforce the role hierarchy, answering `403 role_hierarchy` (permissions.md, "Role hierarchy"). `POST` and `PATCH /roles` also apply the held-bits rule (permissions.md, "Held-bits rule"): switching on a bit the actor does not hold answers `403 cannot_grant_unowned_permissions`, switching one off `403 cannot_change_unowned_permissions`; `DELETE /roles/:rid` of a role carrying a bit the actor does not hold answers `403 cannot_change_unowned_permissions`, and giving a member such a role (`PATCH /members/:uid`, `POST /members/:uid/roles`) `403 cannot_grant_unowned_permissions`; a `permissions` value that is not a canonical non-negative decimal string answers `400 permissions_invalid` (permissions.md, "Stored form"). `PATCH /members/:uid` takes `roleIds`, the member's whole role set: a list of distinct role id strings, else `400 role_ids_invalid`. Every write in this section is followed by `space_access_changed` to the space's connected members (websocket.md). `PATCH /roles/:rid` answers `404 role_not_in_space` for a role of another space. `PATCH /roles/:rid { position }` moves the role to that position (1 = just above @everyone) and renumbers the others; `{ above: roleId }` or `{ below: roleId }` instead moves it directly next to that role of the space and the request's `position` is then ignored (permissions.md, "Setting the order"): naming both, the role itself, @everyone with `below`, or a non-string answers `400 validation_failed`, a role of another space `400 role_not_in_space`. A new role is created at 1. The single-role routes refuse a role of another space with `400 role_not_in_space`.
+Kick, ban, the member role routes and the role routes also enforce the role hierarchy, answering `403 role_hierarchy` (permissions.md, "Role hierarchy"). `POST` and `PATCH /roles` also apply the held-bits rule (permissions.md, "Held-bits rule"): switching on a bit the actor does not hold answers `403 cannot_grant_unowned_permissions`, switching one off `403 cannot_change_unowned_permissions`; `DELETE /roles/:rid` of a role carrying a bit the actor does not hold answers `403 cannot_change_unowned_permissions`, and giving a member such a role (`PATCH /members/:uid`, `POST /members/:uid/roles`) `403 cannot_grant_unowned_permissions`; a `permissions` value that is not a canonical non-negative decimal string answers `400 permissions_invalid` (permissions.md, "Stored form"). `PATCH /roles/:rid` with `permissions` also takes `permissionsVersion`, the `rolePermissionsVersion` of the permissions the editor loaded: when the role's stored permissions have another version by then, the whole request answers `409 role_permissions_conflict` and nothing changes; a `permissionsVersion` that is not a non-empty string answers `400 validation_failed`. Without it (clients from before the check, 1.9.x and older) the write is not compared, and without `permissions` it is ignored (permissions.md, "Concurrent edits"). Editing a role below the actor is allowed whoever holds it, members ranked above the actor included (permissions.md, "Lower roles held by senior members"). `PATCH /members/:uid` takes `roleIds`, the member's whole role set: a list of distinct role id strings, else `400 role_ids_invalid`. Every write in this section is followed by `space_access_changed` to the space's connected members (websocket.md). `PATCH /roles/:rid` answers `404 role_not_in_space` for a role of another space. `PATCH /roles/:rid { position }` moves the role to that position (1 = just above @everyone) and renumbers the others; `{ above: roleId }` or `{ below: roleId }` instead moves it directly next to that role of the space and the request's `position` is then ignored (permissions.md, "Setting the order"): naming both, the role itself, @everyone with `below`, or a non-string answers `400 validation_failed`, a role of another space `400 role_not_in_space`. A new role is created at 1. The single-role routes refuse a role of another space with `400 role_not_in_space`.
+
+A role in any answer carries `permissions` only for a viewer who holds `MANAGE_ROLES` in the space: `GET /spaces/:id` lists every role with its display fields for every member and with its bits for managers, member rows (`GET /spaces/:id/members`, `PATCH /members/:uid`, `members[]` of the detail) list roles with display fields only, and the `POST`/`PATCH /roles` answers are shaped for what the actor holds after the change (permissions.md, "Who receives role and override data").
 
 `DELETE /spaces/:id/roles/:rid` answers `404 role_not_in_space` for a role id that is not in the space, and otherwise deletes the role together with every channel and category override that names it (overrides carry no foreign key to the role).
 
@@ -159,32 +166,40 @@ DELETE /channels/:id                                     → { success }  [MANAG
 PATCH  /spaces/:id/channels/reorder  { order }           → reordered  [MANAGE_CHANNELS]
 ```
 
+`topic` is a string of at most `CHANNEL_TOPIC_MAX_LENGTH` (1024) characters after `normalizeChannelTopic`; on PATCH, `null` or a blank string clears it. A non-string answers `400 channel_topic_invalid`, a longer topic `400 channel_topic_length` with `{ max }` (spaces.md, "Create Channel").
+
 ### Channel Overrides
 ```
-GET    /channels/:id/overrides                                   → { overrides[] }  [MANAGE_ROLES]
-PUT    /channels/:id/overrides  { targetType, targetId, allow, deny } → { success }  [MANAGE_ROLES]
-DELETE /channels/:id/overrides/:targetType/:targetId              → { success }  [MANAGE_ROLES]
+GET    /channels/:id/overrides                                   → { channelId, targetType, targetId, allow, deny, version }[]  [MANAGE_ROLES]
+PUT    /channels/:id/overrides  { targetType, targetId, allow, deny, version? } → { success, version }  [MANAGE_ROLES]
+DELETE /channels/:id/overrides/:targetType/:targetId  ?version=   → { success }  [MANAGE_ROLES]
 ```
 All three check `MANAGE_ROLES` space-wide (permissions.md, "Client gating"). `PUT` and `DELETE` (here and on categories) also follow the role hierarchy (permissions.md, "Role hierarchy"): an override on a role at or above the actor's top role, or on another member ranked at or above the actor, answers `403 role_hierarchy`; a `PUT` naming a role that is not in the space answers `400 role_not_in_space`. `PUT` and `DELETE` (here and on categories) also apply the held-bits rule against the stored override (permissions.md, "Held-bits rule"): a newly allowed unheld bit answers `403 cannot_grant_unowned_permissions`, a newly denied one `403 cannot_deny_unowned_permissions`, and clearing one, or deleting an override that sets one, `403 cannot_change_unowned_permissions`. `DELETE` removes the override row, so the target falls back to its space-wide permissions in that channel; the category routes below do the same for a category. A `PUT` or `DELETE` is followed by `channel_updated` (with the recipient's new `myPermissions`) or `channel_deleted` for each connected member of the space, and a category write also sends `category_updated`. `allow` and `deny` are canonical non-negative decimal strings, else `400 override_bits_invalid`; one left out sets no bits (permissions.md, "Stored form"). The editor stages removals and sends them on Save.
+
+Concurrent edits (here and on categories; permissions.md, "Concurrent edits"): each listed row carries `version` (`overrideVersion` in `packages/shared/src/permissions.ts`, derived from its allow and deny), and a `PUT` answers the `version` of the row it wrote. A `PUT` with `version` (the version of the row the editor loaded, `"none"` when it loaded no row for that target) answers `409 overrides_conflict` and writes nothing when the stored row has another version, including when a row was created meanwhile. A `DELETE` with `?version=` answers the same when the row still exists with another version; a row already gone answers `200`. A `version` that is not a non-empty string answers `400 validation_failed`. Without `version` (clients from before the check, 1.9.x and older) the write is not compared, as before. The check runs after the hierarchy check and before the held-bits rule.
 
 ### Categories
 ```
 POST   /spaces/:id/categories        { name }              → { category }  [MANAGE_CHANNELS]
 PATCH  /categories/:id               { name?, position? }  → { category }  [MANAGE_CHANNELS]
 DELETE /categories/:id                                      → { success }  [MANAGE_CHANNELS]
-GET    /categories/:id/overrides                            → { overrides[] }  [MANAGE_ROLES]
-PUT    /categories/:id/overrides     { targetType, targetId, allow, deny } → { success }  [MANAGE_ROLES]
-DELETE /categories/:id/overrides/:tt/:tid                   → { success }  [MANAGE_ROLES]
+GET    /categories/:id/overrides                            → { categoryId, targetType, targetId, allow, deny, version }[]  [MANAGE_ROLES]
+PUT    /categories/:id/overrides     { targetType, targetId, allow, deny, version? } → { success, version }  [MANAGE_ROLES]
+DELETE /categories/:id/overrides/:tt/:tid  ?version=        → { success }  [MANAGE_ROLES]
 ```
 
 ## Messages (`routes/messages.ts`) — auth required
 ```
 GET    /channels/:id/messages  ?before=|after=&limit=50 (1-100) → MessageWithUser[]  [VIEW_CHANNEL+READ_MESSAGE_HISTORY]
-POST   /channels/:id/messages  { content, attachments?, replyToId? } → { message }  [SEND_MESSAGES, +ATTACH_FILES]
-PATCH  /messages/:id           { content }                → { message }  [author]
+POST   /channels/:id/messages  { content, attachments?, replyToId? } → { message }  [SEND_MESSAGES, +ATTACH_FILES, +MENTION_EVERYONE]
+PATCH  /messages/:id           { content }                → { message }  [author, +MENTION_EVERYONE]
 DELETE /messages/:id                                      → { success }  [author|MANAGE_MESSAGES]
 ```
 `replyToId` on POST must name a message in the same channel, otherwise `400 Invalid reply target` and nothing is inserted. See permissions.md, "Reply-target confinement".
+
+Content with `@everyone`, `@here` or a role token (`<@&roleId>`) outside code needs MENTION_EVERYONE on the channel: without it POST answers `403 missing_permission` (`details.permission` = `MENTION_EVERYONE`) and nothing is stored. PATCH refuses the same way only when the edit adds a mass mention the stored message did not have. Every channel message the server returns or broadcasts carries `mentionEveryone: boolean` and `mentionRoleIds: string[]`, read from its content; a system message carries `false` and `[]` whatever its content holds. See permissions.md, "Mass mentions".
+
+Every channel message also carries `type`: `user`, or `system` for a row the instance wrote (a poke; websocket.md, "Channel pokes"). History and messages-around return system rows in place; a 1.10.0 or older server sends no `type` and has no channel system rows. A system row is never created over REST. PATCH on one answers `403 system_message_immutable`, its author included, before the author check. A POST whose `replyToId` names a system row is `400 reply_target_invalid`. Channel search (below) leaves system rows out of its results and its count.
 
 ### Message history paging
 
@@ -214,11 +229,11 @@ POST   /dm/:id/members         { userId } | { homeUserId, homeInstance } → DmC
 DELETE /dm/:id/members                                              → { success } (leave) [group only]
 DELETE /dm/:id/members/:targetUserId  ?homeInstance=                → { success } [owner kick; cannot self-kick; group only; segment is homeUserId when ?homeInstance is set]
 POST   /dm/:id/transfer        { newOwnerId? | (homeUserId+homeInstance) } → { success } [owner; group only; resolved member must be in channel; not self]
-POST   /dm/space-invite        { target: { userId } | { homeUserId, homeInstance }, spaceId, spaceInstanceOrigin, inviteCode } → SpaceInviteResponse { dmChannelId, messageId, message } [target must be a friend; 400 invite_invalid when the snapshot would not make a well-formed invite (dm-system.md, "System messages")]
+POST   /dm/space-invite        { target: { userId } | { homeUserId, homeInstance }, spaceId, spaceInstanceOrigin, inviteCode } → SpaceInviteResponse { dmChannelId, messageId, message } [target must be a friend; 400 invite_invalid when the snapshot would not make a well-formed invite (dm-system.md, "System messages"); a space of any visibility, `request` included (refused up to 1.9.0 with 403 space_requires_approval)]
 GET    /dm/:id/messages        ?before=|after=&limit=50 (1-100)     → DmMessageWithUser[] [member]
 POST   /dm/:id/messages        { content?, attachments?, replyToId? } → 201 DmMessageWithUser [member; content or attachments required]
-PATCH  /dm/messages/:id        { content }                          → DmMessageWithUser [author; 403 system_message_immutable for a system message]
-DELETE /dm/messages/:id                                             → { success } [author]
+PATCH  /dm/messages/:id        { content }                          → DmMessageWithUser [member and author; 403 not_dm_member after leaving the group; 403 system_message_immutable for a system message]
+DELETE /dm/messages/:id                                             → { success } [member and author; 403 not_dm_member after leaving the group]
 ```
 
 **Naming a remote user (federated identity in a DM route).** `POST /dm`, `POST /dm/group`, `POST /dm/:id/members`, `DELETE /dm/:id/members/:targetUserId?homeInstance=`, `POST /dm/:id/transfer` and `POST /dm/space-invite` accept a remote user as the pair `homeUserId` + `homeInstance` and resolve it through `resolveRemoteIdentityForClient` (`utils/federationClientIdentity.ts`). The body never carries a username: the name comes from the identity's home. A known row with its real name is used as is, whatever the state of its home. A new row is created only when the `homeUserId` is a snowflake (decimal digits). For an unknown identity, or a known row that still carries a placeholder name (`<homeUserId>@<domain>`, or a display name; see federation.md "Stub Username Backfill"), whose domain is an active peer, the server asks the home over the signed `POST /api/federation/users/by-home-id` and creates or renames the row as `<username>@<domain>` with the reported profile hydrated, so the first DM already shows the person's name; when the home answers that there is no such user, nothing is created. The route waits at most 2 s for the home (`CLIENT_HOME_LOOKUP_TIMEOUT_MS`); `POST /dm/group` asks the homes of all its members at once. When the home cannot be asked or does not answer (no active peer yet, unreachable, rate limited, too slow) the row is created under `<homeUserId>@<domain>`, as before, and renamed by the first username that arrives later, including the backfill when the peering becomes active (see federation.md "Stub Username Backfill"); that home is not asked about that id again for 60 s (in memory). The DM's first message starts the peering as it always has. Every refusal answers with the route's existing not-found code (`404 user_not_found`, `404 users_not_found` for the group route).
@@ -280,11 +295,13 @@ GET /dm/:id/messages/around      ?messageId=&limit=                           �
 ```
 has: `file`|`image`|`link`
 
+Channel search matches only messages members wrote (`userWrittenMessages()`); a poke's JSON content is not text anyone wrote. DM search still returns DM system rows.
+
 ## Explore (`routes/explore.ts`) — auth required
 ```
 GET    /spaces/explore                   ?q=&limit=&offset=  → { spaces[], total, totalAll, discoveryEnabled }
 POST   /spaces/:id/public-join                               → { space }
-POST   /spaces/:id/request-join          { message? }        → { request }
+POST   /spaces/:id/request-join          { message? }        → { request }  [5/min; also where an invite to a request space leads]
 GET    /spaces/:id/join-requests         ?status=            → { requests[] }  [MANAGE_SPACE]
 PATCH  /spaces/:id/join-requests/:rid    { action }          → { request }  [MANAGE_SPACE]
 GET    /users/@me/join-requests          ?status=            → { requests[] }
@@ -364,6 +381,22 @@ PATCH /settings/instance     (admin)       { instanceName?, registrationOpen?, f
 `directoryBrowseEnabled` is the other directory axis: whether people on this instance see spaces from other instances in Explore. It must be a boolean (`400 field_not_boolean`), is independent of `directoryEnabled` (nothing clears it, and the discovery invariant does not touch it), is carried only on `/settings/instance` and not on `/settings/streaming`, and changing it never marks the directory dirty, since it is nowhere in the served document. It gates `GET /directory` and `directoryAvailable` on `GET /instance/info`. Default true. See [directory.md](directory.md).
 
 `supportCardEnabled` must be a boolean (`400 field_not_boolean` with `{ field: 'supportCardEnabled' }`). It is carried only on `/settings/instance` and not on `/settings/streaming`, is reported publicly on `GET /instance/info`, and never marks the directory dirty. Default true. What it hides: [admin.md](admin.md), General panel.
+
+## Notification settings (`routes/notificationSettings.ts`) — auth required
+```
+GET   /users/@me/notification-settings                 → { settings: NotificationSetting[] }
+PATCH /spaces/:spaceId/notification-settings     { level?, mute?, suppressEveryone?, suppressRoles? } → NotificationSetting
+PATCH /channels/:channelId/notification-settings { level?, mute? } → NotificationSetting
+```
+The signed-in user's per-space and per-channel notification settings on **this** instance, for the spaces it hosts. Keyed by the caller's row here, so a federated member uses their account on the space's instance: the client sends these to the space's origin (`getApiForOrigin`), never to its home. What the settings do is in [sounds.md](sounds.md) ("Notification settings"); the table is `notification_settings` ([database.md](database.md)).
+
+`NotificationSetting` is `{ spaceId, channelId: string | null, level: 'all' | 'mentions' | 'nothing' | null, muted, mutedUntil: number | null, suppressEveryone, suppressRoles, updatedAt }`. The two suppress flags (booleans, false by default, sent by servers since MENTION_EVERYONE and absent before) belong to the space setting; a channel setting always has them false. `channelId` null is the space-wide setting. `level` null is "not chosen": a channel inherits its space, a space uses `mentions`. `muted` with `mutedUntil` null lasts until lifted; a timed mute ends at `mutedUntil` (epoch ms, server clock). `updatedAt` is the server's write time and is always later than the stored one, so clients merge last-write-wins.
+
+The PATCH body changes only the fields it carries, and needs at least one: `level` is a level or null (clear), `mute` is `'1h' | '8h' | '24h' | 'indefinite'` or null (lift), and on the space route only `suppressEveryone` and `suppressRoles` are booleans. A suppress field on the channel route, or a field of the wrong type, is `400 validation_failed` and nothing changes. The server computes `mutedUntil` from the duration with its own clock; a mute that already ended is read as none. A write that leaves nothing chosen (level null, not muted, no suppress flag) deletes the row and answers the setting with level null, not muted and both flags false. A server from before MENTION_EVERYONE refuses a body with only suppress fields (`400 validation_failed`), and the client then shows the save as failed. Every successful write is pushed as `notification_settings_updated` to all of the user's sockets on this instance ([websocket.md](websocket.md)).
+
+GET lists only rows of spaces the caller is a member of, and channel rows of channels they can see (`VIEW_CHANNEL` or `ADMINISTRATOR`). Rows outlive leaving a space or losing a channel: they come back if the user rejoins or regains it, and go with the user, space or channel row (cascade).
+
+Errors: `400 validation_failed` (no known field, or a value of the wrong kind), `404 space_not_found`, `404 channel_not_found`, `403 not_space_member`, `403 missing_permission` (`{ permission: 'VIEW_CHANNEL' }`) for a channel the caller cannot see.
 
 ## Admin (`routes/admin.ts`) — admin required
 ```
@@ -491,7 +524,7 @@ type InviteRedemption = {
 ```
 POST   /federation/peer/initiate   (admin)     { remoteOrigin }                    → { peer, verified } (200) | { peer } (202, remote queued it) | 409 { code:'PEER_EXISTS_RESET_REQUIRED' } | 409 (handshake in progress, or awaiting remote approval)
 POST   /federation/peer/accept     (public, IP rate-limited 10/min) { sourceOrigin, challenge, hmacSecret, instanceName?, instanceId?, approvalToken? } → { accepted:true, instanceName, instanceId } (200) | queued (202 + { approvalToken }) | 409 { accepted:false, code:'PEER_EXISTS_RESET_REQUIRED', instanceName, instanceId }
-GET    /federation/peers           (admin)                                          → { peers[] } (no secrets; each peer carries needsAttentionReason)
+GET    /federation/peers           (admin)                                          → { peers[] } (no secrets; each peer carries statusReason)
 GET    /federation/reset-events     (admin)                                          → FederationResetEventsResponse
 POST   /federation/reset-events/acknowledge (admin)  { origin }                      → { success } (200) | 400 missing origin | 404 unknown origin
 DELETE /federation/peers/:id       (admin)                                          → { success } + outbox cleanup
@@ -507,9 +540,9 @@ POST   /users/@me/reattach         (JWT as detached account, rate-limited 5/15mi
 
 **Handshake epoch exchange.** The handshake carries the **instance epoch** bidirectionally, mirroring `instanceName`: the request body's `instanceId` is the initiator's epoch (written to `federation_peers.peer_instance_id` on every authenticated activation path), and the 200 response body's `instanceId` is the responder's epoch. Older peers omit the field; the column stays `null` until the epoch-refresh/relay backstop fills it. Both are authenticated baselines — never overwritten by the unauthenticated `/instance/info` probe. **`FederationRelayRequest.sourceInstanceId`** stamps the sender's current epoch on every relay; because the whole body is HMAC-verified, a valid relay authentically carries the sender's incarnation id and populates `peer_instance_id` when null (fast-path baseline). See `federation.md` "Instance Epoch".
 
-**Trust re-establishment (verify-before-activate).** `/peer/initiate` no longer treats any `response.ok` as success. On remote 200 it performs a signed `fetchPeerEpoch` (`POST /federation/epoch`) round-trip to PROVE the responder adopted the negotiated secret, then either activates (`200 { peer, verified: true }`, storing the cryptographically-verified epoch as `peer_instance_id`) or parks the peer in `needs_attention`/`repeer_incomplete` (`200 { peer, verified: false }`). On remote `409 PEER_EXISTS_RESET_REQUIRED` it deletes its pending row (or hands a taken-over row back, see below) and returns `409 { code: 'PEER_EXISTS_RESET_REQUIRED' }`. `/peer/accept` returns that same `409 { accepted: false, code: 'PEER_EXISTS_RESET_REQUIRED', instanceName, instanceId }` for an existing `active`/`needs_attention` row (honest refusal — anti-hijack guard unchanged, never adopts the caller's secret) instead of the old false `200 { accepted: true }`. The handshake `sourceOrigin` is `getOurOrigin()` (honors `PUBLIC_ORIGIN`), so it matches the `X-Federation-Origin` used for all S2S auth. See `federation.md` "Trust re-establishment contract".
+**Trust re-establishment (verify-before-activate).** `/peer/initiate` no longer treats any `response.ok` as success. On remote 200 it performs a signed `fetchPeerEpoch` (`POST /federation/epoch`) round-trip to PROVE the responder adopted the negotiated secret, then either activates (`200 { peer, verified: true }`, storing the cryptographically-verified epoch as `peer_instance_id`), parks the peer in `needs_attention`/`repeer_incomplete` when `/epoch` refuses the secret (`200 { peer, verified: false }`), or keeps the row `pending` and answers `502` when `/epoch` gives no readable answer. On remote `409 PEER_EXISTS_RESET_REQUIRED` it deletes its pending row (or hands a taken-over row back, see below) and returns `409 { code: 'PEER_EXISTS_RESET_REQUIRED' }`. `/peer/accept` returns that same `409 { accepted: false, code: 'PEER_EXISTS_RESET_REQUIRED', instanceName, instanceId }` for an existing `active`/`needs_attention` row (honest refusal; the existing-row guard is unchanged and never adopts the caller's secret) instead of the old false `200 { accepted: true }`. The handshake `sourceOrigin` is `getOurOrigin()` (honors `PUBLIC_ORIGIN`), so it matches the `X-Federation-Origin` used for all S2S auth. See `federation.md` "Trust re-establishment contract".
 
-**Existing `pending` row.** An `'auto'` pending row is taken over, while an admin- or remote-created one, or a handshake already in flight for the origin, answers `409` ("already in progress"). The rule is in `federation.md` "Outbound Peering Gate" (`/peer/initiate` and an existing `pending` row).
+**Existing `pending` row.** An `'auto'` pending row is taken over and an admin-created one is retried with its secret, while a remote-created one, or a handshake already in flight for the origin, answers `409` ("already in progress"). The rule is in `federation.md` "Outbound Peering Gate" (`/peer/initiate` and an existing `pending` row).
 
 **`GET /api/federation/reset-events`** — admin-only, read-only. Backs the "Reset cleanup" admin surface (instance-epoch self-healing §6.4). Returns the durable `federation_reset_events` journal, each row augmented with the origin's current orphaned real accounts (`federationHomeOrphaned = 1`) for disposition:
 
@@ -534,7 +567,7 @@ type FederationResetEventsResponse = { events: FederationResetEvent[] };
 
 **`POST /api/federation/reset-events/acknowledge`** — admin-only, no S2S. Body `{ origin }`: `400` if missing, `404` if no journal row for that origin, else stamps `acknowledged_at = Date.now()` **only if currently null** (idempotent — a second call keeps the original timestamp) and returns `{ success: true }`. Lets the admin banner be dismissed server-side (Task 7) instead of client-only state; purely informational, detached accounts stay detached (detach spec §4.6).
 
-Disposition actions reuse existing endpoints (no new mutating routes): one-click Re-peer = `POST /peers/:id/reset` → `POST /peer/initiate`; full-purge Remove = `DELETE /api/admin/users/:id` (owns-spaces → transfer first). **`needsAttentionReason`** (`'auth_failures' | 'peer_reset_detected' | 'repeer_incomplete' | null`) is now included on each `GET /federation/peers` peer object so the client can raise the persistent Reset-cleanup banner only for reset-detected peers and surface an "incomplete Re-peer" warning for `repeer_incomplete`. See `federation.md` "Instance Epoch" and `client-federation.md` §8.
+Disposition actions reuse existing endpoints (no new mutating routes): one-click Re-peer = `POST /peers/:id/reset` → `POST /peer/initiate`; full-purge Remove = `DELETE /api/admin/users/:id` (owns-spaces → transfer first). **`statusReason`** (`FederationPeerStatusReason | null`, see `federation.md` "Peer state") is included on each `GET /federation/peers` peer object so the client can raise the persistent Reset-cleanup banner only for reset-detected peers, surface an "incomplete Re-peer" warning for `repeer_incomplete`, and show why a peer needs attention or was rejected. See `federation.md` "Instance Epoch" and `client-federation.md` §8.
 
 **`POST /api/federation/users/lookup`** — HMAC-authenticated S2S endpoint. Resolves a username on this instance to its canonical `(homeUserId, profile snapshot)`. Used by the cross-instance friend-add flow on the sender's home server before queuing a `friend_request_create` event. Responds to native, non-deleted users only; ignores `discoverable`. Returns `{ found: false, code: 'user_not_found' }` for stubs, tombstoned users, or unknown handles. See `federation.md` §1 "S2S User Lookup" for the full contract.
 

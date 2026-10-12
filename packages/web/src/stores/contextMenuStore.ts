@@ -23,12 +23,18 @@ export interface ContextMenuCheckbox extends ContextMenuItemBase {
   label: string;
   subscribe: (onStoreChange: () => void) => () => void;
   getChecked: () => boolean;
+  /** Uses the same subscription as checked state so in-flight writes disable immediately. */
+  getDisabled?: () => boolean;
   onChange: (checked: boolean) => void;
 }
 
 export interface ContextMenuCustom extends ContextMenuItemBase {
   type: 'custom';
-  render: () => ReactNode;
+  /**
+   * Renders the item. `close` dismisses the menu; a control inside the item
+   * that completes an action calls it, as an action item's click does.
+   */
+  render: (close: () => void) => ReactNode;
 }
 
 export interface ContextMenuSeparator extends ContextMenuItemBase {

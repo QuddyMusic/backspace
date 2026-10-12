@@ -78,6 +78,8 @@ export const ERROR_CODES = [
   'peer_pending_local_admin',
   'peer_unreachable',
   'PEER_EXISTS_RESET_REQUIRED',
+  'PEER_REVOKED',
+  'PEER_HANDSHAKE_IN_PROGRESS',
 
   // Direct messages
   'recipient_deleted',
@@ -141,6 +143,8 @@ export const ERROR_CODES = [
   'invalid_body',
   'invalid_target',
   'cannot_invite_self',
+  // Sent up to 1.9.0 by POST /api/dm/space-invite for a local request space.
+  // A current server sends that invite; an older home still refuses it.
   'space_requires_approval',
   'message_lookup_failed',
   // admin-settings
@@ -196,6 +200,8 @@ export const ERROR_CODES = [
   'join_request_not_found',
   'join_request_decided',
   // spaces
+  'space_owner_title_invalid',
+  'member_nickname_invalid',
   'space_name_required',
   'space_name_length',
   'space_create_failed',
@@ -203,9 +209,13 @@ export const ERROR_CODES = [
   'space_visibility_invalid',
   'space_update_failed',
   'space_owner_only',
+  // Sent up to 1.9.0 by POST /api/spaces/:id/invite for a request space. A
+  // current server hands that space its link; an older peer still sends it.
   'space_uses_join_requests',
   'invite_code_required',
   'invite_not_found',
+  // An invite code used on a request space. `details.spaceId` names the space
+  // to send `POST /api/spaces/:id/request-join` to (absent up to 1.9.0).
   'join_request_required',
   'cannot_change_own_roles',
   'role_ids_invalid',
@@ -218,6 +228,7 @@ export const ERROR_CODES = [
   'cannot_target_self',
   'role_hierarchy',
   'permissions_invalid',
+  'role_permissions_conflict',
   'role_name_taken',
   'role_name_required',
   'everyone_role_not_deletable',
@@ -232,6 +243,8 @@ export const ERROR_CODES = [
   'message_not_found',
   'channel_name_required',
   'channel_name_length',
+  'channel_topic_invalid',
+  'channel_topic_length',
   'channel_type_invalid',
   'category_not_in_space',
   'channel_not_in_space',
@@ -239,6 +252,7 @@ export const ERROR_CODES = [
   'override_target_invalid',
   'override_target_required',
   'override_bits_invalid',
+  'overrides_conflict',
   'cannot_grant_unowned_permissions',
   'cannot_deny_unowned_permissions',
   'cannot_change_unowned_permissions',
@@ -256,11 +270,14 @@ export const ERROR_CODES = [
   'system_message_immutable',
   'message_edit_not_author',
   'message_delete_forbidden',
+  'poke_target_no_access',
   'paging_cursor_conflict',
   'internal_error',
   // misc
   'voice_disabled',
   'voice_connect_forbidden',
+  'dm_call_in_progress',
+  'dm_call_not_found',
   'file_not_found',
 
   // Directory

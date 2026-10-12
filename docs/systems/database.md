@@ -1,7 +1,7 @@
 # Database Schema Reference
 
 Source of truth: `packages/server/src/db/schema.ts` (Drizzle ORM)
-Migrations: drizzle-kit generates SQL from `schema.ts` (`pnpm db:generate` from `packages/server/`). On startup, `initDatabase()` runs `drizzle.migrate()` against `packages/server/drizzle/`, then `ensureDefaults()` (settings row, Snowflake worker ID, instance epoch, `installedAt` backfill, first-admin promotion), `backfillOneOnOneDmMembership()` and `backfillOneOnOneKeys()` (every 1-on-1 `dm_channels` row gets the key of its two members; see dm-system.md "Federated ID Algorithm"). Migration history was squashed to a single baseline on 2026-04-24 (backlog #31 Phase 2). Databases created before the squash keep the tables the old hand-written statements made, which differ from what the baseline creates (inline `UNIQUE` constraints instead of named unique indexes, text primary keys without `NOT NULL`, extra columns), so a migration must not assume an index or column only the baseline creates. `packages/server/test/fixtures/pre-squash-schema.sql` holds that shape, and `src/db/preSquashUpgrade.test.ts` boots it, a squashed install and an empty database through `initDatabase()` and checks the outbox ends identical on all three.
+Migrations: drizzle-kit generates SQL from `schema.ts` (`pnpm db:generate` from `packages/server/`). On startup, `initDatabase()` runs `drizzle.migrate()` against `packages/server/drizzle/`, then `ensureDefaults()` (settings row, Snowflake worker ID, instance epoch, `installedAt` backfill, first-admin promotion), `backfillOneOnOneDmMembership()` and `backfillOneOnOneKeys()` (every 1-on-1 `dm_channels` row gets the key of its two members; see dm-system.md "Federated ID Algorithm"). Migration history was squashed to a single baseline on 2026-04-24 (backlog #31 Phase 2). Databases created before the squash keep the tables the old hand-written statements made, which differ from what the baseline creates (inline `UNIQUE` constraints instead of named unique indexes, text primary keys without `NOT NULL`, extra columns), so a migration must not assume an index or column only the baseline creates. `packages/server/test/fixtures/pre-squash-schema.sql` holds that shape, and `src/db/preSquashUpgrade.test.ts` boots it, a squashed install and an empty database through `initDatabase()` and checks the outbox ends identical on all three, and that the reaction tables end with their unique indexes and without repeated rows.
 Engine: SQLite via `better-sqlite3`
 IDs: Snowflake text, permissions: bigint decimal strings
 
@@ -35,12 +35,19 @@ IDs: Snowflake text, permissions: bigint decimal strings
 | showActivity | integer NOT NULL | 1 | Rich presence visibility |
 | federationRegistryUpdatedAt | integer | 0 | LWW timestamp for federation registry sync |
 | federationHealPending | integer | 0 | Instance-epoch self-healing: set when a replicated identity is flagged for re-heal after a peer reset |
-| federationHomeOrphaned | integer | 0 | Instance-epoch self-healing: **1 = DETACHED / sovereign local account** (its home instance was reset/lost), not "frozen." **Set** to 1 by `quarantineOrphanedAccounts` on every real account from a reset home incarnation (flag-only detach — no rename, no login block). **Read** by: the login flow (self-heal path permanently disabled for detached rows; local-password login still works — `auth.md` §4), `users.ts` (unlocks local profile edit + local change-password), the S2S binding guards (`findFederatedUser` tier-2, `profile_update`, identity-delete all exclude detached rows — `federation.md`), and the `GET /api/federation/reset-events` admin surface. Cleared only by `tombstoneUser` (deletion). Detach spec §3/§4 |
+| federationHomeOrphaned | integer | 0 | Instance-epoch self-healing: **1 = DETACHED / sovereign local account** (its home instance was reset/lost), not "frozen." **Set** to 1 by `quarantineOrphanedAccounts` on every real account from a reset home incarnation (flag-only detach — no rename, no login block). **Read** by: the login flow (self-heal path permanently disabled for detached rows; local-password login still works — `auth.md` §4), `users.ts` (unlocks local profile edit + local change-password), the S2S binding guards (`findFederatedUser` tier-2, `profile_update`, identity-delete all exclude detached rows — `federation.md`), and the `GET /api/federation/reset-events` admin surface. Cleared by `tombstoneUser` (deletion) and by re-attach. Detach spec §3/§4. Since #310 a detached row is homed here: `home_instance`/`home_user_id` are NULL and its former identity is in the two columns below |
+| detachedHomeInstance | text | | The home instance a detached account was federated from (`federation.md`, "Detached accounts are homed here"). Detaching (`rehomeDetachedAccount`) moves `home_instance` here and clears it, so the account presents itself to peers as one of this instance's users. Read by `resolveRelayActor` (a reference to the former identity resolves to the row), `resolveOrCreateReplicatedUser`'s deleted-identity check, the sync page's friend relevance, re-attach (the home it re-attaches to), the reset-cleanup listing (`detachedHomeInstanceMatch`) and the self-view (`User.detachedHomeInstance`). Cleared by re-attach; kept on a tombstone. Migration `0025_detached_identity` |
+| detachedHomeUserId | text | | The account's id on its former home, moved from `home_user_id` with `detachedHomeInstance`. Same readers. |
 | lastActiveDay | text | | UTC day (`YYYY-MM-DD`) of the last authenticated WebSocket activity; written at most once per day. Used by telemetry to count active accounts. |
 | lastClient | text | | `'web'`, `'desktop'` or `'mobile'`, taken from the client's WebSocket auth message. |
 | createdAt | integer NOT NULL | | Epoch ms |
 
 **Index:** `idx_users_home_user_id` on `(home_user_id)` (migration `0020_users_home_user_id_index`). Every federated identity lookup (`resolveRelayActor`, `resolveLocalUser`, the relay's participant, author and mention resolution) filters on `home_user_id` first. It is a single-column index on purpose: a home user id matches about one row, and most pair lookups compare `home_instance` normalized (scheme stripped, lowercased) or in code, where a `(home_user_id, home_instance)` composite's second column cannot be used.
+
+**Index:** `idx_users_detached_home_user_id` on `(detached_home_user_id)` (migration `0025_detached_identity`). `resolveRelayActor` matches a detached account's former identity in the same query as `home_user_id`.
+
+#### Detached identity (0025)
+Adds `detached_home_instance`, `detached_home_user_id` and their index. The data rewrite for accounts detached before it is not in the SQL: it needs this instance's origin (group DM owner identity) and the 1-on-1 key re-derivation, so `initDatabase` runs `rehomeDetachedAccountsOnBoot` after the migrations (idempotent; a pre-change snapshot is taken only when a row qualifies).
 
 ### spaces
 | Column | Type | Default | Notes |
@@ -51,6 +58,7 @@ IDs: Snowflake text, permissions: bigint decimal strings
 | banner | text | | Upload filename |
 | avatarColor | text | | Hex color |
 | ownerId | text NOT NULL | | FK → users.id |
+| ownerTitle | text | | The owner title: the heading over the owner's group in the member list, set by the owner alone (migration `0030_space_owner_title`). Null shows the translated default ("Owner"). Stored as `normalizeOwnerTitle` returns it. Cleared when ownership is transferred. See [spaces.md](spaces.md), "Owner title". |
 | inviteCode | text UNIQUE | | |
 | visibility | text | `'private'` | public/request/private |
 | description | text | | |
@@ -94,9 +102,14 @@ PK: (spaceId, userId)
 | channelId | text NOT NULL | FK → channels.id CASCADE |
 | userId | text NOT NULL | FK → users.id |
 | replyToId | text | FK → messages.id SET NULL |
-| content | text | |
+| content | text | For a system row, JSON (`channelSystemEvents.ts`) |
+| type | text NOT NULL, default `'user'` | `user` (a member wrote it) or `system` (the instance wrote it; a poke is the only one so far, websocket.md "Channel pokes"). Migration `0029_persistent_channel_pokes` |
 | editedAt | integer | |
 | createdAt | integer NOT NULL | |
+
+A system row's `userId` is the member who acted (the poker). `userWrittenMessages()` in `db/userWrittenMessages.ts` is the one condition for "a message a member wrote": the unread counts, the last message id in `ready`, channel search and the reply target check all take it, so a system row is never unread, never found by a search and never replied to.
+
+Indexes: `idx_messages_channel_id` (channelId); `idx_messages_user_id` (userId); `idx_messages_channel_unread` (channelId, `CAST(id AS INTEGER)`, userId, type), created by migration `0027_unread_count_indexes` and given `type` by `0029_persistent_channel_pokes`. The last one serves the unread counts (websocket.md, "Unread counts"): the messages members wrote in a channel after a read cursor, compared as numbers, without reading the table. SQLite uses an expression index only when the query spells the expression the same way, type name case included, so the count writes `CAST(... AS INTEGER)`; the index names the column unqualified because SQLite refuses a qualified one there.
 
 ### attachments
 | Column | Type | Default | Notes |
@@ -149,6 +162,8 @@ PK: id
 | emoji | text NOT NULL | |
 | createdAt | integer NOT NULL | |
 
+Indexes: `idx_reactions_message_id` (messageId); `idx_reactions_message_user_emoji` UNIQUE (messageId, userId, emoji), one reaction per user and emoji on a message. Writers insert with `ON CONFLICT DO NOTHING` and treat no row written as "already reacted" (`reaction_add` in `ws/events.ts`). See "Reaction uniqueness (0024)" below.
+
 ---
 
 ## DM Tables
@@ -191,6 +206,8 @@ PK: (dmChannelId, userId)
 | encryptionVersion | integer | 0 | |
 | createdAt | integer NOT NULL | | |
 
+Indexes: `idx_dm_messages_dm_channel_id` (dmChannelId); `idx_dm_messages_user_id` (userId); `idx_dm_messages_source_unique` UNIQUE (sourceInstance, sourceMessageId) where sourceInstance is set; `idx_dm_messages_channel_unread` (dmChannelId, `CAST(id AS INTEGER)`, userId), migration `0027_unread_count_indexes`, as `idx_messages_channel_unread` above.
+
 ### dm_reactions
 PK: id
 | Column | Type | Notes |
@@ -200,6 +217,11 @@ PK: id
 | userId | text NOT NULL | FK → users.id CASCADE |
 | emoji | text NOT NULL | |
 | createdAt | integer NOT NULL | |
+
+Indexes: `idx_dm_reactions_dm_message_id` (dmMessageId); `idx_dm_reactions_message_user_emoji` UNIQUE (dmMessageId, userId, emoji). Both writers, the local `reaction_add` and the relayed one (`processReactionAddEvent`, live delivery and the catch-up pull alike), insert with `ON CONFLICT DO NOTHING`; a relayed add that writes nothing is accepted as already held.
+
+#### Reaction uniqueness (0024)
+The squashed baseline (0000) created both reaction tables without a unique key; only pre-squash installs had one, as an inline `UNIQUE(message_id, user_id, emoji)` / `UNIQUE(dm_message_id, user_id, emoji)` from the old hand-written statements. On installs created after the squash the same user's reaction could be stored several times (#393). Migration `0024_reaction_unique` first deletes the repeats, keeping per key the row with the lowest `created_at` and, of equally early rows, the lowest `rowid` (any one of equal rows would do; the rowid only makes the choice definite), then creates the two named unique indexes. On a pre-squash install there are no repeats, and the named index is created beside the inline constraint (`sqlite_autoindex_*`), which stays.
 
 ---
 
@@ -255,6 +277,11 @@ PK: (channelId, targetType, targetId)
 PK: (categoryId, targetType, targetId)
 Same structure as channel_overrides, with categoryId FK → channel_categories.id CASCADE.
 
+Neither override table nor `roles` stores an edit version. The version a
+concurrent-edit check compares (`overrideVersion`, `rolePermissionsVersion`)
+is derived from `allow`/`deny` and `permissions` themselves, so it needs no
+column and no migration (permissions.md, "Concurrent edits").
+
 ---
 
 ## State Tables
@@ -267,6 +294,25 @@ PK: (userId, channelId)
 | channelId | text NOT NULL | Channel or DM channel ID |
 | lastReadMessageId | text NOT NULL | |
 | updatedAt | integer NOT NULL | |
+
+### notification_settings
+A user's notification setting for a space (`channelId` NULL) or for one channel of it (migration `0026_notification_settings`). Stored on the instance that hosts the space and keyed by the user's row **on this instance**: for a federated member that is their account here, never a home id. Read and written only through `routes/notificationSettings.ts` (api.md, "Notification settings"); what the values do is in sounds.md ("Notification settings").
+
+| Column | Type | Default | Notes |
+|--------|------|---------|-------|
+| userId | text NOT NULL | | FK → users.id CASCADE |
+| spaceId | text NOT NULL | | FK → spaces.id CASCADE. Set on channel rows too, so a space's rows go with it |
+| channelId | text | | FK → channels.id CASCADE. NULL = the space-wide row |
+| level | text | | `all` / `mentions` / `nothing`; NULL = not chosen (a channel inherits its space, a space uses `mentions`) |
+| muted | integer NOT NULL | 0 | 1 = muted |
+| mutedUntil | integer | | Epoch ms (server clock) a timed mute ends; NULL with `muted = 1` = until lifted. An ended mute is read as none and dropped at the next write |
+| suppressEveryone | integer NOT NULL | 0 | 1 = `@everyone` and `@here` do not alert on `mentions` (space rows only; migration `0028_mass_mention_preferences`) |
+| suppressRoles | integer NOT NULL | 0 | 1 = role mentions do not alert on `mentions` (space rows only; migration `0028_mass_mention_preferences`) |
+| updatedAt | integer NOT NULL | | Server write time, strictly increasing per row; clients merge last-write-wins on it |
+
+**Indexes:** `idx_notification_settings_space_row` UNIQUE `(user_id, space_id) WHERE channel_id IS NULL` and `idx_notification_settings_channel_row` UNIQUE `(user_id, channel_id) WHERE channel_id IS NOT NULL`: one space row and one row per channel, per user. Two partial indexes because a plain unique index never treats two NULL `channel_id`s as equal. No primary key: the rowid is the row's identity.
+
+A row with nothing chosen (level NULL, not muted and neither suppress flag set) is deleted rather than stored. The suppress flags are written only on the space row: the channel route refuses them, so a channel row always holds 0. Rows are kept when the user leaves the space or loses sight of the channel (the list route filters them out), so they apply again on rejoin.
 
 ### space_folders
 | Column | Type | Default | Notes |
@@ -419,21 +465,21 @@ The user INSERT, `usedCount` increment, and redemption row INSERT all run in a s
 | origin | text NOT NULL UNIQUE | | `https://domain.tld` |
 | instanceName | text | | |
 | hmacSecret | text NOT NULL | | 256-bit hex |
-| status | text NOT NULL | `'active'` | active/pending/awaiting_approval/unreachable/revoked/rejected/needs_attention |
-| initiatedBy | text NOT NULL | `'auto'` | Provenance — who caused this row to exist. `'admin'` = `POST /peer/initiate` or an approve/deny decision in `routes/federation/handlers/approvals.ts`; `'auto'` = local traffic with no admin decision (the outbox placeholder, `ensurePeered` auto-peering); `'remote'` = created by an inbound `/peer/accept`. Only `'admin'` counts as admin authorization at the two peering gates. Rows predating migration `0012_absurd_shiver_man` read as `'auto'` (fail closed). See [federation.md → Peer-row provenance](federation.md#peer-row-provenance). |
+| status | text NOT NULL | `'active'` | active/pending/awaiting_approval/unreachable/revoked/rejected/needs_attention. Written only by `utils/federationPeerState.ts`; states and transitions in [federation.md → Peer state](federation.md#peer-state). |
+| initiatedBy | text NOT NULL | `'auto'` | Provenance: who caused this row to exist. `'admin'` = `POST /peer/initiate`, an approval, or an inbound deny that inserted the row; `'auto'` = local traffic with no admin decision (the outbox placeholder, `ensurePeered` auto-peering); `'remote'` = created by an inbound `/peer/accept`. Only `'admin'` counts as admin authorization at the two peering gates. Rows predating migration `0012_absurd_shiver_man` read as `'auto'` (fail closed). See [federation.md → Peer-row provenance](federation.md#peer-row-provenance). |
 | lastSeenAt | integer | | |
 | lastFailureAt | integer | | |
 | consecutiveFailures | integer NOT NULL | 0 | >=10 → unreachable (network/5xx failures). Counter — never null. |
 | consecutiveAuthFailures | integer NOT NULL | 0 | >=5 → needs_attention. Tracked separately from `consecutiveFailures` (network) because auth (401/403) and network failures have different resolution paths. |
-| lastProbeAt | integer | | Epoch ms of the last reachability probe in the current `unreachable` episode. `NULL` = probe immediately due (set on entry into `unreachable` and on recovery). Paces `processRecoveryTick`. |
-| probeAttempts | integer NOT NULL | 0 | Consecutive failed recovery probes; indexes `RECOVERY_BACKOFF_MS`. Reset to 0 on recovery and on entry into `unreachable`. Counter — never null. Migration `0006_spicy_scourge`. |
+| lastProbeAt | integer | | Epoch ms when the last paced attempt started: a reachability probe for an `unreachable` row, a handshake for a `pending` one. `NULL` = next attempt immediately due (set on entry into `pending`, `unreachable` and `active`). |
+| probeAttempts | integer NOT NULL | 0 | Failed paced attempts since the pacing began; after n failures the wait is `RECOVERY_BACKOFF_MS[n - 1]`. Reset to 0 on entry into `pending`, `unreachable` and `active`. Counter, never null. Migration `0006_spicy_scourge`. |
 | lastSyncedAt | integer | 0 | |
 | remoteMaxUploadSize | integer | | Bytes, from peer |
 | createdAt | integer NOT NULL | | |
 | approvalToken | text | | Single-use 64-hex-char token stored when this row is in `awaiting_approval` (received from remote's 202 response). Verified against the inbound `/peer/accept` `approvalToken` field before promoting to `active`. Cleared (`NULL`) on promotion. See [federation.md → Approval Token Verification](federation.md#approval-token-verification). |
 | peerInstanceId | text | | Instance-epoch self-healing: the peer's persistent instance epoch (UUID) as last confirmed. `NULL` until first observed. Compared against `observedPeerInstanceId` to detect a factory-reset peer on the same origin. |
 | observedPeerInstanceId | text | | Instance-epoch self-healing: the instance epoch most recently reported by the peer. A mismatch with `peerInstanceId` signals the peer was reset. |
-| needsAttentionReason | text | | Instance-epoch self-healing: machine-readable reason a peer was moved to `needs_attention` (e.g. epoch reset detected), for admin surfacing. `NULL` when healthy. |
+| statusReason | text | | Why the row is in its status: for `needs_attention` one of `auth_failures`, `peer_reset_detected`, `repeer_incomplete`; for `rejected` one of `denied_by_local_admin`, `denied_by_remote`, `revoked_by_remote`, `expired_on_remote`, `stale_peering_on_remote`. `NULL` for every other status, and for `rejected` rows from before the column was renamed (which keep their old behaviour). Renamed from `needs_attention_reason` by migration `0023_peer_status_reason`, which also clears the value on every row that is not `needs_attention` (before it, a row our admin denied or revoked out of `needs_attention` kept its old reason, which would now read as the remote's refusal) and sets `auth_failures` on `needs_attention` rows without a reason (the auth-failure threshold was the only path that wrote none). |
 
 ### federation_reset_events
 Instance-epoch self-healing ledger. One row per origin recording a detected federated-peer reset (same origin, new instance epoch). Upserted when a live epoch change is observed; `resolvedAt` is stamped once stale replicated identities from the dead epoch are healed.

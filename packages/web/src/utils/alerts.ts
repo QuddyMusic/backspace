@@ -1,11 +1,12 @@
 import type { ChosenUserStatus } from '@backspace/shared';
-import { selectMyChosenStatus, useAuthStore } from '../stores/authStore';
+import { getMyUserIdForOrigin, isMe, selectMyChosenStatus, useAuthStore } from '../stores/authStore';
 import type { RealtimeMessageEvent } from '../stores/chatStore';
-import { getChannelOrigin, getMyUserIdForOrigin, isDmChannel } from '../stores/spaceStore';
+import { getChannelOrigin, isDmChannel, selectMyRoleIdsInChannel, useSpaceStore } from '../stores/spaceStore';
 import { AudioManager } from '../audio/AudioManager';
 import { sendNotification, type NotificationOptions } from '../platform/notifications';
 import { isAlertAllowed, isMessageAlert, type AlertKind } from './notificationFilters';
 import { getSfxVolume } from './sfx';
+import { getChannelNotificationPolicy } from '../hooks/useNotificationSettings';
 
 /**
  * The only way the client raises an alert (see `AlertKind`). Both outputs, the
@@ -34,40 +35,49 @@ export function alertsAllowed(kind: AlertKind): boolean {
   return isAlertAllowed(kind, getSelfStatus());
 }
 
+/** Never read (DMs alert whatever a policy says); keeps the filter's input total. */
+const DM_POLICY = { level: 'all', muted: false } as const;
+
 /**
  * Whether a message that just arrived is a `message` alert: the one predicate
  * behind both of that kind's outputs, `message.ogg` (SoundController) and the
  * OS notification (NotificationController). Do Not Disturb is applied after
  * it, by `playAlertSound` and `showAlertNotification`.
  *
- * The user's ids are every id they have for this message: the home account's
- * id, its `homeUserId`, and the id they hold on the channel's instance. On a
- * remote instance's channel, messages the user wrote carry that instance's id
- * for them, and mentions of them are written with it.
+ * Who wrote it is `isMe` of its author as the channel's instance issued the
+ * row. A mention of the user is `<@id>` with the id that instance gave them
+ * (`getMyUserIdForOrigin`): on a remote instance's channel that is not the
+ * home account's id.
  *
  * The channel is the event's `channelId`, the id `addRealtimeMessage` filed the
  * message under, which is authoritative for space and DM messages alike.
  *
+ * A space channel's notification settings (level and mute, inherited from
+ * its space) are read here, at alert time, from the instance that hosts the
+ * space (`getChannelNotificationPolicy`), so the sound and the notification
+ * follow the same settings and a mute that just ended applies at once.
+ *
  * `everyMessage` is the "Play sound for every message" preference. Only the
- * sound passes it; the notification stays on DMs and mentions.
+ * sound passes it; it widens a channel on `mentions` and never one the user
+ * set to `nothing` or muted.
  */
 export function messageAlertsUser(
   event: RealtimeMessageEvent,
   options: { everyMessage?: boolean } = {},
 ): boolean {
   if (!event.channelId) return false;
-  const user = useAuthStore.getState().user;
-  const myIds = new Set<string>();
-  if (user?.id) myIds.add(user.id);
-  if (user?.homeUserId) myIds.add(user.homeUserId);
-  const originId = getMyUserIdForOrigin(getChannelOrigin(event.channelId));
-  if (originId) myIds.add(originId);
+  const origin = getChannelOrigin(event.channelId);
+  const isDm = isDmChannel(event.channelId);
   return isMessageAlert({
-    authorUserId: event.message.userId,
-    myIds,
-    isDmChannel: isDmChannel(event.channelId),
+    authoredBySelf: isMe(event.message.user ?? { id: event.message.userId }, origin),
+    myId: getMyUserIdForOrigin(origin),
+    isDmChannel: isDm,
+    myRoleIds: selectMyRoleIdsInChannel(useSpaceStore.getState(), event.channelId),
     content: event.message.content,
+    mentionEveryone: event.message.mentionEveryone,
+    mentionRoleIds: event.message.mentionRoleIds,
     allChannels: options.everyMessage === true,
+    notification: isDm ? DM_POLICY : getChannelNotificationPolicy(event.channelId),
   });
 }
 

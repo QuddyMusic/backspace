@@ -1,8 +1,9 @@
 import { create } from 'zustand';
 import type { Space, Channel, ChannelCategory, MemberWithUser, SpaceWithChannelsAndMembers, Role, SpaceFolder, SpaceLayoutItem, DmChannel, DmMessageWithUser, User, UpdateSpaceRequest, CreateSpaceRequest, UpdateChannelRequest } from '@backspace/shared';
-import { api, BackspaceApiClient } from '../api/client';
+import { api, BackspaceApiClient, HttpError } from '../api/client';
+import { JoinRequestRequiredError } from '../utils/joinErrors';
 import { resolveAssetUrl, normalizeUserAssets } from '../utils/assetUrls';
-import { isSelf, canonicalUserKey, isDeliveryFromHome, activityKey, type PresenceSubject } from '../utils/identity';
+import { userKey, isIssuedByHome, withUserUpdate, type IdentityFields, type PresenceSubject } from '../utils/identity';
 import { sortDmChannels } from '../utils/dmSorting';
 import { locateDmChannel } from '../utils/dmChannelLookup';
 import { deriveMissingOneOnOneKeys, type PeerDmChannel } from '../utils/dmConversationKey';
@@ -40,17 +41,15 @@ import {
 import {
   getApiForOrigin,
   resolveOriginFromHostname,
-  resolveUserIdFromInstances,
-  getCachedUserIdForOrigin,
-  clearMyUserIdCache,
 } from '../utils/crossStoreResolvers';
-import { useAuthStore } from './authStore';
+import { useAuthStore, getMyUserIdForOrigin, isMe } from './authStore';
 import { useChatStore } from './chatStore';
+import { useNotificationSettingsStore } from './notificationSettingsStore';
 
 // ─── Instance-aware types ─────────────────────────────────────────────────────
 
 /** Server augmented with instance origin tracking (client-only, not in shared types). */
-export type TaggedSpace = Space & { _instanceOrigin: string };
+export type TaggedSpace = Space & { _instanceOrigin: string; myRoleIds?: string[] };
 
 // ─── Error types ─────────────────────────────────────────────────────────────
 
@@ -62,12 +61,52 @@ export class NotConnectedError extends Error {
   }
 }
 
+/**
+ * The origin a join or a join request is sent to: `''` for the page's own
+ * instance (an explicit `window.location.origin` included, as inviteParser
+ * normalizes at the URL boundary), else the remote origin, which must hold a
+ * connected session. Throws `NotConnectedError` when it does not, so the
+ * caller can run the connect step and try again.
+ */
+export async function connectedJoinOrigin(origin?: string): Promise<string> {
+  if (!origin) return '';
+  if (typeof window !== 'undefined' && origin === window.location.origin) return '';
+  // Dynamic import: instanceStore imports this module.
+  const { useInstanceStore } = await import('./instanceStore');
+  const connected = useInstanceStore.getState().instances.some(
+    (i) => i.origin === origin && i.status === 'connected',
+  );
+  if (!connected) throw new NotConnectedError(origin);
+  return origin;
+}
+
+/**
+ * The `JoinRequestRequiredError` for a join that `origin` refused with
+ * `join_request_required`, or null for any other failure. The space id comes
+ * from the refusal's `details.spaceId`; an instance up to 1.9.0 does not send
+ * it, so the invite preview is asked instead, and when that fails too the
+ * original refusal stands.
+ */
+async function joinRequestRequired(err: unknown, inviteCode: string, origin: string): Promise<JoinRequestRequiredError | null> {
+  if (!(err instanceof HttpError) || err.code !== 'join_request_required') return null;
+  const fromDetails = err.details?.spaceId;
+  if (typeof fromDetails === 'string' && fromDetails.length > 0) {
+    return new JoinRequestRequiredError(err, fromDetails, origin);
+  }
+  try {
+    const preview = await (origin ? getApiForOrigin(origin) : api).spaces.invitePreview(inviteCode);
+    return new JoinRequestRequiredError(err, preview.spaceId, origin);
+  } catch {
+    return null;
+  }
+}
+
 // ─── User-view cache types ────────────────────────────────────────────────────
 
 /**
  * A single cached view of a user, populated from one delivering origin.
  *
- * The userViews cache stores the best-known view of each canonical identity
+ * The userViews cache stores the best-known view of each person (`userKey`)
  * across every connected instance, regardless of whether the carrying channel
  * survived dedup. Mirrors `dmAlternatives` philosophy: information from
  * skipped ready payloads is still load-bearing for rendering.
@@ -319,7 +358,7 @@ interface SpaceState {
    */
   dmAlternatives: ReadonlyMap<string, ReadonlyMap<string, string>>;
   /**
-   * canonicalUserKey → best-known view of that user. Populated from every wire
+   * userKey → best-known view of that person. Populated from every wire
    * surface that delivers a User object (DM members, message authors, friends,
    * space members, profile updates). Pruned only on full instance removal
    * (`removeInstanceSpaces`) and `reset`, never on transient WS disconnect —
@@ -433,10 +472,15 @@ interface SpaceState {
   /**
    * Set the status of the person `subject` names, as `origin` delivered it,
    * wherever the client shows them: roster rows and cached views, matched by
-   * `activityKey` (their home identity), never by a raw row id.
+   * `userKey` (their home identity), never by a raw row id.
    */
   updateMemberPresence: (subject: PresenceSubject, origin: string, status: string) => void;
-  updateUserEverywhere: (user: User) => void;
+  /**
+   * Apply a `user_updated` row issued by `origin` to the roster and DM member
+   * rows it is about (`withUserUpdate`): that instance's row with its id, and
+   * other instances' rows of the same person when it is their home's row.
+   */
+  updateUserEverywhere: (user: User, origin: string) => void;
   /** A member joined `spaceId`, the open space. Also replayed onto an in-flight detail fetch's roster. */
   addMember: (spaceId: string, member: MemberWithUser) => void;
   /** A member left `spaceId`, the open space. Also replayed onto an in-flight detail fetch's roster. */
@@ -457,7 +501,11 @@ interface SpaceState {
   addSpaceFromReady: (origin: string, space: SpaceWithChannelsAndMembers) => void;
   removeInstanceSpaces: (origin: string) => void;
   transferOwnership: (spaceId: string, newOwnerId: string) => Promise<void>;
-  findExistingDmForUser: (targetUser: { id: string; homeUserId?: string | null }) => { dm: DmChannel; origin: string } | null;
+  /**
+   * The open 1-on-1 DM with the person `target` names (as `targetOrigin`
+   * issued it), matched by `userKey`, or null.
+   */
+  findExistingDmForUser: (target: IdentityFields, targetOrigin: string) => { dm: DmChannel; origin: string } | null;
   reset: () => void;
 }
 
@@ -515,7 +563,6 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   _layoutUpdatedAt: 0,
 
   reset: () => {
-    clearMyUserIdCache();
     set({
       spaces: [],
       currentSpaceId: null,
@@ -620,8 +667,8 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   },
 
   upsertUserView: (user, deliveringOrigin) => set((state) => {
-    const key = canonicalUserKey(user);
-    const incomingIsHome = isDeliveryFromHome(user, deliveringOrigin);
+    const key = userKey(user, deliveringOrigin);
+    const incomingIsHome = isIssuedByHome(user, deliveringOrigin);
     const existing = state.userViews.get(key);
 
     // Stub view never overwrites a home view.
@@ -766,6 +813,8 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
             ...channelTableFields(state, replaced.tables),
             categoryOriginMap: withCategoryOrigins(state.categoryOriginMap, categories, origin),
             spacePermissions,
+            spaces: state.spaces.map(s => s.id === spaceId && s._instanceOrigin === origin
+              ? { ...s, myRoleIds: detail.members.find(m => m.userId === getMyUserIdForOrigin(origin))?.roles.map(r => r.id) ?? [] } : s),
             loadingSpaceId: endLoading(state),
           };
           if (state.currentSpaceId !== spaceId) return fields;
@@ -865,35 +914,20 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   },
 
   joinByCode: async (inviteCode: string, origin?: string) => {
-    // Normalize: an explicit home origin is equivalent to undefined (local).
-    // Mirrors inviteParser's same normalization at the URL boundary.
-    if (origin && typeof window !== 'undefined' && origin === window.location.origin) {
-      origin = undefined;
+    const target = await connectedJoinOrigin(origin);
+    let space: Space;
+    try {
+      space = await (target ? getApiForOrigin(target) : api).spaces.joinByCode(inviteCode);
+    } catch (err) {
+      throw (await joinRequestRequired(err, inviteCode, target)) ?? err;
     }
-    if (origin) {
-      // Remote instance — verify connectivity via dynamic import (avoids circular dep)
-      const { useInstanceStore } = await import('./instanceStore');
-      const connected = useInstanceStore.getState().instances.some(
-        (i) => i.origin === origin && i.status === 'connected',
-      );
-      if (!connected) throw new NotConnectedError(origin);
-
-      const remoteApi = getApiForOrigin(origin);
-      const space =await remoteApi.spaces.joinByCode(inviteCode);
-      if (space.icon) space.icon = resolveAssetUrl(space.icon, origin) ?? space.icon;
-      if (space.banner) space.banner = resolveAssetUrl(space.banner, origin) ?? space.banner;
-      set((state) => {
-        if (state.spaces.find(s => s.id === space.id)) return state;
-        return { spaces: [...state.spaces, { ...space, _instanceOrigin: origin } as TaggedSpace] };
-      });
-      return space;
+    if (target) {
+      if (space.icon) space.icon = resolveAssetUrl(space.icon, target) ?? space.icon;
+      if (space.banner) space.banner = resolveAssetUrl(space.banner, target) ?? space.banner;
     }
-
-    // Home instance
-    const space =await api.spaces.joinByCode(inviteCode);
     set((state) => {
-      if (state.spaces.find(s => s.id === space.id)) return state;
-      return { spaces: [...state.spaces, { ...space, _instanceOrigin: '' } as TaggedSpace] };
+      if (state.spaces.find(s => s.id === space.id && s._instanceOrigin === target)) return state;
+      return { spaces: [...state.spaces, { ...space, _instanceOrigin: target } as TaggedSpace] };
     });
     return space;
   },
@@ -1076,18 +1110,18 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
   },
 
   updateMemberPresence: (subject: PresenceSubject, origin: string, status: string) => {
-    const key = activityKey(subject, origin);
+    const key = userKey(subject, origin);
     set((state) => {
       const typedStatus = status as 'online' | 'idle' | 'dnd' | 'offline';
       // Mirror the status into the userViews cache so any component reading via
       // useCanonicalUserView (e.g. the FriendItem avatar dot) re-renders with
-      // fresh status — not just spaceStore.members which only feeds space UIs.
-      // Each entry is keyed as the origin that delivered it saw the user.
+      // fresh status, not just spaceStore.members which only feeds space UIs.
+      // The cache is keyed by the same `userKey`.
+      const entry = state.userViews.get(key);
       let changedViews: Map<string, UserViewEntry> | null = null;
-      for (const [viewKey, entry] of state.userViews) {
-        if (activityKey(entry.user, entry.deliveredBy) !== key) continue;
-        changedViews ??= new Map(state.userViews);
-        changedViews.set(viewKey, { ...entry, user: { ...entry.user, status: typedStatus } });
+      if (entry) {
+        changedViews = new Map(state.userViews);
+        changedViews.set(key, { ...entry, user: { ...entry.user, status: typedStatus } });
       }
       const nextUserViews = changedViews ?? state.userViews;
 
@@ -1104,24 +1138,35 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
 
       return {
         members: state.members.map(m =>
-          activityKey(m.user, spaceOriginOf(m.spaceId)) === key ? { ...m, user: { ...m.user, status: typedStatus } } : m
+          userKey(m.user, spaceOriginOf(m.spaceId)) === key ? { ...m, user: { ...m.user, status: typedStatus } } : m
         ),
         userViews: nextUserViews,
       };
     });
   },
 
-  updateUserEverywhere: (user: User) => {
-    set((state) => ({
-      members: state.members.map(m =>
-        m.userId === user.id ? { ...m, user: { ...m.user, ...user } } : m
-      ),
+  updateUserEverywhere: (user: User, origin: string) => {
+    set((state) => {
+      // A roster row is issued by its space's origin.
+      const spaceOrigins = new Map(state.spaces.map(s => [s.id, s._instanceOrigin ?? '']));
+      let changed = false;
+      const members = state.members.map(m => {
+        const updated = withUserUpdate(m.user, spaceOrigins.get(m.spaceId) ?? '', user, origin);
+        if (updated === m.user) return m;
+        changed = true;
+        return { ...m, user: updated };
+      });
+      return changed ? { members } : state;
+    });
+    commitDmOperation(patchEveryCopy(get().dmConversations, (dm, dmOrigin) => {
+      let changed = false;
+      const members = dm.members.map(m => {
+        const updated = withUserUpdate(m, dmOrigin, user, origin);
+        if (updated !== m) changed = true;
+        return updated;
+      });
+      return changed ? { ...dm, members } : dm;
     }));
-    commitDmOperation(patchEveryCopy(get().dmConversations, (dm) =>
-      dm.members.some(m => m.id === user.id)
-        ? { ...dm, members: dm.members.map(m => (m.id === user.id ? { ...m, ...user } : m)) }
-        : dm,
-    ));
   },
 
   addMember: (spaceId: string, member: MemberWithUser) => {
@@ -1184,12 +1229,15 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       banner: s.banner ?? null,
       avatarColor: s.avatarColor ?? null,
       ownerId: s.ownerId,
+      ownerTitle: s.ownerTitle,
       inviteCode: s.inviteCode,
       visibility: s.visibility ?? 'private' as const,
       directoryListed: s.directoryListed ?? false,
       description: s.description ?? null,
       createdAt: s.createdAt,
       _instanceOrigin: origin,
+      // Cache our membership for every space, not only the currently open roster.
+      myRoleIds: s.members?.find(m => m.userId === getMyUserIdForOrigin(origin))?.roles.map(r => r.id) ?? [],
     }));
 
     // Merge by origin: keep servers from other origins, replace all from this origin
@@ -1302,6 +1350,7 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
       banner: space.banner ?? null,
       avatarColor: space.avatarColor ?? null,
       ownerId: space.ownerId,
+      ownerTitle: space.ownerTitle,
       inviteCode: space.inviteCode,
       visibility: space.visibility,
       directoryListed: space.directoryListed ?? false,
@@ -1344,26 +1393,25 @@ export const useSpaceStore = create<SpaceState>((set, get) => ({
     }));
   },
 
-  findExistingDmForUser: (targetUser) => {
+  findExistingDmForUser: (target, targetOrigin) => {
     const { dmChannels, channelOriginMap } = get();
-    const me = useAuthStore.getState().user;
-    if (!me) return null;
-
-    const targetHomeId = targetUser.homeUserId || targetUser.id;
+    const targetKey = userKey(target, targetOrigin);
 
     for (const dm of dmChannels) {
       if (dm.members.length !== 2) continue;
-      const other = dm.members.find(m => !isSelf(m, me));
-      if (!other) continue;
-      const otherHomeId = other.homeUserId || other.id;
-      if (otherHomeId === targetHomeId) {
-        return { dm, origin: channelOriginMap.get(dm.id) || '' };
-      }
+      const origin = channelOriginMap.get(dm.id) || '';
+      const other = dm.members.find(m => !isMe(m, origin));
+      if (other && userKey(other, origin) === targetKey) return { dm, origin };
     }
     return null;
   },
 
   removeInstanceSpaces: (origin: string) => {
+    // The instance is gone: the id its `ready` gave the user says nothing now,
+    // and neither do the notification settings it stored.
+    useAuthStore.getState().forgetMyRow(origin);
+    useNotificationSettingsStore.getState().forgetOrigin(origin);
+
     // Collect channel IDs before set() for chatStore cleanup
     const currentState = get();
     const channelIdsToRemove = new Set<string>();
@@ -1475,6 +1523,21 @@ export function useIsDmChannel(channelId: string): boolean | undefined {
  * Returns the instance origin for a given channel ID.
  * '' = home instance, 'https://...' = remote instance.
  */
+/**
+ * The viewer's role ids in the space a channel belongs to, as the space's own
+ * instance lists them (`TaggedSpace.myRoleIds`). Undefined for a DM, and for
+ * a space whose roster has not been read yet.
+ */
+export function selectMyRoleIdsInChannel(
+  state: Pick<SpaceState, 'spaces' | 'channelToSpaceMap' | 'channelOriginMap'>,
+  channelId: string,
+): readonly string[] | undefined {
+  const spaceId = state.channelToSpaceMap.get(channelId);
+  if (spaceId === undefined) return undefined;
+  const origin = state.channelOriginMap.get(channelId) ?? '';
+  return state.spaces.find((s) => s.id === spaceId && (s._instanceOrigin ?? '') === origin)?.myRoleIds;
+}
+
 export function getChannelOrigin(channelId: string): string {
   return useSpaceStore.getState().channelOriginMap.get(channelId) ?? '';
 }
@@ -1533,9 +1596,8 @@ export function dmCopyOnOrigin(channelId: string, origin: string): DmChannel | n
 }
 
 // ─── Cross-store resolvers (federation) ───────────────────────────────────────
-// The resolver/setter pairs and the WS-populated user-ID cache live in
-// `utils/crossStoreResolvers.ts` — a neutral module with no store imports —
-// to break a TDZ cycle: instanceStore registers these at top-level load, but
+// The resolver/setter pairs live in `utils/crossStoreResolvers.ts` — a
+// neutral module with no store imports — to break a TDZ cycle: instanceStore registers these at top-level load, but
 // a spaceStore-rooted import chain leaves spaceStore mid-load when that code
 // runs. Re-exported here for backward compatibility with existing import
 // sites. See the header comment in crossStoreResolvers.ts for details.
@@ -1543,21 +1605,9 @@ export {
   setApiForOriginResolver,
   getApiForOrigin,
   setOriginFromHostnameResolver,
-  setUserIdForOriginResolver,
-  setMyUserIdForOrigin,
   setTokenForOriginResolver,
   getTokenForOrigin,
 } from '../utils/crossStoreResolvers';
-
-/**
- * Returns the instance origin for a federated user based on their homeInstance.
- * '' = home/local user, 'https://...' = remote instance.
- */
-export function resolveUserOrigin(user: { homeInstance?: string | null }): string {
-  const host = user.homeInstance;
-  if (!host || host === window.location.host) return '';
-  return resolveOriginFromHostname(host);
-}
 
 /**
  * Returns the origin that is authoritative for this user's space layout.
@@ -1570,16 +1620,5 @@ export function getLayoutHomeOrigin(): string {
   return resolveOriginFromHostname(user.homeInstance);
 }
 
-/**
- * Returns the local user's ID on a given instance origin.
- * '' or falsy = home instance (returns authStore user ID).
- * 'https://...' = remote instance (returns the federated user ID on that instance).
- */
-export function getMyUserIdForOrigin(origin: string): string | undefined {
-  if (!origin) return useAuthStore.getState().user?.id;
-  // Direct cache (populated from WS ready) takes priority — always correct
-  const cached = getCachedUserIdForOrigin(origin);
-  if (cached) return cached;
-  // Fallback to instanceStore resolver (may have placeholder user during connection)
-  return resolveUserIdFromInstances(origin);
-}
+/** The signed-in user's row id on an instance; defined with the record it reads (`authStore.myRowIds`). */
+export { getMyUserIdForOrigin };

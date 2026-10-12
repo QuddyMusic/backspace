@@ -49,7 +49,7 @@ const SCENES: readonly Scene[] = [
 const SPACE_ID = 'space-1';
 const SPACE: TaggedSpace = {
   id: SPACE_ID, name: 'Aether Drift', icon: null, banner: null, avatarColor: 'lavender',
-  ownerId: 'u-owner', inviteCode: null, visibility: 'public', directoryListed: false,
+  ownerTitle: null, ownerId: 'u-owner', inviteCode: null, visibility: 'public', directoryListed: false,
   description: '', createdAt: 1, _instanceOrigin: '',
 };
 
@@ -166,6 +166,7 @@ function Workbench({ scene }: { scene: Scene }) {
       {(scene === 'card' || scene === 'no-roles') && (
         <UserProfilePopout
           user={cardUser}
+          origin=""
           member={{ spaceId: SPACE_ID, userId: cardUser.id }}
           onClose={() => undefined}
           anchor={ANCHOR}

@@ -1,33 +1,104 @@
-import type { UserStatus } from '@backspace/shared';
+import type { ChannelNotificationPolicy, UserStatus } from '@backspace/shared';
 import { contentMentionsAny } from './mentionTokens';
+
+/** What a message mentions, as the reader needs it to decide whether it mentions them. */
+export interface MessageMentionInput {
+  /** The reader's id on the instance that issued the channel. */
+  myId: string | undefined;
+  /** The reader's role ids in the channel's space on that instance; absent for a DM or an unread roster. */
+  myRoleIds?: readonly string[];
+  content: string | null;
+  /**
+   * The mass mention fields the instance hosting the space stamped on the
+   * message (`Message.mentionEveryone`, `Message.mentionRoleIds`). Mass
+   * mentions are read from these alone, never from the text: that instance
+   * stamps only what it let an author with MENTION_EVERYONE send, and an
+   * instance from before the permission stamps nothing.
+   */
+  mentionEveryone?: boolean;
+  mentionRoleIds?: readonly string[];
+}
+
+/** How a message mentions its reader. Each is false when it does not. */
+export interface MessageMentions {
+  /** A `<@id>` token for the reader's id, outside code. */
+  direct: boolean;
+  /** A stamped `@everyone` or `@here`. */
+  everyone: boolean;
+  /** A stamped role the reader holds. */
+  role: boolean;
+}
+
+/**
+ * How a message mentions the reader: the rule the alert below and the
+ * message highlight (`Message.tsx`) share. Documented in
+ * docs/systems/sounds.md ("Which messages alert").
+ */
+export function messageMentions(input: MessageMentionInput): MessageMentions {
+  const direct = !!input.content && !!input.myId && contentMentionsAny(input.content, new Set([input.myId]));
+  const everyone = input.mentionEveryone === true;
+  const stamped = input.mentionRoleIds ?? [];
+  const role = stamped.length > 0 && (input.myRoleIds ?? []).some((id) => stamped.includes(id));
+  return { direct, everyone, role };
+}
+
+/** Whether a message mentions the reader in any way: what the highlight shows. */
+export function mentionsReader(input: MessageMentionInput): boolean {
+  const m = messageMentions(input);
+  return m.direct || m.everyone || m.role;
+}
 
 /**
  * The rule that decides whether a freshly-arrived chat message alerts the user.
- * Pure; the caller supplies every id the user has (see `messageAlertsUser` in
- * utils/alerts.ts, which both outputs of the `message` alert kind go through).
+ * Pure; the caller answers who wrote it, which id is the user's in that
+ * channel and what the channel's notification settings are (see
+ * `messageAlertsUser` in utils/alerts.ts, which both outputs of the `message`
+ * alert kind go through). Documented in docs/systems/sounds.md ("Which
+ * messages alert").
  *
- * Rule (Discord-default):
- *   - Never for a message authored by self (any id in myIds).
- *   - For a DM, or for content with a `<@${id}>` mention of any id in myIds
- *     outside code (the shared scan in utils/mentionTokens.ts).
- *   - When allChannels=true, for every other message too. Only the in-app
- *     cue passes it: the "Play sound for every message" preference is a sound
- *     setting and does not widen the OS notification.
+ * Rule:
+ *   - Never for a message the user wrote (`authoredBySelf`).
+ *   - Always for a DM. Notification settings belong to spaces and channels
+ *     and do not reach DMs.
+ *   - For a space channel, by its notification policy:
+ *     - muted (its own mute or its space's): never, mentions included;
+ *     - `nothing`: never, mentions included;
+ *     - `all`: every message;
+ *     - `mentions`: a message that mentions the user (`messageMentions`):
+ *       directly, by a stamped `@everyone` / `@here` unless the space's
+ *       `suppressEveryone` is on, or by a stamped role they hold unless
+ *       `suppressRoles` is on. The switches never hold back a direct mention.
+ *       With `allChannels`, every message: only the in-app cue passes it,
+ *       since the "Play sound for every message" preference is a sound
+ *       setting and does not widen the OS notification. It widens `mentions`
+ *       only, so it never overrides a channel the user set to `nothing` or
+ *       muted.
  */
-export interface MessageAlertInput {
-  authorUserId: string;
-  myIds: ReadonlySet<string>;
+export interface MessageAlertInput extends MessageMentionInput {
+  authoredBySelf: boolean;
   isDmChannel: boolean;
-  content: string | null;
   allChannels: boolean;
+  /** The channel's resolved settings (`resolveChannelNotificationPolicy`); not read for a DM. */
+  notification: Pick<ChannelNotificationPolicy, 'level' | 'muted'> & Partial<Pick<ChannelNotificationPolicy, 'suppressEveryone' | 'suppressRoles'>>;
 }
 
 export function isMessageAlert(input: MessageAlertInput): boolean {
-  if (input.myIds.has(input.authorUserId)) return false;
-  if (input.allChannels) return true;
+  if (input.authoredBySelf) return false;
   if (input.isDmChannel) return true;
-  if (!input.content) return false;
-  return contentMentionsAny(input.content, input.myIds);
+  if (input.notification.muted) return false;
+  switch (input.notification.level) {
+    case 'nothing':
+      return false;
+    case 'all':
+      return true;
+    case 'mentions': {
+      if (input.allChannels) return true;
+      const m = messageMentions(input);
+      return m.direct
+        || (m.everyone && input.notification.suppressEveryone !== true)
+        || (m.role && input.notification.suppressRoles !== true);
+    }
+  }
 }
 
 /**

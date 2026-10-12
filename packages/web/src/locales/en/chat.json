@@ -17,7 +17,8 @@
       "jump": "Jump to the original message"
     },
     "mention": {
-      "unknownUser": "Unknown User"
+      "unknownUser": "Unknown User",
+      "unknownRole": "Unknown Role"
     },
     "reactions": {
       "you": "You",
@@ -87,7 +88,6 @@
     "sendMessage": "Send message",
     "uploadFailed": "Failed to upload {{file}}: {{reason}}",
     "uploadFailedReason": "Upload failed",
-    "sendFailed": "Failed to send message",
     "typing": {
       "named_one": "{{names}} is typing",
       "named_other": "{{names}} are typing",
@@ -149,7 +149,13 @@
     "revoked": "Invite no longer valid",
     "join": "Join",
     "joining": "Joining…",
-    "joinFailed": "Failed to join"
+    "joinFailed": "Failed to join",
+    "askToJoin": "Ask to join",
+    "sendingRequest": "Sending…",
+    "requestSent": "Request sent",
+    "requestPending": "Request pending",
+    "requestNotice": "This space takes join requests. A manager approves each one.",
+    "requestReview": "A manager will review your request."
   },
   "notification": {
     "unknownSender": "Someone",
@@ -169,5 +175,10 @@
     "playNamed": "Play {{title}}",
     "playUnnamed": "Play video",
     "videoTitle": "Video"
+  },
+  "poke": {
+    "action": "Poke",
+    "received": "{{actor}} poked {{target}}",
+    "disconnected": "Disconnected. Poke was not sent."
   }
 }

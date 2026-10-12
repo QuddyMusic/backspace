@@ -15,14 +15,16 @@ import {
   TrackEvent,
 } from 'livekit-client';
 import { getApiForOrigin, getChannelOrigin, getMyUserIdForOrigin, useSpaceStore } from '../stores/spaceStore';
+import { homeIdentityOf } from '../utils/identity';
 import { refreshStreamHostLimits, useStreamHostLimits } from '../utils/streamHostLimits';
 import { wsSend } from './useWebSocket';
 import { useVoiceStore, type VoiceConnectionQuality } from '../stores/voiceStore';
-import { useAuthStore } from '../stores/authStore';
+import { myRowForOrigin } from '../stores/authStore';
 import { useUIStore } from '../stores/uiStore';
 import type { User } from '@backspace/shared';
 import { broadcastVoiceStatus, clearSpaceVoiceForDmCall } from '../utils/voice';
 import { consumeIntentionalCameraOff, markIntentionalCameraOff } from '../utils/voiceActions';
+import { dmCallChannelId, dmCallOrigin, dmCallRoomKey, voiceSessionOrigin } from '../utils/dmCall';
 import { AudioManager } from '../audio/AudioManager';
 import { SpeakingDetector } from '../audio/SpeakingDetector';
 import {
@@ -38,8 +40,9 @@ import {
   resolveNativeOverdrive,
   syncScreenShareAudio,
 } from '../utils/screenShare';
-import { isStreamRepublish, parseStreamWatch, streamWatchKey } from '../utils/streamWatchProtocol';
+import { encodeStreamWatch, parseShareSignal, parseStreamWatch, streamWatchFor, streamWatchKey } from '../utils/streamWatchProtocol';
 import { StreamRepublishTracker } from '../utils/streamRepublish';
+import { StreamResumeMemory, type RememberedStream } from '../utils/streamResume';
 import { getMediaStreamTrack } from '../utils/livekitInternals';
 import { deactivate as deactivateHwOverdrive } from '../utils/hwOverdrive';
 
@@ -50,6 +53,14 @@ let _activeRoom: Room | null = null;
  * room it belongs to, never the one that happens to be current.
  */
 const _republishTrackers = new WeakMap<Room, StreamRepublishTracker>();
+/** The shares each room's viewer may watch again after a full reconnect (`StreamResumeMemory`). */
+const _resumeMemories = new WeakMap<Room, StreamResumeMemory>();
+
+/** Forget a room's per-sharer stream state: the room is being left. */
+function clearRoomStreamState(room: Room): void {
+  _republishTrackers.get(room)?.clear();
+  _resumeMemories.get(room)?.clear();
+}
 /**
  * Serialises screen-share / camera track updates.
  *
@@ -182,9 +193,52 @@ function resolveParticipantUserId(identity: string): string {
   const rawId = parseIdentity(identity).userId;
   const activeDmCall = useVoiceStore.getState().activeDmCall;
   if (!activeDmCall) return rawId;
-  const dmChannel = useSpaceStore.getState().dmChannels.find((d) => d.id === activeDmCall.dmChannelId);
-  const match = dmChannel?.members.find((m) => m.homeUserId === rawId || m.id === rawId);
+  const dmId = dmCallChannelId(activeDmCall);
+  const dmChannel = dmId ? useSpaceStore.getState().dmChannels.find((d) => d.id === dmId) : undefined;
+  // The identity names the member by their row id here or by their home id.
+  const origin = dmId ? getChannelOrigin(dmId) : dmCallOrigin(activeDmCall);
+  const match = dmChannel?.members.find((m) => m.id === rawId || homeIdentityOf(m, origin)?.userId === rawId);
   return match?.id ?? rawId;
+}
+
+/**
+ * A remote screen share ended. When this viewer was watching it, the share is
+ * remembered for a while with its volume and mute (`StreamResumeMemory`), in
+ * case a full reconnect ended it.
+ */
+function rememberWatchedShare(memory: StreamResumeMemory, identity: string): void {
+  const userId = resolveParticipantUserId(identity);
+  const state = useVoiceStore.getState();
+  if (!state.watchingStreams.has(userId)) return;
+  memory.rememberEnded(identity, { volume: state.streamVolumes.get(userId), muted: state.streamMutes.get(userId) });
+}
+
+/**
+ * Watch a remembered share again once it is published: the watch, its volume
+ * and mute, the subscription, and the `stream_watch` ping that puts this
+ * viewer back in the sharer's watcher set (a full reconnect on either side
+ * dropped it there). No cue plays here: nobody clicked anything.
+ */
+function resumeRemoteStream(room: Room, identity: string, stream: RememberedStream): void {
+  const userId = resolveParticipantUserId(identity);
+  const state = useVoiceStore.getState();
+  state.watchStream(userId);
+  if (stream.volume !== undefined) state.setStreamVolume(userId, stream.volume);
+  if (stream.muted !== undefined) state.setStreamMute(userId, stream.muted);
+  setStreamSubscription(room, identity, true);
+  room.localParticipant
+    .publishData(encodeStreamWatch(streamWatchFor({ userId, identity }, true)), { reliable: true })
+    .catch((err: unknown) => console.warn('[LiveKit] Could not tell the sharer the watch resumed:', err));
+}
+
+/** Resume the remembered share of `identity` when it is published now. */
+function resumeIfPublished(room: Room, memory: StreamResumeMemory, identity: string): void {
+  const participant = room.remoteParticipants.get(identity);
+  if (!participant) return;
+  const published = [...participant.trackPublications.values()].some((pub) => pub.source === Track.Source.ScreenShare);
+  if (!published) return;
+  const stream = memory.takeOnPublication(identity);
+  if (stream) resumeRemoteStream(room, identity, stream);
 }
 
 /** A remote screen share ended: drop the watch and the per-stream audio settings. */
@@ -311,8 +365,9 @@ export function useLiveKit() {
         cachedUser = memberMatch.user as User;
         homeUserId = memberMatch.user.homeUserId ?? null;
       } else if (isLocal) {
-        // Local user safety net — authStore is always available
-        cachedUser = useAuthStore.getState().user;
+        // Local user safety net: the user's row as the instance hosting the
+        // call issues it, the origin `useVoiceParticipantMeta` reads it with.
+        cachedUser = myRowForOrigin(voiceSessionOrigin(useVoiceStore.getState()));
         homeUserId = cachedUser?.homeUserId ?? null;
       } else {
         // Space switched — carry forward from previous cycle
@@ -400,9 +455,11 @@ export function useLiveKit() {
   }, []);
 
   const handleDataReceived = useCallback((
+    room: Room,
     payload: Uint8Array,
     participant: RemoteParticipant | undefined,
     republish: StreamRepublishTracker,
+    resume: StreamResumeMemory,
   ) => {
     // Try the stream_watch protocol first (typed parser; returns null on non-matches).
     if (participant) {
@@ -419,9 +476,19 @@ export function useLiveKit() {
         }
         return;
       }
-      if (isStreamRepublish(payload)) {
+      const signal = parseShareSignal(payload);
+      if (signal === 'stream_republish') {
         // The sender's next screen-share unpublish is a codec swap, not the end.
         republish.announce(participant.identity);
+        return;
+      }
+      if (signal === 'stream_resume') {
+        // The sender's full reconnect brought its share back.
+        if (resume.resumeAnnounced(participant.identity)) resumeIfPublished(room, resume, participant.identity);
+        return;
+      }
+      if (signal === 'stream_stop') {
+        resume.stopAnnounced(participant.identity);
         return;
       }
     }
@@ -705,7 +772,7 @@ export function useLiveKit() {
       // terminal events before starting asynchronous SDK teardown.
       roomRef.current = null;
       _activeRoom = null;
-      _republishTrackers.get(roomToDisconnect)?.clear();
+      clearRoomStreamState(roomToDisconnect);
       try {
         console.log('[LiveKit] Destroying previous room:', roomToDisconnect.name);
         await destroyRoom(roomToDisconnect);
@@ -723,13 +790,17 @@ export function useLiveKit() {
       // token was relayed from a host this client has no session with.
       let hostOrigin: string | null;
 
-      // For federated calls, use the stored token from S2S relay
-      const { federatedCallToken, federatedCallUrl, clearFederatedCallData } = useVoiceStore.getState();
-      if (isDm && federatedCallToken && federatedCallUrl) {
-        token = federatedCallToken;
-        url = federatedCallUrl;
+      // A call hosted on another instance connects with the credentials its
+      // ring brought, once, and only for the call they came with.
+      const { activeDmCall } = useVoiceStore.getState();
+      const credentials = isDm && activeDmCall && dmCallRoomKey(activeDmCall) === channelId
+        ? activeDmCall.livekit
+        : null;
+      if (activeDmCall && credentials) {
+        token = credentials.token;
+        url = credentials.url;
         hostOrigin = null;
-        clearFederatedCallData();
+        useVoiceStore.setState({ activeDmCall: { ...activeDmCall, livekit: null } });
       } else {
         hostOrigin = getChannelOrigin(channelId);
         const client = getApiForOrigin(hostOrigin);
@@ -753,6 +824,11 @@ export function useLiveKit() {
         updateParticipants();
       });
       _republishTrackers.set(newRoom, republish);
+      const resume = new StreamResumeMemory();
+      _resumeMemories.set(newRoom, resume);
+      // Set when the room goes Reconnecting, which is a full reconnect: a
+      // signal resume only goes SignalReconnecting.
+      let fullReconnect = false;
       let initialConnectPending = true;
 
       const isCurrent = () => roomRef.current === newRoom;
@@ -779,8 +855,18 @@ export function useLiveKit() {
         // Left between a republish's two publications: its share ends with it.
         const bridgedShareEnded = republish.cancel(participant.identity);
         if (!isCurrent()) return;
-        useVoiceStore.getState().evictWatcher(participant.identity);
-        if (bridgedShareEnded) endRemoteStream(participant.identity);
+        // While the room is not Connected the leave may be this room's own
+        // full reconnect dropping every participant (Room.handleRestarting),
+        // so a viewer stays in the watcher set. Every return to Connected
+        // keeps only the viewers present then (`retainWatchers` below), which
+        // also catches a viewer that really left in that window.
+        if (newRoom.state === ConnectionState.Connected) {
+          useVoiceStore.getState().evictWatcher(participant.identity);
+        }
+        if (bridgedShareEnded) {
+          rememberWatchedShare(resume, participant.identity);
+          endRemoteStream(participant.identity);
+        }
         updateParticipants();
         // Clean up stale WS-based voice status for the departed participant
         const { userId } = parseIdentity(participant.identity);
@@ -900,6 +986,10 @@ export function useLiveKit() {
           if (useVoiceStore.getState().watchingStreams.has(resolveParticipantUserId(participant.identity))) {
             publication.setSubscribed(true);
           }
+        } else {
+          // A share this viewer watched before a full reconnect, back.
+          const stream = resume.takeOnPublication(participant.identity);
+          if (stream) resumeRemoteStream(newRoom, participant.identity, stream);
         }
         updateParticipants();
       });
@@ -911,12 +1001,13 @@ export function useLiveKit() {
           publication.source === Track.Source.ScreenShare
           && !republish.bridgeRemoval(participant.identity)
         ) {
+          rememberWatchedShare(resume, participant.identity);
           endRemoteStream(participant.identity);
         }
         updateParticipants();
       });
       newRoom.on(RoomEvent.DataReceived, (payload: Uint8Array, participant?: RemoteParticipant) => {
-        if (isCurrent()) handleDataReceived(payload, participant, republish);
+        if (isCurrent()) handleDataReceived(newRoom, payload, participant, republish, resume);
       });
       newRoom.on(RoomEvent.ConnectionQualityChanged, (quality: ConnectionQuality, participant: Participant) => {
         const normalizedQuality = toVoiceConnectionQuality(quality);
@@ -939,15 +1030,35 @@ export function useLiveKit() {
           setIsConnected(connected);
           setIsConnecting(connecting);
 
-          useVoiceStore.getState().setIsLiveKitConnected(connected);
-          useVoiceStore.getState().setVoiceConnectionStatus(
-            connected ? 'connected' : state === ConnectionState.Reconnecting ? 'reconnecting' : 'connecting',
-          );
+          // One update, so no subscriber sees the room disconnected but not
+          // yet reconnecting (SoundController would play a leave). Both kinds
+          // of reconnect count: a signal resume and a full reconnect.
+          const reconnecting = state === ConnectionState.Reconnecting || state === ConnectionState.SignalReconnecting;
+          useVoiceStore.setState({
+            isLiveKitConnected: connected,
+            voiceConnectionStatus: connected ? 'connected' : reconnecting ? 'reconnecting' : 'connecting',
+          });
+
+          if (state === ConnectionState.Reconnecting) {
+            fullReconnect = true;
+            resume.hold();
+          }
 
           if (connected) {
             // A full reconnect republished every local track: the share goes
             // on if its publication came back, and ends here if not.
             settleScreenShareAfterReconnect(newRoom);
+            // Viewers kept while the room was not Connected stay only if they
+            // are here. A signal resume counts too: its signal is live again
+            // (SignalResumed) before the room is Connected (Resumed, after the
+            // ICE restart), so a viewer can really leave in between.
+            useVoiceStore.getState().retainWatchers(new Set(newRoom.remoteParticipants.keys()));
+            if (fullReconnect) {
+              fullReconnect = false;
+              // The shares this viewer was watching come back as they are
+              // published again (the rest through TrackPublished).
+              for (const identity of resume.selfReconnected()) resumeIfPublished(newRoom, resume, identity);
+            }
             // On LiveKit reconnect, re-register with WS server (server may have restarted)
             if (connectedChannelRef.current) {
               registerWithServer();
@@ -964,6 +1075,7 @@ export function useLiveKit() {
         settleScreenShareAfterReconnect(newRoom);
         if (roomRef.current !== newRoom) return;
         republish.clear();
+        resume.clear();
         // The SDK emits Disconnected before rejecting an initial connect.
         // Keep that attempt current so its catch can report the failure.
         if (!initialConnectPending) _connectGeneration++;
@@ -1058,7 +1170,7 @@ export function useLiveKit() {
       const roomToDestroy = roomRef.current;
       roomRef.current = null;
       _activeRoom = null;
-      _republishTrackers.get(roomToDestroy)?.clear();
+      clearRoomStreamState(roomToDestroy);
       await destroyRoom(roomToDestroy);
       if (gen !== _connectGeneration) return;
     }
@@ -1134,7 +1246,7 @@ export function useLiveKit() {
       roomRef.current = null;
       _activeRoom = null;
       if (roomToDestroy) {
-        _republishTrackers.get(roomToDestroy)?.clear();
+        clearRoomStreamState(roomToDestroy);
         void destroyRoom(roomToDestroy);
       }
     };

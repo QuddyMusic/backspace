@@ -41,6 +41,7 @@ vi.mock('../ws/handler.js', () => ({
     sendToUser: vi.fn(),
     sendToDmMembers: vi.fn(),
     evictFederatedCallsForHost: vi.fn().mockReturnValue(0),
+    dropRemoteCallParticipants: vi.fn().mockReturnValue(0),
   },
 }));
 
@@ -196,7 +197,7 @@ describe('onPeerDeactivated', () => {
   it('maps rejected status to peer_rejected reason', async () => {
     seedPeer('peer-rej', 'rejected');
     const { onPeerDeactivated } = await import('./federationPeerActivation.js');
-    await onPeerDeactivated('peer-rej', 'remote_rejected');
+    await onPeerDeactivated('peer-rej', 'remote_refused');
 
     const { connectionManager } = await import('../ws/handler.js');
     expect(connectionManager.evictFederatedCallsForHost).toHaveBeenCalledWith(

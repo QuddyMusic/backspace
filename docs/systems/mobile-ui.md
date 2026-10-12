@@ -17,7 +17,7 @@ Source files:
 - `packages/web/src/components/layout/MobileVoiceMiniBar.tsx` — Persistent mini-bar overlay during voice calls
 - `packages/web/src/components/layout/MobileFolderSheet.tsx` — Bottom sheet for space folder contents, rename, color, ungroup
 - `packages/web/src/hooks/useSwipeGesture.ts` — Edge swipe-back touch gesture hook
-- `packages/web/src/hooks/useDragToClose.ts` — Bottom-sheet drag-down-to-dismiss gesture hook (shared by `InputPopover.MobileSheet`, `MobileVoiceJoinSheet`, `MobileFolderSheet`)
+- `packages/web/src/hooks/useDragToClose.ts`: bottom-sheet drag-down-to-dismiss gesture hook (shared by `MobilePickerSheet`, `MobileVoiceJoinSheet`, `MobileFolderSheet`)
 - `packages/web/src/hooks/useVisualViewportInset.ts` — Returns the bottom inset that floating overlays must use to sit above the iOS soft keyboard (when open) or above the home-indicator safe area (when closed). Used by `MessageInput` for the floating composer-bubble's `bottom` value.
 - `packages/web/src/stores/uiStore.ts` — Mobile navigation state (mobileScreen, mobileStack, push/pop actions)
 
@@ -468,7 +468,7 @@ The Federation row carries a numeric badge driven by `uiStore.federationApproval
 Params: `{ spaceId? }` (falls back to `currentSpaceId`)
 
 - Groups online members by their highest-positioned role
-- Owner gets special `__owner__` group (position Infinity)
+- Owner gets special `__owner__` group (position Infinity), headed by `OwnerTitleHeading` as on desktop: the owner title when one is set, with the owner's edit control (spaces.md, "Owner title")
 - Offline members in separate section
 - Each member row: avatar with status, role-colored name, federated domain, activity card
 - Tap opens `user-profile` screen
@@ -765,7 +765,19 @@ The component declares one `composerClass` shared by both modes. Differences:
 
 #### Composer-element ref shape
 
-`MessageInput` tracks the live composer DOM element via a callback ref that fans out to (a) the existing imperative `popoverAnchorRef` (consumed by `InputPopover` and the mention popover for anchor positioning) AND (b) a state-backed `composerEl` slot that the clearance effects are keyed on (see "How the composer keeps it"). The state-backed slot is required because the component renders different JSX when `canSendMessages` is false (the no-permission early-return path) vs. true (the full composer): an effect keyed only on stable deps would not re-run when the ref attaches as the JSX flips, so the observers would stay on the old element. Channel permissions arrive asynchronously, so the initial mount renders the no-permission JSX first and re-renders the full composer once permissions resolve; the callback ref's `setComposerEl` call re-runs the observer effect at that moment, on the same region, without removing the variable.
+`MessageInput` tracks the live composer DOM element via a callback ref that fans out to (a) the existing imperative `popoverAnchorRef` (consumed by `InputPopover` for anchor positioning; the mention picker anchors elsewhere, see "Mention display") AND (b) a state-backed `composerEl` slot that the clearance effects are keyed on (see "How the composer keeps it"). The state-backed slot is required because the component renders different JSX when `canSendMessages` is false (the no-permission early-return path) vs. true (the full composer): an effect keyed only on stable deps would not re-run when the ref attaches as the JSX flips, so the observers would stay on the old element. Channel permissions arrive asynchronously, so the initial mount renders the no-permission JSX first and re-renders the full composer once permissions resolve; the callback ref's `setComposerEl` call re-runs the observer effect at that moment, on the same region, without removing the variable.
+
+### Mention display
+
+The draft keeps the wire format: a mention is a `<@id>` token, and that is what `composerStore` saves per channel, what is sent and what counts against `MAX_MESSAGE_LENGTH`. The textarea shows each token whose id the channel knows as `@name`. `MentionTextarea.tsx` paints the text in a mirror behind a native textarea whose own text is transparent, so composition, selection, paste and the placeholder stay native. `composerMentions.ts` maps offsets between the shown text and the draft; `useMentionComposer.ts` holds the picker state and turns each textarea change into a draft edit.
+
+- **Tokens.** The draft is cut by the shared scan in `utils/mentionTokens.ts`, the same one the rendered message, the reply preview and the alert rule use, so a token inside code stays text. Only `<@id>` is a mention: the wire has no role or everyone mentions, and the composer paints none. The token rule itself is in [dm-system.md](dm-system.md) "Mentions in relayed messages".
+- **Names.** A token is named through `useChannelUserResolver` (`utils/channelUser.ts`), which reads the same roster and user view as `useChannelUser`, the lookup `MentionBadge` uses, so the composer names a token as the sent message will. A DM's tokens are read in its pinned origin's ids, the signed-in user included (client-federation.md §5). An id the channel does not know is shown as written.
+- **Edits.** An edit or selection that touches a shown mention replaces the whole token, so no partial id is left behind. The caret is put back only when a whole token went, and never during an IME composition. Typed or pasted `@name` text stays text; the picker inserts the token. A `<@id>` typed or pasted as written is a token like any other.
+- **IME.** Enter during an IME composition neither sends nor picks a suggestion (`handleKeyDown` returns first).
+- **Picker anchor.** The desktop picker (`MentionPopover.tsx`) is anchored at the typed `@`, a zero-width marker the mirror renders there, and re-measures it after every render (`useFloatingPosition`'s `followAnchor`), since text before the `@` moves it without resizing anything.
+
+Editing a sent message uses its own textarea in `Message.tsx`, which still shows the raw tokens.
 
 ---
 
@@ -777,7 +789,7 @@ Three hand-rolled bottom sheets share this gesture hook so each surface gets ide
 
 | Sheet | File | Drag-handle area |
 |---|---|---|
-| Emoji / GIF picker | `packages/web/src/components/chat/InputPopover.tsx` (`MobileSheet`) | Visible pill + tab bar |
+| Picker sheet: the composer's emoji / GIF picker (`InputPopover.tsx`) and the reaction picker the message menu's "+" opens (`Message.tsx`) | `packages/web/src/components/chat/MobilePickerSheet.tsx` | Visible pill + the caller's header (the composer's tab bar; none for reactions) |
 | Voice-channel join sheet | `packages/web/src/components/voice/MobileVoiceJoinSheet.tsx` | Visible pill + title row |
 | Space-folder sheet | `packages/web/src/components/layout/MobileFolderSheet.tsx` | Visible pill + folder header row |
 
@@ -816,7 +828,7 @@ const { sheetStyle, handleProps, isDragging, isClosing, hasInteracted } = useDra
 - **Tap-on-handle** is treated as a no-op (touch starts and ends inside the dead-zone → no offset → no commit). `hasInteracted` does flip true, but with `dragOffset === 0` the inline transform stays at `translateY(0)` and the visible state matches the open state.
 - **iOS pull-to-refresh** is blocked because `touchmove` is non-passive and calls `preventDefault()` once we cross the dead-zone.
 - **Internal scrolling** (e.g. emoji grid, GIF results, folder space list) is **untouched** — `handleProps.onTouchStart` is bound to the header element only, so scroll containers below it never enter drag mode.
-- **Open animation** (`animate-slide-up-sheet` for `MobileFolderSheet` / `InputPopover.MobileSheet`, the `translate-y-full → translate-y-0` flip for `MobileVoiceJoinSheet`) is gated by `!hasInteracted`. After the first touch, the open class never re-applies for the rest of the sheet's lifetime — the inline `transform` + transition becomes the sole animator for both snap-back and close-out.
+- **Open animation** (`animate-slide-up-sheet` for `MobileFolderSheet` / `MobilePickerSheet`, the `translate-y-full → translate-y-0` flip for `MobileVoiceJoinSheet`) is gated by `!hasInteracted`. After the first touch, the open class never re-applies for the rest of the sheet's lifetime; the inline `transform` + transition becomes the sole animator for both snap-back and close-out.
 
 ---
 

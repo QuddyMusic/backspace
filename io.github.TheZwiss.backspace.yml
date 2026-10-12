@@ -44,7 +44,7 @@ modules:
       # with flatpak/node-sources.json when updating the package.
       - type: git
         url: https://github.com/TheZwiss/backspace.git
-        commit: a78461c191ac2e68cac3b87a3de6c71ad45d903f
+        commit: 64b4680a1c20d0ccc8f6c04ab9ac355a60829137
 
       # Offline pnpm store, Electron archives, native package prebuilts, and
       # Node headers generated from the pinned pnpm-lock.yaml.

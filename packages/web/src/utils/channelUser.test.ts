@@ -9,7 +9,6 @@ vi.mock('../audio/AudioManager', () => ({
 
 import { useAuthStore } from '../stores/authStore';
 import { useSpaceStore, type TaggedSpace } from '../stores/spaceStore';
-import { clearMyUserIdCache, setMyUserIdForOrigin } from './crossStoreResolvers';
 import {
   filterMentionCandidates,
   getChannelMentionCandidates,
@@ -68,7 +67,7 @@ afterEach(() => {
     channelToSpaceMap: new Map(),
     userViews: new Map(),
   });
-  clearMyUserIdCache();
+  useAuthStore.setState({ myRowIds: new Map() });
 });
 
 describe('resolveChannelUser', () => {
@@ -153,7 +152,7 @@ describe('resolveChannelUser', () => {
 describe('getChannelMentionCandidates', () => {
   it("lists a DM's members except me, in the DM origin's id space", () => {
     useAuthStore.setState({ user: me });
-    setMyUserIdForOrigin(ORBIT, meOnOrbit.id);
+    useAuthStore.getState().recordMyRow(ORBIT, meOnOrbit.id);
     useSpaceStore.setState({
       dmChannels: [orbitDm],
       channelOriginMap: new Map([[orbitDm.id, ORBIT]]),
@@ -172,7 +171,7 @@ describe('getChannelMentionCandidates', () => {
 
   it("is empty under another origin's id for a DM, never the listed entry's home ids", () => {
     useAuthStore.setState({ user: me });
-    setMyUserIdForOrigin(ORBIT, meOnOrbit.id);
+    useAuthStore.getState().recordMyRow(ORBIT, meOnOrbit.id);
     useSpaceStore.setState({
       dmChannels: [homeDm],
       channelOriginMap: new Map([[homeDm.id, '']]),
@@ -201,12 +200,20 @@ describe('filterMentionCandidates', () => {
     expect(filterMentionCandidates(all, 'ali').map((c) => c.userId)).toEqual([me.id]);
     expect(filterMentionCandidates(all, '', 2)).toHaveLength(2);
   });
+
+  it('matches a space nickname too', () => {
+    useSpaceStore.setState({
+      channelToSpaceMap: new Map([['chan-1', 'space-1']]),
+      members: [{ ...member('space-1', kai), nickname: 'Pilot' }, member('space-1', zed)],
+    });
+    expect(filterMentionCandidates(getChannelMentionCandidates('chan-1'), 'pil').map((c) => c.userId)).toEqual([kai.id]);
+  });
 });
 
 describe('self in a channel', () => {
   it("is my id on the channel's origin: home id at home, the remote id on a remote DM", () => {
     useAuthStore.setState({ user: me });
-    setMyUserIdForOrigin(ORBIT, meOnOrbit.id);
+    useAuthStore.getState().recordMyRow(ORBIT, meOnOrbit.id);
     useSpaceStore.setState({
       dmChannels: [homeDm, orbitDm],
       channelOriginMap: new Map([[homeDm.id, ''], [orbitDm.id, ORBIT]]),
@@ -219,7 +226,7 @@ describe('self in a channel', () => {
 
   it("uses the origin of the copy an alternate DM id belongs to", () => {
     useAuthStore.setState({ user: me });
-    setMyUserIdForOrigin(ORBIT, meOnOrbit.id);
+    useAuthStore.getState().recordMyRow(ORBIT, meOnOrbit.id);
     useSpaceStore.setState({
       dmChannels: [{ ...orbitDm, federatedId: 'fed-2' } as DmChannel],
       channelOriginMap: new Map([[orbitDm.id, ORBIT]]),

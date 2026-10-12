@@ -1,3 +1,5 @@
+import { DmUnreadBadge } from './DmUnreadBadge';
+import { SpaceUnreadBadge } from './SpaceUnreadBadge';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { useTranslation } from 'react-i18next';
@@ -5,6 +7,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useSpaceStore, getMyUserIdForOrigin } from '../../stores/spaceStore';
 import type { TaggedSpace } from '../../stores/spaceStore';
 import { resolveSpaceLayout, type ResolvedSpaceLayoutItem } from '../../utils/spaceLayout';
+import { spaceInviteUrl } from '../../utils/inviteParser';
 import { activeHomeNavItem } from '../../utils/homeNav';
 import { useChatStore } from '../../stores/chatStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -13,11 +16,13 @@ import { useContextMenuStore, type ContextMenuItem } from '../../stores/contextM
 import { Tooltip } from '../ui/Tooltip';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { TransferOwnershipModal } from '../modals/TransferOwnershipModal';
+import { NotificationSettingsModal, type NotificationSettingsModalTarget } from '../notifications/NotificationSettingsModal';
 import type { SpaceLayoutItem, SpaceFolder } from '@backspace/shared';
 
 import { getSpaceGradient } from '../../utils/gradients';
 import { isElectron } from '../../platform/platform';
 import { useFloatingPosition } from '../../hooks/useFloatingPosition';
+import { describeCodedError } from '../../i18n/errors';
 
 // ─── Resolved layout types ─────────────────────────────────────────────────
 
@@ -142,6 +147,8 @@ function SidebarItem({ id, name, icon, avatarColor, active, onClick, onContextMe
   const innerContent = (
     <div className={`relative ${dropIndicator === 'merge' ? 'scale-110 ring-2 ring-accent-mint/60 rounded-full' : ''} transition-transform duration-150`}>
       {buttonContent}
+      {type === 'space' && <SpaceUnreadBadge spaceId={id} />}
+      {type === 'dm' && <DmUnreadBadge />}
       {federationBadge && (
         <div className="absolute -bottom-0.5 -right-0.5 w-[14px] h-[14px] rounded-full bg-surface-base flex items-center justify-center">
           {federationDisconnected ? (
@@ -455,16 +462,19 @@ function FolderFlyout({
               }}
             >
               {/* Space icon */}
-              <div className="w-8 h-8 rounded-[10px] flex-shrink-0 overflow-hidden flex items-center justify-center" style={grad ? { background: grad.gradient } : undefined}>
-                {icon ? (
-                  <img
-                    src={icon.startsWith('http') || icon.startsWith('/') ? icon : `/api/uploads/${icon}`}
-                    alt=""
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <span className="text-[13px] font-bold text-white">{space.name.charAt(0).toUpperCase()}</span>
-                )}
+              <div className="relative">
+                <SpaceUnreadBadge spaceId={space.id} />
+                <div className="w-8 h-8 rounded-[10px] flex-shrink-0 overflow-hidden flex items-center justify-center" style={grad ? { background: grad.gradient } : undefined}>
+                  {icon ? (
+                    <img
+                      src={icon.startsWith('http') || icon.startsWith('/') ? icon : `/api/uploads/${icon}`}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-[13px] font-bold text-white">{space.name.charAt(0).toUpperCase()}</span>
+                  )}
+                </div>
               </div>
 
               {/* Name */}
@@ -618,6 +628,7 @@ export function SpaceSidebar() {
 
   // Modal state for context menu actions that spawn modals
   const [transferModalSpaceId, setTransferModalSpaceId] = useState<string | null>(null);
+  const [notificationTarget, setNotificationTarget] = useState<NotificationSettingsModalTarget | null>(null);
   const [leaveConfirmSpaceId, setLeaveConfirmSpaceId] = useState<string | null>(null);
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
 
@@ -647,14 +658,33 @@ export function SpaceSidebar() {
         onClick: async () => {
           try {
             const code = await useSpaceStore.getState().generateInvite(spaceId);
-            const origin = (space as TaggedSpace)._instanceOrigin || window.location.origin;
-            const url = `${origin}/invite/${code}`;
-            await navigator.clipboard.writeText(url);
-            useUIStore.getState().addToast(t('spaces:sidebar.space.inviteCopied'), 'success', 3000);
-          } catch {
-            useUIStore.getState().addToast(t('spaces:sidebar.space.inviteFailed'), 'warning', 3000);
+            await navigator.clipboard.writeText(spaceInviteUrl((space as TaggedSpace)._instanceOrigin, code));
+            useUIStore.getState().addToast(
+              t(space.visibility === 'request' ? 'spaces:sidebar.space.inviteCopiedRequest' : 'spaces:sidebar.space.inviteCopied'),
+              'success',
+              3000,
+            );
+          } catch (err) {
+            useUIStore.getState().addToast(describeCodedError(err, t('spaces:sidebar.space.inviteFailed')), 'warning', 3000);
           }
         },
+      },
+      {
+        key: 'notifications',
+        type: 'action',
+        label: t('spaces:notifications.open'),
+        icon: (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />
+          </svg>
+        ),
+        // The settings live on the instance that hosts the space.
+        onClick: () => setNotificationTarget({
+          kind: 'space',
+          origin: (space as TaggedSpace)._instanceOrigin ?? '',
+          spaceId,
+          spaceName: space.name,
+        }),
       },
       {
         key: 'transfer',
@@ -1219,6 +1249,12 @@ export function SpaceSidebar() {
         <TransferOwnershipModal
           spaceId={transferModalSpaceId}
           onClose={() => setTransferModalSpaceId(null)}
+        />
+      )}
+      {notificationTarget && (
+        <NotificationSettingsModal
+          target={notificationTarget}
+          onClose={() => setNotificationTarget(null)}
         />
       )}
       {leaveConfirmSpaceId && (() => {

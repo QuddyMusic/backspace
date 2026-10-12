@@ -7,20 +7,22 @@ import type {
   FederationRegistryEntry,
   FederationRegistryStatus,
 } from '@backspace/shared';
+import { detachedHomeOf } from '@backspace/shared';
 import { BackspaceApiClient, HttpError, createApiClient, api } from '../api/client';
 import { useAuthStore } from './authStore';
 import {
   setApiForOriginResolver,
-  setUserIdForOriginResolver,
   setOriginFromHostnameResolver,
   setTokenForOriginResolver,
 } from '../utils/crossStoreResolvers';
 import { useSpaceStore } from './spaceStore';
+import { useSocialStore } from './socialStore';
 import { connectInstance, disconnectInstance as disconnectWs, disconnectAllRemote } from '../hooks/useWebSocket';
 // dmOriginFailover lazily reads useInstanceStore/useSpaceStore/useChatStore at call time,
 // so a static import here does not create an import-time cycle.
 import { useUIStore } from './uiStore';
-import { homeHostOf, parseFederatedUsername } from '../utils/identity';
+import { homeHostOf, homeIdentityOf, parseFederatedUsername } from '../utils/identity';
+import { isMyFederatedIdentity } from '../utils/selfStatus';
 // The registry's `errorMessage` carries one of these codes, never a sentence:
 // the Connections row is what turns it into words, in the user's language.
 import { registryReason } from '../i18n/registryErrors';
@@ -202,19 +204,44 @@ export function isSelfOrigin(origin: string): boolean {
  * client holds no session there: the primary connection when we are browsing
  * that domain natively, else a connected secondary instance.
  *
- * Shared by `maybeAutoReattach` (proof minting) and `resolveCredentialHomeApi`
- * (per-remote credential issuance) so both agree on what "a session on the home
- * instance" means.
+ * `origin` is the session's origin string as the rest of the client keys it:
+ * `''` for the primary connection, the connected instance's origin otherwise.
+ *
+ * Shared by `maybeAutoReattach` (proof minting), `resolveCredentialHomeApi`
+ * (per-remote credential issuance) and `getFriendsHomeOrigin` (friend-only
+ * requests) so all agree on what "a session on the home instance" means.
  */
-export function resolveSessionApiForHome(homeDomain: string): { api: BackspaceApiClient; username: string } | null {
+export function resolveSessionApiForHome(
+  homeDomain: string,
+): { api: BackspaceApiClient; username: string; origin: string } | null {
   const primaryUser = useAuthStore.getState().user;
   if (primaryUser && !primaryUser.homeInstance && window.location.hostname.toLowerCase() === homeDomain) {
-    return { api, username: primaryUser.username };
+    return { api, username: primaryUser.username, origin: '' };
   }
   const conn = useInstanceStore.getState().instances.find(
     (i) => i.status === 'connected' && new URL(i.origin).hostname.toLowerCase() === homeDomain,
   );
-  return conn ? { api: conn.api, username: conn.username } : null;
+  return conn ? { api: conn.api, username: conn.username, origin: conn.origin } : null;
+}
+
+/**
+ * The origin the user's friend-only requests go to: creating a group DM,
+ * adding someone to one, and sending a space invite. Each is checked against
+ * the friend list of the instance that receives it, and the list that holds
+ * all of the user's friends is their home's: friend requests are only
+ * accepted there (`not_authoritative_for_sender`), and a federated account
+ * on another instance holds only the friendships relayed into it, so a friend
+ * native to the home is "not a friend" there (#391).
+ *
+ * `''` when the page's own account owns its friendships (a native account, or
+ * a detached one, sovereign here), and also when the true home has no live
+ * session in this client: the page's instance then answers with the
+ * friendships it holds. Otherwise the true home's connected origin.
+ */
+export function getFriendsHomeOrigin(): string {
+  const user = useAuthStore.getState().user;
+  if (!user?.homeInstance || user.federationHomeOrphaned) return '';
+  return resolveSessionApiForHome(homeHostOf(user.homeInstance))?.origin ?? '';
 }
 
 /**
@@ -251,8 +278,8 @@ function resolveCredentialHomeApi(): BackspaceApiClient | null {
  * signal that the remote hash is something other than the issued secret.
  *
  * Never touches an account that is not this user's federated identity on that
- * instance: `homeInstance` and `homeUserId` must both match, so a native
- * account someone logged into on the remote is left alone.
+ * instance (`isMyFederatedIdentity`), so a native account someone logged into
+ * on the remote is left alone.
  */
 export async function ensureRemoteCredential(
   instance: ConnectedInstance,
@@ -261,13 +288,9 @@ export async function ensureRemoteCredential(
   const currentUser = useAuthStore.getState().user;
   if (!currentUser) return;
 
-  const trueHomeHost = homeHostOf(currentUser.homeInstance ?? window.location.host);
-  if (homeHostOf(instance.origin) === trueHomeHost) return; // home keeps the real password
-
-  const remote = instance.user;
-  if (!remote.homeInstance || !remote.homeUserId) return;
-  if (homeHostOf(remote.homeInstance) !== trueHomeHost) return;
-  if (remote.homeUserId !== (currentUser.homeUserId ?? currentUser.id)) return;
+  const trueHome = homeIdentityOf(currentUser, '');
+  if (trueHome && homeHostOf(instance.origin) === homeHostOf(trueHome.host)) return; // home keeps the real password
+  if (!isMyFederatedIdentity(currentUser, instance.user)) return;
 
   const homeApi = resolveCredentialHomeApi();
   if (!homeApi) return;
@@ -327,8 +350,11 @@ async function peerHomeWithRemote(origin: string, announceAs: string | null): Pr
  */
 export async function maybeAutoReattach(instance: ConnectedInstance): Promise<void> {
   const remoteUser = instance.user;
-  if (!remoteUser.federationHomeOrphaned || !remoteUser.homeInstance) return;
-  const homeDomain = remoteUser.homeInstance.replace(/^https?:\/\//, '').replace(/\/+$/, '').toLowerCase();
+  // The home the account was detached from: a detached account is homed on
+  // the remote, which names its former home separately (`detachedHomeOf`).
+  const formerHome = detachedHomeOf(remoteUser);
+  if (!formerHome) return;
+  const homeDomain = formerHome.replace(/^https?:\/\//, '').replace(/\/+$/, '').toLowerCase();
 
   // An authenticated session on the account's home domain: the primary
   // connection when we're browsing it, else a connected secondary instance.
@@ -915,8 +941,11 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
     if (userId) saveCachedTokens(get().instances, userId);
 
     // Drops this origin's content. A DM with a copy on another instance moves
-    // to that copy (the pin rule); a DM without one is removed.
+    // to that copy (the pin rule); a DM without one is removed. A friend or
+    // request another instance also lists is then shown by that instance's
+    // row, so actions on it go to an instance the user still holds.
     useSpaceStore.getState().removeInstanceSpaces(origin);
+    useSocialStore.getState().removeInstanceRows(origin);
 
     // Sync updated lists to remaining instances (fire-and-forget)
     get().syncInstanceList().catch(() => {});
@@ -1160,8 +1189,10 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
       return { instances: updated, registry, registryUpdatedAt };
     });
 
-    // Same as disconnectInstance: DMs with a copy elsewhere move to it.
+    // Same as disconnectInstance: DMs with a copy elsewhere move to it, and
+    // friends and requests another instance lists are shown by its row.
     useSpaceStore.getState().removeInstanceSpaces(origin);
+    useSocialStore.getState().removeInstanceRows(origin);
 
     get().syncRegistry().catch(() => {});
   },
@@ -1605,15 +1636,6 @@ setApiForOriginResolver((origin: string): BackspaceApiClient => {
   const instance = useInstanceStore.getState().instances.find(i => i.origin === origin);
   if (!instance) return api;
   return instance.api;
-});
-
-// ─── User ID resolution (federation) ──────────────────────────────────────────
-// Maps an origin to the local user's ID on that remote instance.
-// Used by voice join/leave to optimistically add/remove the correct user ID.
-
-setUserIdForOriginResolver((origin: string): string | undefined => {
-  const instance = useInstanceStore.getState().instances.find(i => i.origin === origin);
-  return instance?.user.id;
 });
 
 // ─── Token resolution (federation) ────────────────────────────────────────────

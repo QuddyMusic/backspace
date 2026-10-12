@@ -1,13 +1,12 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { User } from '@backspace/shared';
-import { useSocialStore, type TaggedFriend, type TaggedFriendRequest, type TaggedUser } from '../../stores/socialStore';
+import { friendEntryOf, isIncomingRequest, isOutgoingRequest, pendingRequestWith, useSocialStore, type TaggedFriend, type TaggedFriendRequest, type TaggedUser } from '../../stores/socialStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useDiscoverStore, type TaggedDiscoverUser } from '../../stores/discoverStore';
 import { useTranslation, Trans } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { describeError } from '../../i18n/errors';
-import { useSpaceStore } from '../../stores/spaceStore';
 import { useInstanceStore } from '../../stores/instanceStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useFederationStore } from '../../stores/federationStore';
@@ -15,12 +14,12 @@ import { Avatar } from '../ui/Avatar';
 import { MemberListToggleButton } from '../layout/MemberListToggleButton';
 import { LoadingSpinner } from '../ui/LoadingSpinner';
 import { getAvatarGradient } from '../../utils/gradients';
-import { api } from '../../api/client';
 import { Mascot } from '../ui/Mascot';
 import { useActivityStore, activitiesFor } from '../../stores/activityStore';
 import { ActivityCard, hasRichActivity, getActivityAccentClass } from '../ui/ActivityCard';
 import { getPrimaryActivity } from '@backspace/shared/src/activities.js';
-import { parseFederatedUsername, isFederationGlobeApplicable, userDisplayName } from '../../utils/identity';
+import { parseFederatedUsername, isFederationGlobeApplicable, userDisplayName, type IdentityFields } from '../../utils/identity';
+import { openDirectMessage } from '../../utils/openDirectMessage';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
 import { friendRequestTarget } from '../../utils/friendRequestTarget';
 import { replaceEmojiShortcodes, useEmojiShortcodeNames } from '../../utils/emojiShortcodes';
@@ -46,10 +45,10 @@ function ActivityFriendItem({
   isRichActivity: boolean;
   accentClass: string;
   mobile?: boolean;
-  onMobileClick: (userId: string) => void;
-  onDmClick: (id: string, homeUserId?: string, homeInstance?: string | null) => void;
+  onMobileClick: (friend: TaggedFriend) => void;
+  onDmClick: (person: IdentityFields, origin: string) => void;
 }) {
-  const canonical = useCanonicalUserView(friend as unknown as User);
+  const canonical = useCanonicalUserView(friend as unknown as User, friend._instanceOrigin);
   const friendDisplayName = userDisplayName(canonical);
 
   const rowClass = isRichActivity
@@ -60,9 +59,9 @@ function ActivityFriendItem({
     <div
       onClick={() => {
         if (mobile) {
-          onMobileClick(friend.id);
+          onMobileClick(friend);
         } else {
-          onDmClick(friend.id, friend.homeUserId ?? undefined, friend.homeInstance);
+          onDmClick(friend, friend._instanceOrigin);
         }
       }}
       className={rowClass}
@@ -111,9 +110,8 @@ interface FriendsPageProps {
 export function FriendsPage({ mobile }: FriendsPageProps) {
   const { t } = useTranslation(['social', 'common']);
   const [activeTab, setActiveTab] = useState<Tab>('online');
-  const [pendingUnfriend, setPendingUnfriend] = useState<{ id: string; name: string } | null>(null);
+  const [pendingUnfriend, setPendingUnfriend] = useState<{ friend: TaggedFriend; name: string } | null>(null);
   const navigate = useNavigate();
-  const upsertDmCopy = useSpaceStore((s) => s.upsertDmCopy);
   const addToast = useUIStore((s) => s.addToast);
 
   // If the user clicked "Retry your friend request" in the Connections panel
@@ -147,25 +145,13 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
   const pushMobileScreen = useUIStore((s) => s.pushMobileScreen);
 
   const onlineFriends = friends.filter(f => f.status !== 'offline');
-  const pendingIncoming = requests.filter(r => r.status === 'pending' && r.user?.id === r.fromId);
-  const pendingOutgoing = requests.filter(r => r.status === 'pending' && r.user?.id === r.toId);
+  const pendingIncoming = requests.filter(r => r.status === 'pending' && isIncomingRequest(r));
+  const pendingOutgoing = requests.filter(r => r.status === 'pending' && isOutgoingRequest(r));
 
-  const handleOpenDm = async (friendId: string, homeUserId?: string, homeInstance?: string | null) => {
+  const handleOpenDm = async (person: IdentityFields, origin: string) => {
     try {
-      // Check if a DM already exists with this user (on any instance)
-      const existing = useSpaceStore.getState().findExistingDmForUser({ id: friendId, homeUserId: homeUserId ?? undefined });
-      if (existing) {
-        useUIStore.getState().setShowDms(true);
-        navigate(`/channels/@me/${existing.dm.id}`);
-        return;
-      }
-      const dmChannel = await api.dm.create({
-        userId: homeInstance ? undefined : friendId,
-        homeUserId: homeUserId ?? undefined,
-        homeInstance: homeInstance ?? undefined,
-      });
-      // The answer joins its conversation; open the conversation's row.
-      const rowId = upsertDmCopy('', dmChannel, 'stated');
+      const rowId = await openDirectMessage(person, origin);
+      useUIStore.getState().setShowDms(true);
       navigate(`/channels/@me/${rowId}`);
     } catch (err) {
       addToast(t('social:sendMessage.failed', { reason: describeError(err) }), 'warning');
@@ -196,7 +182,7 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
             ) : (
               <>
                 {onlineFriends.map(friend => (
-                  <FriendItem key={`${friend.id}:${friend._instanceOrigin}`} friend={friend} onRemove={() => setPendingUnfriend({ id: friend.id, name: userDisplayName(friend) })} onDm={() => handleOpenDm(friend.id, friend.homeUserId ?? undefined, friend.homeInstance)} />
+                  <FriendItem key={`${friend.id}:${friend._instanceOrigin}`} friend={friend} onRemove={() => setPendingUnfriend({ friend, name: userDisplayName(friend) })} onDm={() => handleOpenDm(friend, friend._instanceOrigin)} />
                 ))}
               </>
             )}
@@ -216,7 +202,7 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
             ) : (
               <>
                 {friends.map(friend => (
-                  <FriendItem key={`${friend.id}:${friend._instanceOrigin}`} friend={friend} onRemove={() => setPendingUnfriend({ id: friend.id, name: userDisplayName(friend) })} onDm={() => handleOpenDm(friend.id, friend.homeUserId ?? undefined, friend.homeInstance)} />
+                  <FriendItem key={`${friend.id}:${friend._instanceOrigin}`} friend={friend} onRemove={() => setPendingUnfriend({ friend, name: userDisplayName(friend) })} onDm={() => handleOpenDm(friend, friend._instanceOrigin)} />
                 ))}
               </>
             )}
@@ -240,8 +226,8 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
                     key={`${req.id}:${req._instanceOrigin}`}
                     request={req}
                     type="incoming"
-                    onAccept={() => updateFriendRequest(req.id, 'accepted')}
-                    onDecline={() => updateFriendRequest(req.id, 'declined')}
+                    onAccept={() => updateFriendRequest(req.id, req._instanceOrigin, 'accepted')}
+                    onDecline={() => updateFriendRequest(req.id, req._instanceOrigin, 'declined')}
                   />
                 ))}
                 {pendingOutgoing.map(req => (
@@ -249,7 +235,7 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
                     key={`${req.id}:${req._instanceOrigin}`}
                     request={req}
                     type="outgoing"
-                    onCancel={() => cancelFriendRequest(req.id)}
+                    onCancel={() => cancelFriendRequest(req.id, req._instanceOrigin)}
                   />
                 ))}
               </>
@@ -294,7 +280,7 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
               isRichActivity={isRichActivity}
               accentClass={accentClass}
               mobile={mobile}
-              onMobileClick={(userId) => pushMobileScreen('user-profile', { userId })}
+              onMobileClick={(person) => pushMobileScreen('user-profile', { userId: person.id, origin: person._instanceOrigin })}
               onDmClick={handleOpenDm}
             />
           );
@@ -423,7 +409,7 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
         onClose={() => setPendingUnfriend(null)}
         onConfirm={async () => {
           if (pendingUnfriend) {
-            await removeFriend(pendingUnfriend.id);
+            await removeFriend(pendingUnfriend.friend, pendingUnfriend.friend._instanceOrigin);
             setPendingUnfriend(null);
           }
         }}
@@ -441,7 +427,7 @@ export function FriendsPage({ mobile }: FriendsPageProps) {
 function AddFriendTab({
   onOpenDm,
 }: {
-  onOpenDm: (userId: string, homeUserId?: string, homeInstance?: string | null) => void;
+  onOpenDm: (person: IdentityFields, origin: string) => void;
 }) {
   const { t } = useTranslation(['social', 'common']);
   const searchUsers = useSocialStore((s) => s.searchUsers);
@@ -504,23 +490,31 @@ function AddFriendTab({
 
   const isSearchMode = query.trim().length > 0;
 
-  // Enrich search results with friend/request status at render time
+  // Enrich search results with friend/request status at render time. A
+  // result and a list entry are the same person when their `userKey`s match,
+  // whichever instance's row each is shown by. A pending request's id is good
+  // only on the instance that holds it, so a card with a request is shown by
+  // that request's row of the person.
   const enrichedSearchResults: TaggedDiscoverUser[] = useMemo(() => {
     if (!isSearchMode) return [];
     return rawSearchResults
       .filter(u => !selfIds.has(`${u.id}:${u._instanceOrigin}`))
       .map(user => {
-        const isFriend = friends.some(f => f.id === user.id && f._instanceOrigin === user._instanceOrigin);
-        if (isFriend) {
+        if (friendEntryOf(friends, user, user._instanceOrigin)) {
           return { ...user, relationship: 'friends' as const, mutualFriendCount: 0, mutualSpaceCount: 0 };
         }
-        const outbound = requests.find(r => r.status === 'pending' && r.user?.id === r.toId && r.user?.id === user.id && r._instanceOrigin === user._instanceOrigin);
-        if (outbound) {
-          return { ...user, relationship: 'outbound_pending' as const, requestId: outbound.id, mutualFriendCount: 0, mutualSpaceCount: 0 };
-        }
-        const inbound = requests.find(r => r.status === 'pending' && r.user?.id === r.fromId && r.user?.id === user.id && r._instanceOrigin === user._instanceOrigin);
-        if (inbound) {
-          return { ...user, relationship: 'inbound_pending' as const, requestId: inbound.id, mutualFriendCount: 0, mutualSpaceCount: 0 };
+        const pending = pendingRequestWith(requests, user, user._instanceOrigin);
+        if (pending?.user && (isOutgoingRequest(pending) || isIncomingRequest(pending))) {
+          const shownBy = pending._instanceOrigin === user._instanceOrigin
+            ? user
+            : { ...pending.user, _instanceOrigin: pending._instanceOrigin };
+          return {
+            ...shownBy,
+            relationship: isOutgoingRequest(pending) ? 'outbound_pending' as const : 'inbound_pending' as const,
+            requestId: pending.id,
+            mutualFriendCount: 0,
+            mutualSpaceCount: 0,
+          };
         }
         return { ...user, relationship: 'none' as const, mutualFriendCount: 0, mutualSpaceCount: 0 };
       });
@@ -683,13 +677,14 @@ function UserDiscoverCard({
   onRelationshipChange,
 }: {
   user: TaggedDiscoverUser;
-  onOpenDm: (userId: string, homeUserId?: string, homeInstance?: string | null) => void;
+  onOpenDm: (person: IdentityFields, origin: string) => void;
   onRelationshipChange: (userId: string, origin: string, relationship: TaggedDiscoverUser['relationship'], requestId?: string) => void;
 }) {
   useEmojiShortcodeNames();
   const { t } = useTranslation(['social', 'common']);
   const sendFriendRequest = useSocialStore((s) => s.sendFriendRequest);
   const updateFriendRequest = useSocialStore((s) => s.updateFriendRequest);
+  const cancelFriendRequest = useSocialStore((s) => s.cancelFriendRequest);
   const openModal = useUIStore((s) => s.openModal);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState('');
@@ -725,7 +720,7 @@ function UserDiscoverCard({
     setActionLoading(true);
     setError('');
     try {
-      await updateFriendRequest(user.requestId, 'accepted');
+      await updateFriendRequest(user.requestId, user._instanceOrigin, 'accepted', user);
       onRelationshipChange(user.id, user._instanceOrigin, 'friends');
     } catch (err) {
       setError(describeError(err));
@@ -739,7 +734,7 @@ function UserDiscoverCard({
     setActionLoading(true);
     setError('');
     try {
-      await updateFriendRequest(user.requestId, 'declined');
+      await updateFriendRequest(user.requestId, user._instanceOrigin, 'declined', user);
       onRelationshipChange(user.id, user._instanceOrigin, 'none');
     } catch (err) {
       setError(describeError(err));
@@ -753,11 +748,7 @@ function UserDiscoverCard({
     setActionLoading(true);
     setError('');
     try {
-      const origin = user._instanceOrigin;
-      const client = origin
-        ? (useInstanceStore.getState().instances.find(i => i.origin === origin)?.api ?? api)
-        : api;
-      await client.social.cancelRequest(user.requestId);
+      await cancelFriendRequest(user.requestId, user._instanceOrigin, user);
       onRelationshipChange(user.id, user._instanceOrigin, 'none');
     } catch (err) {
       setError(describeError(err));
@@ -771,7 +762,7 @@ function UserDiscoverCard({
   };
 
   const handleMessage = () => {
-    onOpenDm(user.id, user.homeUserId ?? undefined, user.homeInstance);
+    onOpenDm(user, user._instanceOrigin);
   };
 
   return (
@@ -922,7 +913,7 @@ function TabButton({ children, active, onClick }: { children: React.ReactNode, a
 
 function FriendItem({ friend, onRemove, onDm }: { friend: TaggedFriend, onRemove: () => void, onDm: () => void }) {
   const { t } = useTranslation(['social', 'common']);
-  const canonical = useCanonicalUserView(friend as unknown as User);
+  const canonical = useCanonicalUserView(friend as unknown as User, friend._instanceOrigin);
   const instanceLabel = friend._instanceOrigin ? (() => { try { return new URL(friend._instanceOrigin).host; } catch { return friend._instanceOrigin; } })() : '';
   const friendDisplayName = userDisplayName(canonical);
   return (
@@ -977,7 +968,7 @@ function RequestItem({ request, type, onAccept, onDecline, onCancel }: {
   const { t } = useTranslation(['social', 'common']);
   const rawUser = request.user;
   const _FALLBACK_USER = { id: '', username: '', createdAt: 0, isAdmin: false, replicatedInstances: [] } as unknown as User;
-  const canonicalUser = useCanonicalUserView((rawUser as unknown as User | null) ?? _FALLBACK_USER);
+  const canonicalUser = useCanonicalUserView((rawUser as unknown as User | null) ?? _FALLBACK_USER, request._instanceOrigin);
   const user = rawUser ? canonicalUser : null;
   if (!user) return null;
   const instanceLabel = request._instanceOrigin ? (() => { try { return new URL(request._instanceOrigin).host; } catch { return request._instanceOrigin; } })() : '';

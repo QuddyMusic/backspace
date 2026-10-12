@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
 import type { DmChannel, MemberWithUser, User } from '@backspace/shared';
-import { useAuthStore } from '../stores/authStore';
-import { getMyUserIdForOrigin, useSpaceStore, type TaggedSpace } from '../stores/spaceStore';
+import { useAuthStore, useSelfIdentity } from '../stores/authStore';
+import { useSpaceStore, type TaggedSpace } from '../stores/spaceStore';
+import { isMine, selfIdentityOf, type SelfIdentity } from './identity';
 import { locateDmChannel } from './dmChannelLookup';
-import { getCanonicalUserView, useCanonicalUserView } from './userViewLookup';
+import { canonicalUserViewIn, getCanonicalUserView, useCanonicalUserView } from './userViewLookup';
 
 /**
  * A user as seen in one channel.
@@ -12,8 +13,9 @@ import { getCanonicalUserView, useCanonicalUserView } from './userViewLookup';
  * `<@id>`" has an answer only in the context of the channel the token was
  * written in. A DM's ids are its pinned origin's ids and its people are
  * `dm.members`; a space channel's ids are its space's origin's ids and its
- * people are that space's roster. Mentions, the mention picker, the typing
- * indicator and the self-mention highlight all answer through this module,
+ * people are that space's roster. Mentions, the mention picker, the
+ * composer's mention labels, the typing indicator and the self-mention
+ * highlight all answer through this module,
  * never through `spaceStore.members` alone: that field is the roster of the
  * space whose detail was loaded last, whatever channel is on screen (#338).
  */
@@ -34,6 +36,8 @@ export interface ChannelUser {
    * `useCanonicalUserView` itself.
    */
   user: User;
+  /** The instance that issued `userId` and `user` ('' is the page's own). */
+  origin: string;
   /** The membership row in the channel's space; null in a DM. */
   member: MemberWithUser | null;
   /** Space channels only: the highest role's colour, or the owner rose. Null otherwise. */
@@ -100,12 +104,12 @@ function spaceNameColor(member: MemberWithUser, ownerId: string | null): string 
   return null;
 }
 
-function fromDmUser(user: User): ChannelUser {
-  return { userId: user.id, user, member: null, nameColor: null };
+function fromDmUser(user: User, origin: string): ChannelUser {
+  return { userId: user.id, user, origin, member: null, nameColor: null };
 }
 
-function fromSpaceMember(member: MemberWithUser, ownerId: string | null): ChannelUser {
-  return { userId: member.userId, user: member.user, member, nameColor: spaceNameColor(member, ownerId) };
+function fromSpaceMember(member: MemberWithUser, ownerId: string | null, origin: string): ChannelUser {
+  return { userId: member.userId, user: member.user, origin, member, nameColor: spaceNameColor(member, ownerId) };
 }
 
 function findChannelUser(
@@ -114,36 +118,33 @@ function findChannelUser(
   channelId: string,
   userId: string,
 ): ChannelUser | null {
-  const roster = rosterOf(sources, facts, channelId);
+  return userInRoster(rosterOf(sources, facts, channelId), userId);
+}
+
+function userInRoster(roster: ChannelRoster, userId: string): ChannelUser | null {
   if (roster.kind === 'dm') {
     const user = roster.people.find((u) => u.id === userId);
-    return user ? fromDmUser(user) : null;
+    return user ? fromDmUser(user, roster.origin) : null;
   }
   if (roster.kind === 'space') {
     const member = roster.members.find((m) => m.userId === userId);
-    return member ? fromSpaceMember(member, roster.ownerId) : null;
+    return member ? fromSpaceMember(member, roster.ownerId, roster.origin) : null;
   }
   return null;
-}
-
-/** The signed-in user's id on `origin` ('' is home). */
-function selfIdOnOrigin(origin: string, homeUserId: string | undefined): string | undefined {
-  return origin === '' ? homeUserId : getMyUserIdForOrigin(origin);
 }
 
 function channelCandidates(
   sources: ChannelUserSources,
   facts: ChannelFacts,
   channelId: string,
-  homeUserId: string | undefined,
+  self: SelfIdentity | null,
 ): ChannelUser[] {
   const roster = rosterOf(sources, facts, channelId);
   if (roster.kind === 'dm') {
-    const selfId = selfIdOnOrigin(roster.origin, homeUserId);
-    return roster.people.filter((u) => u.id !== selfId).map(fromDmUser);
+    return roster.people.filter((u) => !isMine(u, roster.origin, self)).map((u) => fromDmUser(u, roster.origin));
   }
   if (roster.kind === 'space') {
-    return roster.members.map((m) => fromSpaceMember(m, roster.ownerId));
+    return roster.members.map((m) => fromSpaceMember(m, roster.ownerId, roster.origin));
   }
   return [];
 }
@@ -152,9 +153,14 @@ function channelSelfId(
   sources: ChannelUserSources,
   facts: ChannelFacts,
   channelId: string,
-  homeUserId: string | undefined,
+  self: SelfIdentity | null,
 ): string | undefined {
-  return selfIdOnOrigin(rosterOf(sources, facts, channelId).origin, homeUserId);
+  return self?.rowIds.get(rosterOf(sources, facts, channelId).origin);
+}
+
+function currentSelf(): SelfIdentity | null {
+  const { user, myRowIds } = useAuthStore.getState();
+  return selfIdentityOf(user, myRowIds);
 }
 
 function currentSources(): ChannelUserSources {
@@ -195,7 +201,7 @@ function useFacts(channelId: string | null): ChannelFacts {
  */
 export function resolveChannelUser(channelId: string, userId: string): ChannelUser | null {
   const found = findChannelUser(currentSources(), currentFacts(channelId), channelId, userId);
-  return found ? { ...found, user: getCanonicalUserView(found.user) } : null;
+  return found ? { ...found, user: getCanonicalUserView(found.user, found.origin) } : null;
 }
 
 /**
@@ -204,12 +210,12 @@ export function resolveChannelUser(channelId: string, userId: string): ChannelUs
  * what a mention token in this channel must carry.
  */
 export function getChannelMentionCandidates(channelId: string): ChannelUser[] {
-  return channelCandidates(currentSources(), currentFacts(channelId), channelId, useAuthStore.getState().user?.id);
+  return channelCandidates(currentSources(), currentFacts(channelId), channelId, currentSelf());
 }
 
 /** The signed-in user's id on the origin that issued `channelId`'s ids. */
 export function getSelfIdInChannel(channelId: string): string | undefined {
-  return channelSelfId(currentSources(), currentFacts(channelId), channelId, useAuthStore.getState().user?.id);
+  return channelSelfId(currentSources(), currentFacts(channelId), channelId, currentSelf());
 }
 
 /** Whether `userId`, as written in channel `channelId`, is the signed-in user. */
@@ -219,7 +225,7 @@ export function isSelfInChannel(channelId: string, userId: string): boolean {
 }
 
 /**
- * Candidates whose shown name or username contains `query`, case-insensitive,
+ * Candidates whose shown name, space nickname or username contains `query`, case-insensitive,
  * at most `limit` of them. Matches the best-known view as well as the row the
  * origin delivered, so a stub whose own row has no display name is found by
  * the name the picker shows for it.
@@ -233,7 +239,8 @@ export function filterMentionCandidates(
   const matches = (user: User): boolean =>
     (user.displayName ?? '').toLowerCase().includes(q) || user.username.toLowerCase().includes(q);
   return candidates
-    .filter((c) => matches(c.user) || matches(getCanonicalUserView(c.user)))
+    .filter((c) => (c.member?.nickname ?? '').toLowerCase().includes(q)
+      || matches(c.user) || matches(getCanonicalUserView(c.user, c.origin)))
     .slice(0, limit);
 }
 
@@ -268,18 +275,39 @@ export function useChannelUser(channelId: string | null, userId: string | null):
     () => (channelId && userId ? findChannelUser(sources, facts, channelId, userId) : null),
     [sources, facts, channelId, userId],
   );
-  const canonical = useCanonicalUserView(found?.user ?? NO_USER);
+  const canonical = useCanonicalUserView(found?.user ?? NO_USER, found?.origin ?? '');
   return useMemo(() => (found ? { ...found, user: canonical } : null), [found, canonical]);
+}
+
+/**
+ * Reactive `resolveChannelUser` for any number of ids: a lookup that answers
+ * for every id in `channelId` and is replaced when the channel's people or the
+ * user-view cache change. For a component that learns the ids while rendering
+ * (the composer's mention labels); a component showing one known user uses
+ * `useChannelUser`. Both answer from the same roster and the same view, so the
+ * composer names a `<@id>` exactly as the sent message's `MentionBadge` will.
+ */
+export function useChannelUserResolver(channelId: string): (userId: string) => ChannelUser | null {
+  const sources = useSources();
+  const facts = useFacts(channelId);
+  const userViews = useSpaceStore((s) => s.userViews);
+  return useMemo(() => {
+    const roster = rosterOf(sources, facts, channelId);
+    return (userId: string) => {
+      const found = userInRoster(roster, userId);
+      return found ? { ...found, user: canonicalUserViewIn(userViews, found.user, found.origin) } : null;
+    };
+  }, [sources, facts, channelId, userViews]);
 }
 
 /** Reactive `getChannelMentionCandidates`. */
 export function useChannelMentionCandidates(channelId: string): ChannelUser[] {
   const sources = useSources();
   const facts = useFacts(channelId);
-  const homeUserId = useAuthStore((s) => s.user?.id);
+  const self = useSelfIdentity();
   return useMemo(
-    () => channelCandidates(sources, facts, channelId, homeUserId),
-    [sources, facts, channelId, homeUserId],
+    () => channelCandidates(sources, facts, channelId, self),
+    [sources, facts, channelId, self],
   );
 }
 
@@ -287,9 +315,9 @@ export function useChannelMentionCandidates(channelId: string): ChannelUser[] {
 export function useSelfIdInChannel(channelId: string | null): string | undefined {
   const sources = useSources();
   const facts = useFacts(channelId);
-  const homeUserId = useAuthStore((s) => s.user?.id);
+  const self = useSelfIdentity();
   return useMemo(
-    () => (channelId ? channelSelfId(sources, facts, channelId, homeUserId) : undefined),
-    [sources, facts, channelId, homeUserId],
+    () => (channelId ? channelSelfId(sources, facts, channelId, self) : undefined),
+    [sources, facts, channelId, self],
   );
 }

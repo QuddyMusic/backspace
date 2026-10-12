@@ -6,6 +6,7 @@ import { ConfirmDialog } from '../../ui/ConfirmDialog';
 import { AddBotModal } from '../AddBotModal';
 import { useSpaceStore, getApiForOrigin } from '../../../stores/spaceStore';
 import { parseFederatedUsername, isFederationGlobeApplicable, userDisplayName } from '../../../utils/identity';
+import { useSpaceOrigin } from '../../../hooks/useSpaceOrigin';
 import { useCanonicalUserView } from '../../../utils/userViewLookup';
 import { hasPermissionBit, PermissionBits, stringToPermissions } from '../../../utils/permissions';
 import {
@@ -70,7 +71,7 @@ function MembersPanelRow({
   onPendingAction: (action: { type: 'kick' | 'ban'; userId: string; displayName: string }) => void;
 }) {
   const { t } = useTranslation(['spaces', 'common']);
-  const canonical = useCanonicalUserView(member.user);
+  const canonical = useCanonicalUserView(member.user, useSpaceOrigin(member.spaceId));
   const isOwner = member.userId === ownerId;
   const displayName = userDisplayName(canonical);
 

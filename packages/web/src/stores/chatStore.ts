@@ -1,11 +1,14 @@
 import { create } from 'zustand';
-import type { MessageWithUser, Reaction, ReadState } from '@backspace/shared';
+import type { MessageWithUser, Reaction, ReadState, User } from '@backspace/shared';
 import { wsSend } from '../hooks/useWebSocket';
 import { HttpError } from '../api/client';
 import { isDmChannel, getChannelOrigin, getApiForOrigin, useSpaceStore } from './spaceStore';
-import { useAuthStore } from './authStore';
+import { isMe, myRowForOrigin } from './authStore';
 import { normalizeMessageAssets } from '../utils/assetUrls';
+import { updateIsAboutRowId, withUserUpdate, type IdentityFields } from '../utils/identity';
 import { usePendingMessageStore } from './pendingMessageStore';
+import { useUIStore } from './uiStore';
+import { describeError } from '../i18n/errors';
 import type { ScrollAnchor } from '../components/chat/scrollAnchor';
 
 const MAX_MESSAGES_PER_CHANNEL = 200;
@@ -96,7 +99,11 @@ function unconfirmedSends(previous: readonly MessageWithUser[] | undefined, page
   return temps.filter((m) => !contents.has(m.content || null));
 }
 
-/** Apply `fn` to the held live messages of every detached channel holding `messageId`. */
+/**
+ * Apply `fn` to the held live messages of every detached channel holding
+ * `messageId`. `fn` returns the message itself to leave it as it is; when
+ * nothing changes, `detached` itself is returned.
+ */
 function mapHeldMessage(
   detached: Map<string, MessageWithUser[]>,
   messageId: string,
@@ -106,14 +113,17 @@ function mapHeldMessage(
   for (const [channelId, held] of detached) {
     if (!held.some((m) => m.id === messageId)) continue;
     const updated: MessageWithUser[] = [];
+    let changed = false;
     for (const message of held) {
       if (message.id !== messageId) {
         updated.push(message);
         continue;
       }
       const mapped = fn(message);
+      if (mapped !== message) changed = true;
       if (mapped) updated.push(mapped);
     }
+    if (!changed) continue;
     if (next === detached) next = new Map(detached);
     next.set(channelId, updated);
   }
@@ -207,7 +217,14 @@ interface ChatState {
   typingUsers: Map<string, TypingUser[]>;
   hasMore: Map<string, boolean>;
   loadStates: Map<string, ChannelLoadState>;
-  replyTo: MessageWithUser | null;
+  /**
+   * The message each channel's composer is replying to, keyed by channel or
+   * DM channel id. A reply can only target a message in the channel it is
+   * posted into (the server refuses anything else with
+   * `reply_target_invalid`), so the target belongs to its channel and never
+   * follows the user to another one.
+   */
+  replyTargets: Map<string, MessageWithUser>;
   editingMessageId: string | null;
   readStates: Map<string, string>;
   unreadChannels: Set<string>;
@@ -234,9 +251,17 @@ interface ChatState {
    * newest message when it changes.
    */
   presentReturns: Map<string, number>;
+  /**
+   * The `reaction_add`s this client handed to an open socket and has not
+   * seen answered, keyed by `reactionKey`, with the time each was sent. The
+   * server answers a stored reaction with `reaction_added` and a refused one
+   * with nothing, so an entry counts only for `REACTION_ADD_IN_FLIGHT_MS`.
+   */
+  reactionAddsInFlight: Map<string, number>;
   setCurrentChannel: (channelId: string | null) => void;
   saveScrollPosition: (channelId: string, anchor: ScrollAnchor) => void;
-  setReplyTo: (message: MessageWithUser | null) => void;
+  /** Start (or, with null, cancel) a reply in `channelId`'s composer. */
+  setReplyTo: (channelId: string, message: MessageWithUser | null) => void;
   setEditingMessage: (messageId: string | null) => void;
   /**
    * Load the channel's newest page. Resolves true when the cache holds the
@@ -265,9 +290,20 @@ interface ChatState {
   addRealtimeMessage: (channelId: string, message: MessageWithUser) => void;
   updateMessage: (message: MessageWithUser) => void;
   removeMessage: (messageId: string, channelId: string) => void;
+  /**
+   * Whether the store holds the signed-in user's reaction with `emoji` on
+   * the message: what the reaction pills show. An add still in flight does
+   * not count, since nothing on screen shows it. Reads the store at call
+   * time.
+   */
+  hasOwnReaction: (messageId: string, emoji: string) => boolean;
+  /**
+   * Send a `reaction_add`, unless the user already holds the reaction
+   * (`hasOwnReaction`) or has an add for it in flight.
+   */
   addReaction: (messageId: string, emoji: string) => void;
   removeReaction: (messageId: string, emoji: string) => void;
-  onReactionAdded: (messageId: string, reaction: any) => void;
+  onReactionAdded: (messageId: string, reaction: Reaction) => void;
   onReactionRemoved: (messageId: string, userId: string, emoji: string) => void;
   loadMessagesAround: (channelId: string, messageId: string) => Promise<LoadAroundResult>;
   setTyping: (channelId: string, userId: string, username: string) => void;
@@ -282,8 +318,18 @@ interface ChatState {
   onMarkUnread: (channelId: string, messageId: string) => void;
   removeChannelStates: (channelIds: Set<string>) => void;
   rekeyChannelState: (oldId: string, newId: string) => void;
-  updateUserInMessages: (user: { id: string; [key: string]: any }) => void;
-  clearTypingForUser: (userId: string) => void;
+  /**
+   * Apply a `user_updated` row issued by `origin` to the authors it is about
+   * (`withUserUpdate`); each channel's rows are its origin's.
+   */
+  updateUserInMessages: (user: User, origin: string) => void;
+  /**
+   * Drop the typing entries of the deleted user's `user_updated` row (issued
+   * by `origin`): a typing entry keeps only a row id, so only the issuing
+   * instance's channels (`updateIsAboutRowId`). Each instance that holds a
+   * row of the person sends its own event for it.
+   */
+  clearTypingForDeletedUser: (user: IdentityFields, origin: string) => void;
 }
 
 /** The client for the instance that owns `channelId`, and that instance's origin. */
@@ -338,14 +384,76 @@ function newestPageState(state: ChatState, channelId: string, page: MessageWithU
   return next;
 }
 
-/** Find which channel a message belongs to by scanning the message cache. */
-function findChannelForMessage(messages: Map<string, MessageWithUser[]>, messageId: string): string | null {
-  for (const [channelId, msgs] of messages) {
-    if (msgs.some(m => m.id === messageId)) {
-      return channelId;
+/** A message the store holds, loaded or held by a detached window, with its channel. */
+function findHeldMessage(
+  state: Pick<ChatState, 'messages' | 'detachedChannels'>,
+  messageId: string,
+): { channelId: string; message: MessageWithUser } | null {
+  for (const source of [state.messages, state.detachedChannels]) {
+    for (const [channelId, msgs] of source) {
+      const message = msgs.find(m => m.id === messageId);
+      if (message) return { channelId, message };
     }
   }
   return null;
+}
+
+/**
+ * How long an unanswered `reaction_add` counts as in flight. The server sends
+ * nothing back for an add it refuses, so an entry is not held for ever.
+ */
+export const REACTION_ADD_IN_FLIGHT_MS = 10_000;
+
+/** One user's reaction on one message: the key the server keeps unique. */
+function reactionKey(messageId: string, emoji: string): string {
+  return JSON.stringify([messageId, emoji]);
+}
+
+/** Whether `reaction`, on a message of `channelId`, is the signed-in user's. */
+function isOwnReactionIn(channelId: string, reaction: Pick<Reaction, 'userId' | 'user'>): boolean {
+  return isMe(reaction.user ?? { id: reaction.userId }, getChannelOrigin(channelId));
+}
+
+/** `inFlight` without `key`, or `inFlight` itself when it has no such entry. */
+function withoutInFlight(inFlight: Map<string, number>, key: string): Map<string, number> {
+  if (!inFlight.has(key)) return inFlight;
+  const next = new Map(inFlight);
+  next.delete(key);
+  return next;
+}
+
+/**
+ * `message` with `reaction` added to its reactions, or `message` itself when
+ * they already hold it: the same row, or the same user's reaction with the
+ * same emoji (the server stores one per user, emoji and message). Returning
+ * the same object lets a repeated `reaction_added` leave the row as it is.
+ */
+function withReaction(message: MessageWithUser, reaction: Reaction): MessageWithUser {
+  const current = message.reactions ?? [];
+  const held = current.some(r => r.id === reaction.id || (r.userId === reaction.userId && r.emoji === reaction.emoji));
+  return held ? message : { ...message, reactions: [...current, reaction] };
+}
+
+/** `targets` with `channelId`'s reply set to `message`, or removed for null. */
+function withReplyTarget(
+  targets: Map<string, MessageWithUser>,
+  channelId: string,
+  message: MessageWithUser | null,
+): Map<string, MessageWithUser> {
+  if (message ? targets.get(channelId) === message : !targets.has(channelId)) return targets;
+  const next = new Map(targets);
+  if (message) next.set(channelId, message);
+  else next.delete(channelId);
+  return next;
+}
+
+/**
+ * Whether a failed send gives its reply back to the composer. Not when the
+ * server refused the reply target itself: it is gone or not in the channel,
+ * and every retry with it would be refused the same way.
+ */
+function shouldRestoreReplyTarget(error: unknown): boolean {
+  return !(error instanceof HttpError && error.code === 'reply_target_invalid');
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -354,7 +462,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   typingUsers: new Map(),
   hasMore: new Map(),
   loadStates: new Map(),
-  replyTo: null,
+  replyTargets: new Map(),
   editingMessageId: null,
   readStates: new Map(),
   unreadChannels: new Set(),
@@ -363,6 +471,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   scrollPositions: new Map(),
   detachedChannels: new Map(),
   presentReturns: new Map(),
+  reactionAddsInFlight: new Map(),
 
   saveScrollPosition: (channelId, anchor) => {
     set((state) => {
@@ -420,7 +529,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
     });
   },
-  setReplyTo: (message) => set({ replyTo: message }),
+  setReplyTo: (channelId, message) => set((state) => ({
+    replyTargets: withReplyTarget(state.replyTargets, channelId, message),
+  })),
   setEditingMessage: (messageId) => set({ editingMessageId: messageId }),
 
   clearAllMessages: () => set({
@@ -434,9 +545,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     scrollPositions: new Map(),
     detachedChannels: new Map(),
     presentReturns: new Map(),
+    reactionAddsInFlight: new Map(),
     loadStates: new Map(),
     currentChannelId: null,
-    replyTo: null,
+    replyTargets: new Map(),
     editingMessageId: null,
   }),
 
@@ -625,10 +737,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: async (channelId: string, content: string, attachmentIds?: string[]) => {
-    const replyToId = get().replyTo?.id;
+    // Only this channel's reply: a target from another channel would be
+    // refused by the server and the send rolled back.
+    const replyTarget = get().replyTargets.get(channelId) ?? null;
+    const replyToId = replyTarget?.id;
     const isDm = isDmChannel(channelId);
-    const currentUser = useAuthStore.getState().user;
     const origin = getChannelOrigin(channelId);
+    // The user's row as the channel's instance issues it: the optimistic
+    // message is checked against that origin (own message, edit, profile).
+    const myRow = myRowForOrigin(origin);
     const client = getApiForOrigin(origin);
 
     // Sending from a window of older history goes back to the present, where
@@ -637,20 +754,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // Generate optimistic message
     const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    if (currentUser) {
+    if (myRow) {
       const optimisticMessage: MessageWithUser = {
         id: tempId,
         channelId: isDm ? '' : channelId,
-        userId: currentUser.id,
+        userId: myRow.id,
         content: content || null,
         replyToId: replyToId ?? null,
         editedAt: null,
         createdAt: Date.now(),
-        user: currentUser,
+        user: myRow,
         attachments: [],
         embeds: [],
         reactions: [],
-        replyTo: get().replyTo ?? undefined,
+        replyTo: replyTarget ?? undefined,
       };
       if (isDm) {
         (optimisticMessage as any).dmChannelId = channelId;
@@ -662,12 +779,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (isDm) {
         useSpaceStore.getState().patchDmCopy(channelId, dm => ({
           ...dm,
-          lastMessage: { id: tempId, dmChannelId: channelId, userId: currentUser.id, content, createdAt: Date.now() },
+          lastMessage: { id: tempId, dmChannelId: channelId, userId: myRow.id, content, createdAt: Date.now() },
         }));
       }
     }
 
-    set({ replyTo: null });
+    // The send consumes the reply; a failed send gives it back below.
+    if (replyTarget) get().setReplyTo(channelId, null);
 
     try {
       if (isDm) {
@@ -676,9 +794,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
         await client.channels.sendMessage(channelId, { content, attachments: attachmentIds, replyToId });
       }
       // Real message will arrive via WebSocket and replace the temp one
-    } catch {
-      // Rollback: remove the optimistic message on failure
+    } catch (error) {
+      // Roll back locally, but let the composer expose failure and retain the draft.
       get().removeMessage(tempId, channelId);
+      if (replyTarget && shouldRestoreReplyTarget(error)) {
+        // Give the reply back unless the user has started another one in
+        // this channel since.
+        set((state) => (state.replyTargets.has(channelId)
+          ? state
+          : { replyTargets: withReplyTarget(state.replyTargets, channelId, replyTarget) }));
+      }
+      throw error;
     }
   },
 
@@ -700,11 +826,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
         await client.messages.update(messageId, { content });
       }
       // Real update will arrive via WebSocket
-    } catch {
-      // Rollback: restore the original message on failure
+    } catch (error) {
+      // Rollback: restore the original message, and say why the edit was
+      // refused (a 1-on-1 whose partner was deleted, for one).
       if (originalMessage) {
         get().updateMessage(originalMessage);
       }
+      useUIStore.getState().addToast(describeError(error), 'warning');
     }
   },
 
@@ -724,11 +852,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
         await client.messages.delete(messageId);
       }
       // Real deletion will arrive via WebSocket (already removed locally)
-    } catch {
-      // Rollback: re-add the message on failure
+    } catch (error) {
+      // A 404 says the message is already gone on the server: deleted from
+      // another tab or device, or by a moderator, before this request got
+      // there. The local removal stands and there is nothing to report.
+      if (error instanceof HttpError && error.status === 404) return;
+      // Rollback: re-add the message, and say why the delete was refused.
       if (savedMessage) {
         get().addMessage(channelId, savedMessage);
       }
+      useUIStore.getState().addToast(describeError(error), 'warning');
     }
   },
 
@@ -808,6 +941,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         newMessages.set(channelId, updated);
       }
+      // Channel system history is passive; DM system-event behavior is unchanged.
+      if (normalizedMessage.type === 'system' && !('dmChannelId' in normalizedMessage)) {
+        return { messages: newMessages, detachedChannels };
+      }
       // Append to realtimeMessageEvents (capped; see addedRealtimeMessageEvents)
       const newEvents = [...state.realtimeMessageEvents, { channelId, message: normalizedMessage }];
       if (newEvents.length > REALTIME_MESSAGE_EVENT_CAP) {
@@ -838,52 +975,97 @@ export const useChatStore = create<ChatState>((set, get) => ({
   removeMessage: (messageId: string, channelId: string) => {
     set((state) => {
       const detachedChannels = mapHeldMessage(state.detachedChannels, messageId, () => null);
+      // A reply to a removed message could only be refused by the server.
+      const replyTargets = state.replyTargets.get(channelId)?.id === messageId
+        ? withReplyTarget(state.replyTargets, channelId, null)
+        : state.replyTargets;
       const current = state.messages.get(channelId);
-      if (!current) return detachedChannels === state.detachedChannels ? state : { detachedChannels };
+      if (!current) {
+        return detachedChannels === state.detachedChannels && replyTargets === state.replyTargets
+          ? state
+          : { detachedChannels, replyTargets };
+      }
       const newMessages = new Map(state.messages);
       newMessages.set(channelId, current.filter(m => m.id !== messageId));
       return {
         messages: newMessages,
         detachedChannels,
+        replyTargets,
         editingMessageId: state.editingMessageId === messageId ? null : state.editingMessageId,
       };
     });
   },
 
+  hasOwnReaction: (messageId: string, emoji: string) => {
+    const held = findHeldMessage(get(), messageId);
+    if (!held) return false;
+    return (held.message.reactions ?? []).some(r => r.emoji === emoji && isOwnReactionIn(held.channelId, r));
+  },
+
   addReaction: (messageId: string, emoji: string) => {
+    // A second add of a reaction the user holds, or has an add in flight
+    // for, is never sent: the server keeps one per user and emoji.
+    const sentAt = get().reactionAddsInFlight.get(reactionKey(messageId, emoji));
+    if (sentAt !== undefined && Date.now() - sentAt < REACTION_ADD_IN_FLIGHT_MS) return;
+    if (get().hasOwnReaction(messageId, emoji)) return;
     // Resolve the channel from our message cache so the UI doesn't need to pass it
-    const channelId = findChannelForMessage(get().messages, messageId);
+    const channelId = findHeldMessage(get(), messageId)?.channelId;
     const origin = channelId ? getChannelOrigin(channelId) : '';
-    wsSend({ type: 'reaction_add', messageId, emoji }, origin);
+    // An add the socket did not take (the origin is reconnecting, say) is
+    // not in flight: the next tap sends it again.
+    if (!wsSend({ type: 'reaction_add', messageId, emoji }, origin)) return;
+    set((state) => {
+      // Drop the entries that have timed out on the way: an add the server
+      // refused is never answered, so nothing else would remove them.
+      const now = Date.now();
+      const reactionAddsInFlight = new Map<string, number>();
+      for (const [key, sentAt] of state.reactionAddsInFlight) {
+        if (now - sentAt < REACTION_ADD_IN_FLIGHT_MS) reactionAddsInFlight.set(key, sentAt);
+      }
+      reactionAddsInFlight.set(reactionKey(messageId, emoji), now);
+      return { reactionAddsInFlight };
+    });
   },
 
   removeReaction: (messageId: string, emoji: string) => {
-    const channelId = findChannelForMessage(get().messages, messageId);
+    const channelId = findHeldMessage(get(), messageId)?.channelId;
     const origin = channelId ? getChannelOrigin(channelId) : '';
+    // The server applies the add before this removal, so the add's answer no
+    // longer matters here.
+    set((state) => {
+      const reactionAddsInFlight = withoutInFlight(state.reactionAddsInFlight, reactionKey(messageId, emoji));
+      return reactionAddsInFlight === state.reactionAddsInFlight ? state : { reactionAddsInFlight };
+    });
     wsSend({ type: 'reaction_remove', messageId, emoji }, origin);
   },
 
   onReactionAdded: (messageId: string, reaction: Reaction) => {
     set((state) => {
-      const detachedChannels = mapHeldMessage(state.detachedChannels, messageId, (m) => ({
-        ...m,
-        reactions: [...(m.reactions || []), reaction],
-      }));
-      const newMessages = new Map(state.messages);
-      for (const [channelId, msgs] of newMessages.entries()) {
+      const held = findHeldMessage(state, messageId);
+      const reactionAddsInFlight = held && isOwnReactionIn(held.channelId, reaction)
+        ? withoutInFlight(state.reactionAddsInFlight, reactionKey(messageId, reaction.emoji))
+        : state.reactionAddsInFlight;
+      const detachedChannels = mapHeldMessage(state.detachedChannels, messageId, (m) => withReaction(m, reaction));
+      let messages = state.messages;
+      for (const [channelId, msgs] of state.messages) {
         const msgIndex = msgs.findIndex(m => m.id === messageId);
-        if (msgIndex !== -1) {
+        if (msgIndex === -1) continue;
+        const oldMsg = msgs[msgIndex]!;
+        const newMsg = withReaction(oldMsg, reaction);
+        if (newMsg !== oldMsg) {
           const newMsgs = [...msgs];
-          const oldMsg = newMsgs[msgIndex]!;
-          newMsgs[msgIndex] = {
-            ...oldMsg,
-            reactions: [...(oldMsg.reactions || []), reaction],
-          };
-          newMessages.set(channelId, newMsgs);
-          break;
+          newMsgs[msgIndex] = newMsg;
+          messages = new Map(state.messages);
+          messages.set(channelId, newMsgs);
         }
+        break;
       }
-      return { messages: newMessages, detachedChannels };
+      if (
+        messages === state.messages
+        && detachedChannels === state.detachedChannels
+        && reactionAddsInFlight === state.reactionAddsInFlight
+      ) return state;
+      return { messages, detachedChannels, reactionAddsInFlight };
     });
   },
 
@@ -1167,20 +1349,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  updateUserInMessages: (user: { id: string; homeUserId?: string | null; [key: string]: any }) => {
+  updateUserInMessages: (user: User, origin: string) => {
     set((state) => {
       const newMessages = new Map(state.messages);
       let changed = false;
       for (const [channelId, msgs] of newMessages) {
+        const channelOrigin = getChannelOrigin(channelId);
         let channelChanged = false;
         const updated = msgs.map(m => {
-          const matches = m.userId === user.id ||
-            (user.homeUserId && m.user?.homeUserId && m.user.homeUserId === user.homeUserId);
-          if (matches) {
-            channelChanged = true;
-            return { ...m, user: { ...m.user, ...user } };
-          }
-          return m;
+          if (!m.user) return m;
+          const author = withUserUpdate(m.user, channelOrigin, user, origin);
+          if (author === m.user) return m;
+          channelChanged = true;
+          return { ...m, user: author };
         });
         if (channelChanged) { newMessages.set(channelId, updated); changed = true; }
       }
@@ -1188,12 +1369,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  clearTypingForUser: (userId: string) => {
+  clearTypingForDeletedUser: (user: IdentityFields, origin: string) => {
     set((state) => {
       const newTyping = new Map(state.typingUsers);
       let changed = false;
       for (const [channelId, users] of newTyping) {
-        const filtered = users.filter(t => t.userId !== userId);
+        const channelOrigin = getChannelOrigin(channelId);
+        const filtered = users.filter(t => !updateIsAboutRowId(t.userId, channelOrigin, user, origin));
         if (filtered.length !== users.length) {
           newTyping.set(channelId, filtered);
           changed = true;

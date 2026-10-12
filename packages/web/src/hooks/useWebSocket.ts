@@ -1,16 +1,21 @@
+import { receiveChannelPoke } from '../components/chat/channelPoke';
+import { useChannelPokeStore } from '../stores/channelPokeStore';
+import { applySpaceMemberUpdate } from '../stores/spaceMemberUpdates';
+import { useUnreadCountStore } from '../stores/unreadCountStore';
 import React, { useEffect, useRef } from 'react';
-import { useAuthStore } from '../stores/authStore';
-import { useSpaceStore, getChannelOrigin, getMyUserIdForOrigin, setMyUserIdForOrigin } from '../stores/spaceStore';
+import { isMyIdentity, useAuthStore } from '../stores/authStore';
+import { useSpaceStore, getChannelOrigin, getMyUserIdForOrigin } from '../stores/spaceStore';
 import { useChatStore } from '../stores/chatStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useSocialStore } from '../stores/socialStore';
 import { useSettingsStore } from '../stores/settingsStore';
-import type { ServerEvent, ClientEvent, ActiveCallInfo, Activity, User } from '@backspace/shared';
+import type { ServerEvent, ClientEvent, ActiveCallInfo, Activity, FederatedIdentity, User } from '@backspace/shared';
 import { resolveAssetUrl, normalizeUserAssets, normalizeMessageAssets } from '../utils/assetUrls';
 import { broadcastVoiceStatus, broadcastDeafenViaLiveKit } from '../utils/voice';
+import { dmCallCredentialsFrom, dmCallIds, dmCallOrigin, dmCallRefFrom, dmCallRoomKey } from '../utils/dmCall';
+import { turnCameraOnInDmCall } from '../utils/voiceActions';
 import { applySpaceVoiceState } from '../utils/voiceStateSync';
 import { applyIncomingDmMessage, applyIncomingDmChannel } from '../utils/dmMessageRouting';
-import { registerSelfId } from '../utils/identity';
 import { ownStatusReport, statusToAssertOnRemote } from '../utils/selfStatus';
 import { getActiveRoom } from './useLiveKit';
 import { useUIStore } from '../stores/uiStore';
@@ -20,6 +25,7 @@ import { presenceSubjectOf, readyActivityEntries, readyRowIndex } from '../utils
 import { useDiscoverStore } from '../stores/discoverStore';
 import { useFederationStore } from '../stores/federationStore';
 import { notePendingOriginReady } from '../stores/pendingMessageRehydrate';
+import { useNotificationSettingsStore } from '../stores/notificationSettingsStore';
 import { detectClientKind } from '../platform/clientKind';
 import { ConnectionState as LiveKitConnectionState } from 'livekit-client';
 
@@ -132,6 +138,7 @@ function buildWsUrl(origin: string): string {
 // ─── Call relay helpers ───────────────────────────────────────────────────────
 
 import { buildCallUndeliverableToast } from '../utils/callUndeliverableToast';
+import { peerRejectedToast } from '../utils/peerRejectedToast';
 
 export { buildCallUndeliverableToast };
 
@@ -163,9 +170,69 @@ export function teardownDmCall(): void {
   voice.setIncomingCall(null);
   voice.setOutgoingCall(null);
   voice.setActiveDmCall(null);
-  voice.clearFederatedCallData();
   // Never tear down a space voice connection in response to a DM-call signal.
   if (voice.disconnectFn && !voice.currentVoiceChannelId) voice.disconnectFn();
+}
+
+/**
+ * Whether a `dm_call_ended` / `dm_call_rejected` is about the call this client
+ * holds (ringing in, ringing out or joined). Every member of a DM hears that
+ * its call ended, and a group decline is told to the decliner; neither may
+ * tear down a different call the client is in. The event names the call by
+ * the sending instance's DM id, by the conversation key, or both, and a slot
+ * may hold either, so the DM ids are also compared through their keys.
+ */
+export function dmCallEventIsOurs(event: DmCallEventIds): boolean {
+  const { incomingCall, outgoingCall, activeDmCall } = useVoiceStore.getState();
+  // Each slot carries the ids of its own call, so an id a past ring left
+  // behind can never make another call's event look like this one's.
+  const held: string[] = [];
+  if (incomingCall) held.push(...dmCallIds(incomingCall));
+  if (outgoingCall) held.push(outgoingCall.dmChannelId);
+  if (activeDmCall) held.push(...dmCallIds(activeDmCall));
+  return dmCallEventNames(event, held);
+}
+
+type DmCallEventIds = { dmChannelId: string | null; federatedCallId?: string | null };
+
+/**
+ * Whether `event` names the call one slot holds under `held` (its DM id, its
+ * key, or both). The event may name it by the sending instance's DM id, by
+ * the conversation key, or both, so DM ids are also compared through their
+ * keys.
+ */
+function dmCallEventNames(event: DmCallEventIds, held: readonly string[]): boolean {
+  if (held.length === 0) return false;
+  const { dmChannels } = useSpaceStore.getState();
+  const keyOf = (dmChannelId: string): string | null => dmChannels.find(d => d.id === dmChannelId)?.federatedId ?? null;
+  const named = new Set<string>();
+  if (event.dmChannelId) {
+    named.add(event.dmChannelId);
+    const key = keyOf(event.dmChannelId);
+    if (key) named.add(key);
+  }
+  if (event.federatedCallId) named.add(event.federatedCallId);
+
+  for (const id of held) {
+    if (named.has(id)) return true;
+    const key = keyOf(id);
+    if (key && named.has(key)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether a `dm_call_accepted` stops this client's ring: it names the call
+ * that is ringing, and the member who answered is the signed-in user (another
+ * of their sessions), compared by federated identity. In a group call another
+ * member's answer leaves the ring on, so this member can still answer. An
+ * event from a server up to 1.9.0 does not say who answered and stops it, as
+ * it always did.
+ */
+export function acceptStopsRing(event: DmCallEventIds & { answeredBy?: FederatedIdentity }): boolean {
+  const { incomingCall } = useVoiceStore.getState();
+  if (!incomingCall || !dmCallEventNames(event, dmCallIds(incomingCall))) return false;
+  return !event.answeredBy || isMyIdentity(event.answeredBy);
 }
 
 /**
@@ -193,9 +260,22 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
   const { addVoiceUser, removeVoiceUser, clearVoiceUsersForOrigin, setVoiceUsers, setVoiceChannelElapsedSeconds, setVoiceUserStatus, clearVoiceUserStatus } = useVoiceStore.getState();
 
   switch (event.type) {
+    case 'channel_poke':
+      // The stored row joins the timeline as a passive system message (no
+      // unread dot, sound or notification; chatStore keeps channel system
+      // rows out of realtimeMessageEvents), then the cue plays for viewers.
+      if (event.message.user) upsertUserView(event.message.user, origin);
+      addRealtimeMessage(event.message.channelId, event.message);
+      receiveChannelPoke(origin, event.message);
+      break;
+    case 'channel_unread_count':
+      useUnreadCountStore.getState().updateCounts(origin, event.counts);
+      break;
     case 'ready':
-      // Register this user's ID for cross-instance self-identification
-      registerSelfId(event.user.id);
+      useChannelPokeStore.getState().setHost(origin, event.supportsPoke === true);
+      // This instance names the signed-in user's row there (the home's is the
+      // session row itself, set below). The one record of "my ids".
+      if (!isHome) useAuthStore.getState().recordMyRow(origin, event.user.id);
 
       if (isHome) {
         setUser(event.user);
@@ -231,11 +311,9 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
       populateFromReady(origin, event.spaces, event.folders, event.dmChannels, event.spaceLayout, event.layoutUpdatedAt);
       // Pending messages restored at boot wait for the ready that lists their channel.
       notePendingOriginReady(origin);
-
-      // Cache authoritative identity for this origin (federation-safe)
-      if (!isHome) {
-        setMyUserIdForOrigin(origin, event.user.id);
-      }
+      // This instance's notification settings for the spaces it hosts, read
+      // by the alert filter (docs/systems/sounds.md).
+      void useNotificationSettingsStore.getState().load(origin);
 
       // The user's own chosen status (utils/selfStatus.ts): take it from this
       // socket when it is the owner's report (the true home, for a session on
@@ -246,7 +324,7 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
         const report = ownStatusReport(authUser, { origin, isHome }, { userId: event.user.id, status: event.user.status });
         if (report) useAuthStore.getState().applyOwnStatus(report);
         if (!isHome) {
-          const status = statusToAssertOnRemote(authUser, event.user, window.location.host);
+          const status = statusToAssertOnRemote(authUser, event.user);
           if (status) wsSend({ type: 'presence_update', status }, origin);
         }
       }
@@ -305,6 +383,7 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
         }
       }
 
+      useUnreadCountStore.getState().hydrate(origin, event.unreadCounts);
       // Initialize/update unread tracking for this origin (home or remote)
       if (event.readStates) {
         const { channelLastMessageIds, channelOriginMap } = useSpaceStore.getState();
@@ -469,14 +548,14 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
       // server bind the new socket while its DM participant is still in grace.
       {
         const state = useVoiceStore.getState();
-        if (state.activeDmCall && (state.callOrigin || getChannelOrigin(state.activeDmCall.dmChannelId)) === origin) {
+        if (state.activeDmCall && dmCallOrigin(state.activeDmCall) === origin) {
           broadcastVoiceStatus(origin);
         }
       }
 
       // Restore DM call state from server (all origins — federated DMs live on remote instances)
       {
-        const { activeDmCall, setActiveDmCall, setIncomingCall, incomingCall, connectFn, disconnectFn, setFederatedCallData, setFederatedCallId } = useVoiceStore.getState();
+        const { activeDmCall, setActiveDmCall, setIncomingCall, incomingCall, disconnectFn } = useVoiceStore.getState();
         const myId = event.user.id;
         if (event.activeCalls && event.activeCalls.length > 0) {
           for (const call of event.activeCalls) {
@@ -491,28 +570,28 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
               // has no active LiveKit connection. The user can re-initiate if needed.
               break;
             } else if (call.state === 'ringing' && call.callerId !== myId) {
+              // The ring is this origin's: its answer goes back here, with
+              // the ids and credentials it came with.
+              const ref = dmCallRefFrom(call, origin);
+              if (!ref) continue;
               const dmCh = event.dmChannels?.find((d: any) => d.id === call.dmChannelId);
               const callerUser = dmCh?.members?.find((m: any) => m.id === call.callerId);
               setIncomingCall({
-                dmChannelId: call.dmChannelId,
+                ...ref,
                 callerId: call.callerId,
                 callerName: callerUser?.displayName || callerUser?.username || call.callerId,
+                livekit: dmCallCredentialsFrom(call.livekitUrl, call.livekitToken),
               });
-              // Store federated call data for ringing calls too
-              if (call.livekitUrl && call.livekitToken) {
-                setFederatedCallData(call.livekitToken, call.livekitUrl);
-              }
-              if (call.federatedCallId) {
-                setFederatedCallId(call.federatedCallId);
-              }
             }
           }
         } else {
-          if (activeDmCall) {
+          // This origin reports no call. Only a call that goes through it is
+          // gone; a call through another connection is that one's to report.
+          if (activeDmCall && dmCallOrigin(activeDmCall) === origin) {
             setActiveDmCall(null);
             if (disconnectFn) disconnectFn();
           }
-          if (incomingCall) {
+          if (incomingCall && dmCallOrigin(incomingCall) === origin) {
             setIncomingCall(null);
           }
         }
@@ -586,7 +665,7 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
         const { voiceChannelIds } = useSpaceStore.getState();
         const myId = isHome ? useAuthStore.getState().user?.id : getMyUserIdForOrigin(origin);
         // Skip voice channels — they have no text reading/acking UI
-        if (event.message.channelId !== currentChannelId && event.message.userId !== myId && !voiceChannelIds.has(event.message.channelId)) {
+        if (event.message.type !== 'system' && event.message.channelId !== currentChannelId && event.message.userId !== myId && !voiceChannelIds.has(event.message.channelId)) {
           markChannelUnread(event.message.channelId);
         }
       }
@@ -642,9 +721,9 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
     case 'user_updated': {
       if (!isHome) normalizeUserAssets(event.user, origin);
       upsertUserView(event.user, origin);
-      useSpaceStore.getState().updateUserEverywhere(event.user);
-      useSocialStore.getState().updateFriendProfile(event.user);
-      useChatStore.getState().updateUserInMessages(event.user);
+      useSpaceStore.getState().updateUserEverywhere(event.user, origin);
+      useSocialStore.getState().updateFriendProfile(event.user, origin);
+      useChatStore.getState().updateUserInMessages(event.user, origin);
       // If this is the current user (other tab changed profile), update authStore
       const myId = isHome
         ? useAuthStore.getState().user?.id
@@ -665,11 +744,11 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
 
       // Deleted user cleanup: remove from caches the existing pipeline doesn't cover
       if (event.user.isDeleted) {
-        useSocialStore.getState().removeFriendLocally(event.user.id, origin);
-        useSocialStore.getState().removeRequestsForUser(event.user.id);
+        // Each removal goes through userUpdateReach, as the updates above do.
+        useSocialStore.getState().removeDeletedUser(event.user, origin);
         useActivityStore.getState().clearUserActivities(event.user, origin);
-        useDiscoverStore.getState().removeUser(event.user.id);
-        useChatStore.getState().clearTypingForUser(event.user.id);
+        useDiscoverStore.getState().removeDeletedUser(event.user, origin);
+        useChatStore.getState().clearTypingForDeletedUser(event.user, origin);
       }
       break;
     }
@@ -766,6 +845,9 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
       if (isLoadedRosterSpace(event.spaceId, origin)) addMember(event.spaceId, event.member);
       break;
 
+    case 'member_updated':
+      if (event.spaceId === event.member.spaceId) applySpaceMemberUpdate(origin, event.member);
+      break;
     case 'member_left':
       if (isLoadedRosterSpace(event.spaceId, origin)) removeMember(event.spaceId, event.userId);
       break;
@@ -839,12 +921,7 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
       rejectedPeerOrigins.add(event.peerOrigin);
       awaitingApprovalPeerOrigins.delete(event.peerOrigin);
       activePeerOrigins.delete(event.peerOrigin);
-      const label = event.peerLabel || event.peerOrigin;
-      addToast(
-        `Cannot relay messages to ${label} — ${event.reason}`,
-        'warning',
-        10000,
-      );
+      addToast(peerRejectedToast(event), 'warning', 10000);
       notifyFederationChangeListeners();
       break;
     }
@@ -1060,66 +1137,80 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
 
     case 'dm_call_incoming': {
       if (!isHome && !activePeerOrigins.has(origin)) break;
-      // Batch ALL call state into a single set() to prevent:
-      // 1. Ringtone multiplication (multiple subscription triggers from separate set() calls)
-      // 2. Stale callOrigin/federatedCallId from previous calls (always overwritten)
-      // callOrigin = the WS origin that delivered this event, NOT event.callOrigin (the host).
-      // Routing accept/reject through this WS ensures the message reaches a connected server,
-      // which then relays to the host via S2S HTTP. Using event.callOrigin (the host URL)
-      // would route through the multi-instance WS, which may not be connected.
-      useVoiceStore.setState({
-        incomingCall: {
-          dmChannelId: event.dmChannelId ?? null,
-          callerId: event.callerId,
-          callerName: event.callerName,
-        },
-        federatedCallToken: event.livekitToken ?? null,
-        federatedCallUrl: event.livekitUrl ?? null,
-        federatedCallId: event.federatedCallId ?? null,
-        callOrigin: origin,
-      });
+      // The ring's ids, origin and credentials live on the incoming slot
+      // alone, set in one set() (one ringtone trigger). A call the client is
+      // in keeps its own. The origin is the WS that delivered this event, not
+      // event.callOrigin (the host): accept and decline go through this
+      // connected server, which relays them to the host; the host's URL
+      // would route through a multi-instance WS that may not be connected.
+      {
+        const ref = dmCallRefFrom({ dmChannelId: event.dmChannelId ?? null, federatedCallId: event.federatedCallId }, origin);
+        if (!ref) break;
+        useVoiceStore.setState({
+          incomingCall: {
+            ...ref,
+            callerId: event.callerId,
+            callerName: event.callerName,
+            livekit: dmCallCredentialsFrom(event.livekitUrl, event.livekitToken),
+          },
+        });
+      }
       break;
     }
 
     case 'dm_call_accepted': {
       if (!isHome && !activePeerOrigins.has(origin)) break;
-      const { setIncomingCall, setOutgoingCall, outgoingCall, setActiveDmCall, connectFn, isLiveKitConnected } = useVoiceStore.getState();
-      const wasOutgoingCall = !!outgoingCall;
-      setIncomingCall(null);
-      setOutgoingCall(null);
+      // Every member of a DM hears each accept, late joins of a group call
+      // included. Only the call this client holds changes state: a member
+      // calling another DM, or sitting in a voice channel, stays where it is.
+      if (!dmCallEventIsOurs(event)) break;
+      const { setIncomingCall, setOutgoingCall, outgoingCall, activeDmCall, setActiveDmCall, connectFn } = useVoiceStore.getState();
+      // The ring stops only when this user answered, on another session. The
+      // calling tone stops on any answer to the call this session placed.
+      if (acceptStopsRing(event)) setIncomingCall(null);
+      const answersOutgoing = !!outgoingCall && dmCallEventNames(event, [outgoingCall.dmChannelId]);
+      if (answersOutgoing) setOutgoingCall(null);
 
-      // Only enter active call state if:
-      // - We're the caller (wasOutgoingCall) → will connect via connectFn below
-      // - We already connected to LiveKit (clicked accept in handleAccept)
-      // Other instances of the same user must NOT enter call state — they'd show
-      // "Connecting..." forever with no actual LiveKit connection.
-      const callDmId = event.dmChannelId || event.federatedCallId || '';
-      if (wasOutgoingCall || isLiveKitConnected) {
-        setActiveDmCall({ dmChannelId: callDmId });
-      }
-      // The caller connects to the DM room. `wasOutgoingCall` alone identifies
-      // the caller session (other sessions/tabs never set outgoingCall), and
-      // `connect()` de-dupes an already-connected same room — so we must NOT
-      // also gate on `!isLiveKitConnected`: a caller who is currently sitting in
-      // a space voice channel is LiveKit-connected, and gating on it would skip
-      // the DM connect entirely, stranding them in the space channel.
-      if (connectFn && wasOutgoingCall && callDmId) {
-        connectFn(callDmId, true).catch((err: unknown) => {
-          console.error('[WS] DM call connect failed:', err);
-        });
+      // Only the caller enters the call here: its session is the only one
+      // with `outgoingCall`, and it connects below. A client that accepted or
+      // joined set `activeDmCall` in the click already. Any other session of
+      // the same user (the call was answered on another device) stays out:
+      // being LiveKit-connected says nothing about this call, since that
+      // session may be sitting in a voice channel.
+      // A call already held keeps the id it is held by. The event may name it
+      // by another instance's DM id (a client that hears both the host and its
+      // home), and the hang-up must go out under the held id.
+      if (!activeDmCall && outgoingCall && answersOutgoing) {
+        const call = { dmChannelId: outgoingCall.dmChannelId, federatedCallId: null, callOrigin: null, livekit: null };
+        setActiveDmCall(call);
+        // The caller connects to the DM room. `connect()` de-dupes an
+        // already-connected same room, so this is not gated on
+        // `!isLiveKitConnected`: a caller sitting in a space voice channel is
+        // LiveKit-connected, and gating on it would strand them there.
+        if (connectFn) {
+          const roomKey = dmCallRoomKey(call);
+          connectFn(roomKey, true)
+            .then(() => (outgoingCall.withCamera ? turnCameraOnInDmCall(roomKey) : undefined))
+            .catch((err: unknown) => {
+              console.error('[WS] DM call connect failed:', err);
+            });
+        }
       }
       break;
     }
 
     case 'dm_call_rejected': {
       if (!isHome && !activePeerOrigins.has(origin)) break;
-      teardownDmCall();
+      if (dmCallEventIsOurs(event)) teardownDmCall();
       break;
     }
 
     case 'dm_call_ended': {
       if (!isHome && !activePeerOrigins.has(origin)) break;
-      teardownDmCall();
+      // The call is over: nobody is in it any more, whatever leave events an
+      // older server did not send.
+      if (event.dmChannelId) setVoiceUsers(event.dmChannelId, []);
+      if (dmCallEventIsOurs(event)) teardownDmCall();
       break;
     }
 
@@ -1264,6 +1355,13 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
       break;
     }
 
+    case 'notification_settings_updated': {
+      // Settings live on the instance that hosts the space, so the socket
+      // that delivered the change is the origin they belong to.
+      useNotificationSettingsStore.getState().apply(origin, event.setting);
+      break;
+    }
+
     case 'space_layout_updated': {
       // LWW: only accept if incoming timestamp >= current
       const incomingTs = event.updatedAt ?? 0;
@@ -1305,15 +1403,35 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
       void refreshSpaceAccess(origin, event.spaceId);
       break;
 
-    case 'error':
+    case 'error': {
       console.error(`WebSocket error (${origin || 'home'}):`, event.message);
+      // A refused dm_call_start names its DM: the call this client is placing
+      // there never started, so the calling state and its ring go. A refused
+      // dm_call_accept names the call the client joined on its side before
+      // the answer (the call had ended, or the user is not a member), so the
+      // client leaves it.
+      if (event.dmChannelId) {
+        const { outgoingCall, setOutgoingCall, activeDmCall } = useVoiceStore.getState();
+        if (outgoingCall?.dmChannelId === event.dmChannelId
+            && getChannelOrigin(event.dmChannelId) === origin) {
+          setOutgoingCall(null);
+        }
+        // The refusal names the call by the id the accept sent: the DM's
+        // id, or the call's key when there was none.
+        if ((event.code === 'dm_call_not_found' || event.code === 'not_dm_member')
+            && activeDmCall && dmCallRoomKey(activeDmCall) === event.dmChannelId
+            && dmCallOrigin(activeDmCall) === origin) {
+          teardownDmCall();
+        }
+      }
       // A coded error is the refusal of something the user just did (a voice
       // moderation action the role hierarchy refuses, for one); say so. Older
       // servers send no code, and those errors stay in the log.
       if (event.code) {
-        useUIStore.getState().addToast(describeErrorCode(event.code, event.message), 'warning');
+        useUIStore.getState().addToast(describeErrorCode(event.code, event.message, event.details), 'warning');
       }
       break;
+    }
   }
 }
 
@@ -1466,12 +1584,19 @@ export function getHomeWsConnected(): boolean {
   return !!conn?.ws && conn.ws.readyState === WebSocket.OPEN;
 }
 
-/** Send an event over the WebSocket. Can be used outside of React components. */
-export function wsSend(event: ClientEvent, origin: string = HOME_ORIGIN): void {
+/**
+ * Send an event over the origin's WebSocket. Can be used outside of React
+ * components. Returns whether the event was handed to an open socket; when
+ * the origin has none (not connected, or reconnecting) the event is dropped
+ * and the result is false.
+ */
+export function wsSend(event: ClientEvent, origin: string = HOME_ORIGIN): boolean {
   const conn = connections.get(origin);
   if (conn?.ws && conn.ws.readyState === WebSocket.OPEN) {
     conn.ws.send(JSON.stringify(event));
+    return true;
   }
+  return false;
 }
 
 /** Send an event to ALL connected WebSocket instances (home + remotes). */

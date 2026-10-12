@@ -13,7 +13,7 @@ Source files:
 - `packages/web/src/stores/authStore.ts` -- Client session state, login/register/logout/password/delete actions
 - `packages/web/src/hooks/useAuth.ts` -- Route guard hook (redirect to `/login` when no token)
 - `packages/web/src/App.tsx` -- `ProtectedRoute` and `AuthRedirect` route wrappers
-- `packages/web/src/utils/identity.ts` -- Federation-aware identity helpers (`parseFederatedUsername`, `isSelf`, `canonicalUserMatch`)
+- `packages/web/src/utils/identity.ts` -- Federation-aware identity helpers (`parseFederatedUsername`, `homeIdentityOf`, `userKey`, `isMine`; see `client-federation.md` section 5)
 - `packages/web/src/utils/federationOps.ts` -- Account deletion propagation to connected remote instances
 - `packages/web/src/stores/instanceStore.ts` -- `resolveCredentialHomeApi()` / `ensureRemoteCredential()`: per-remote federation credentials (§5b)
 - `packages/server/src/config.ts` -- `jwtSecret`, `jwtExpiresIn`, `registrationOpen` config
@@ -100,11 +100,13 @@ There is **no token blocklist**. The only revocation mechanism is the `passwordC
 | Field | Rules |
 |-------|-------|
 | `username` | Required string. Trimmed, lowercased. |
-| `password` | Required string. Minimum 8 characters. |
+| `password` | Required string. At least `PASSWORD_MIN_LENGTH` (8) characters, from `packages/shared/src/constants.ts`; shorter is `400 password_too_short` with `details.min`. |
 | `displayName` | Optional. Trimmed or null. |
 | `avatarColor` | Optional. Must be in `AVATAR_COLORS` array, else random. |
 | `homeInstance` | Optional (federation only). Max 253 chars, alphanumeric + `.` `-` `_`. |
 | `homeUserId` | Optional (federation only). Stored if `homeInstance` is present. |
+
+**Password minimum, one source:** `PASSWORD_MIN_LENGTH` in `packages/shared/src/constants.ts` is the only definition. The register route (`routes/auth.ts`), the change-password route (`routes/users.ts`), the registration page (`RegisterPage.tsx`, step 1) and the Account settings panel (`AccountPanel.tsx`, check and placeholder) all import it, so the client can never accept a password at one step that the server then refuses (#397). Admin-issued temporary passwords (16 chars) and federation credential secrets are generated well above it.
 
 ### Username Validation (Two Paths)
 
@@ -318,10 +320,10 @@ Detach is sovereign but not permanent: the legitimate owner who re-created their
 |-----------|-------------------|----------|
 | Local (`homeInstance` is null) | Required | Verified via bcrypt against stored hash |
 | Federated (`homeInstance` set, `federationHomeOrphaned !== 1`) | Not required | JWT auth is sufficient (home instance already verified the change) |
-| Detached (`homeInstance` set, `federationHomeOrphaned === 1`) | Required | Follows the **local** rule — the home is gone, so nothing external verified the change; the local hash is the sole authority (detach design §4.4) |
+| Detached (`federationHomeOrphaned === 1`; homed here since #310, so `homeInstance` is null) | Required | Follows the **local** rule — the home is gone, so nothing external verified the change; the local hash is the sole authority (detach design §4.4) |
 
 **Steps:**
-1. Validate `newPassword` is string, min 8 chars
+1. Validate `newPassword` is a string of at least `PASSWORD_MIN_LENGTH` (8) characters, else `400 password_too_short` with `details.min`
 2. Load user from DB
 3. If local **or detached** (`!homeInstance || federationHomeOrphaned === 1`): require and verify `currentPassword`
 4. Hash new password
@@ -526,9 +528,9 @@ interface AuthState {
 ### `initSession(token, user)`
 
 Called after successful login or registration:
-1. `resetUserStores()` -- clears every user-scoped store and `clearSelfIds()` from the identity registry (see below)
+1. `resetUserStores()` -- clears every user-scoped store (see below)
 2. Saves token to localStorage
-3. Sets token + user in Zustand state
+3. Sets token + user in Zustand state, empties `myRowIds` (the user's row id per connected instance, client-federation.md §5) and starts `trueHomeStatus` from the kept true-home report (`seedTrueHomeStatus`, activity-presence.md)
 4. Fires `useInstanceStore.autoConnectAll()` (fire-and-forget) for federation
 
 ### `loadUser()`
@@ -546,17 +548,18 @@ go through the fan-out, and it would need the call if it ever ran mid-session.
 ### `logout()`
 
 1. Removes token from localStorage
-2. Calls `resetUserStores()` (see below)
-3. Sets token and user to null
+2. Calls `resetUserStores()` (see below) and cancels the expiry of a kept true-home status
+3. Sets token and user to null and empties `trueHomeStatus` and `myRowIds`
 
 ### `resetUserStores()`
 
 The one place a session's client state is dropped. Called by `initSession`
 (so signing in as another account without a reload cannot inherit the
-previous one's rows), by `logout`, and by `deleteAccount`. It clears the
-identity registry's self IDs and then, in order: chat messages, the space,
-social, voice, instance, activity, explore and directory stores, and the
-settings store's update state.
+previous one's rows), by `logout`, and by `deleteAccount`. It clears, in
+order: chat messages, the space, social, voice, instance, activity, explore
+and directory stores, and the settings store's update state. The signed-in
+user's own records (`myRowIds`, `trueHomeStatus`) live on `authStore`
+itself; each caller resets them in the same `set` that replaces the user.
 
 `exploreStore` and `directoryStore` were added to it on the space directory
 branch. `exploreStore.myRequests` holds the signed-in user's own pending
@@ -605,7 +608,7 @@ completes (`authStore.deleteAccount` has already reset by then).
 
 **Step 1 -- Credentials:**
 - Fields: username, password, confirm password
-- Client-side validation: 3-32 chars, `/^[a-z0-9_]+$/`, passwords match, min 6 chars
+- Client-side validation: 3-32 chars, `/^[a-z0-9_]+$/`, passwords match, at least `PASSWORD_MIN_LENGTH` chars
 - Debounced username availability check (500ms delay, abort on new input)
 - Continue button disabled if username taken or invalid
 
@@ -635,32 +638,9 @@ Splits a potentially federated username:
 "erin"                -> { baseName: "erin", domain: null }
 ```
 
-### Self-ID Registry
+### Who a user is, and whether it is the signed-in user
 
-Module-level `Set<string>` tracking all Snowflake IDs belonging to the current user across connected instances:
-
-```
-registerSelfId(id: string)   -- adds ID (called from WS ready events)
-clearSelfIds()               -- clears all (called on logout/session reset)
-```
-
-### `isSelf(user, homeUser)`
-
-Determines if a user object represents the current user. Cascading checks:
-1. Same `id` (same instance, trivial)
-2. `_knownSelfIds.has(user.id)` (cross-instance via registry)
-3. `user.homeInstance === window.location.host` AND base usernames match
-
-### `canonicalUserMatch(a, b)`
-
-Federation-safe comparison of two user-like objects. Cascading strategies:
-1. Same `id` -- trivial match
-2. `homeUserId` cross-matching (both have it, or one matches the other's `id`)
-3. Username + home instance fallback: parse base names, derive home from `homeInstance` or domain part of username, compare
-
-### `resolveDisplayIdentity(user, homeUser)`
-
-If `user` is a replicated alias of `homeUser` (via `isSelf`), returns `homeUser` for display purposes. Otherwise returns `user` unchanged.
+`homeIdentityOf` / `userKey` (the person a row names, given the instance that issued it), `authStore.myRowIds` with `getMyUserIdForOrigin`, and `isMine` / `isMe` (the signed-in user) are described once, in `client-federation.md` section 5.
 
 ---
 

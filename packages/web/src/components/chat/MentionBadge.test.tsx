@@ -56,7 +56,7 @@ describe('MentionBadge', () => {
     render(<MentionBadge userId={MIRA.id} channelId="chan-1" />);
     fireEvent.click(screen.getByText('@mira'));
     expect(openUserProfile).toHaveBeenCalledTimes(1);
-    expect(openUserProfile.mock.calls[0]![3]).toEqual({ spaceId: 'space-1', userId: MIRA.id });
+    expect(openUserProfile.mock.calls[0]![4]).toEqual({ spaceId: 'space-1', userId: MIRA.id });
   });
 });
 
@@ -86,7 +86,7 @@ describe('MentionBadge in a DM (#338)', () => {
     render(<MentionBadge userId={KAI.id} channelId={DM.id} />);
     fireEvent.click(screen.getByText('@Kai'));
     expect(openUserProfile).toHaveBeenCalledTimes(1);
-    expect(openUserProfile.mock.calls[0]![3]).toBeUndefined();
+    expect(openUserProfile.mock.calls[0]![4]).toBeUndefined();
   });
 });
 
@@ -109,6 +109,22 @@ describe('MentionBadge in a space channel', () => {
     });
     render(<MentionBadge userId={KAI.id} channelId="chan-1" />);
     expect(screen.getByText('@Kai')).toHaveStyle({ color: '#ff0000' });
+  });
+
+  it('names a member by their nickname in that space', () => {
+    useSpaceStore.setState({
+      channelToSpaceMap: new Map([['chan-1', 'space-1']]),
+      members: [{ ...member('space-1', KAI), nickname: 'Pilot' }],
+      currentSpaceId: 'space-1',
+    });
+    render(<MentionBadge userId={KAI.id} channelId="chan-1" />);
+    expect(screen.getByText('@Pilot')).toBeInTheDocument();
+  });
+
+  it('names a DM member by the account name, never a nickname from a loaded space roster', () => {
+    useSpaceStore.setState({ dmChannels: [DM], members: [{ ...member('space-1', KAI), nickname: 'Pilot' }], currentSpaceId: 'space-1' });
+    render(<MentionBadge userId={KAI.id} channelId={DM.id} />);
+    expect(screen.getByText('@Kai')).toBeInTheDocument();
   });
 
   it("names a member without a display name by the base of the username, as the DM list and header do", () => {

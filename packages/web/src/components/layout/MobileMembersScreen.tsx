@@ -8,9 +8,11 @@ import { useUIStore } from '../../stores/uiStore';
 import { Avatar } from '../ui/Avatar';
 import { ActivityCard, hasRichActivity, getActivityAccentClass } from '../ui/ActivityCard';
 import { getPrimaryActivity } from '@backspace/shared/src/activities.js';
-import { parseFederatedUsername, isFederationGlobeApplicable, userDisplayName } from '../../utils/identity';
+import { parseFederatedUsername, isFederationGlobeApplicable, spaceMemberName } from '../../utils/identity';
+import { useSpaceOrigin } from '../../hooks/useSpaceOrigin';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
 import { MobileScreenHeader } from './MobileScreenHeader';
+import { OwnerTitleHeading } from './OwnerTitleHeading';
 import { useDelayedLoading } from '../../hooks/useDelayedLoading';
 import { groupMembers, memberNameColor, type MemberGroupKind } from '../../utils/memberGroups';
 
@@ -31,8 +33,9 @@ function MobileMemberRow({
   accentClass: string;
   onClickMember: (member: MemberWithUser) => void;
 }) {
-  const canonical = useCanonicalUserView(member.user);
-  const displayName = userDisplayName(canonical);
+  const origin = useSpaceOrigin(member.spaceId);
+  const canonical = useCanonicalUserView(member.user, origin);
+  const displayName = spaceMemberName(member, canonical);
 
   const rowClass = isRichActivity
     ? `flex items-center gap-2.5 px-4 py-2.5 rounded-[10px] mb-1 cursor-pointer transition-colors glass-pill border-l-2 ${accentClass} active:bg-interactive-hover`
@@ -106,7 +109,8 @@ export function MobileMembersScreen({ params }: MobileMembersScreenProps) {
   };
 
   const handleMemberClick = (member: MemberWithUser) => {
-    pushMobileScreen('user-profile', { userId: member.userId, spaceId: member.spaceId, memberUserId: member.userId });
+    const origin = useSpaceStore.getState().spaces.find(s => s.id === member.spaceId)?._instanceOrigin ?? '';
+    pushMobileScreen('user-profile', { userId: member.userId, origin, spaceId: member.spaceId, memberUserId: member.userId });
   };
 
   const groupHeading = (kind: MemberGroupKind, label: string | null): string => {
@@ -201,9 +205,13 @@ export function MobileMembersScreen({ params }: MobileMembersScreenProps) {
           <>
             {roleGroups.map((group) => (
               <div key={group.key} className="mb-4">
-                <h3 className="text-[10.5px] font-bold text-txt-tertiary uppercase tracking-[0.06em] px-2 mb-1">
-                  {groupHeading(group.kind, group.label)} — {formatNumber(group.members.length)}
-                </h3>
+                {group.kind === 'owner' && space ? (
+                  <OwnerTitleHeading key={space.id} space={space} count={group.members.length} touch />
+                ) : (
+                  <h3 className="text-[10.5px] font-bold text-txt-tertiary uppercase tracking-[0.06em] px-2 mb-1">
+                    {groupHeading(group.kind, group.label)} — {formatNumber(group.members.length)}
+                  </h3>
+                )}
                 {group.members.map((m) => renderMember(m))}
               </div>
             ))}

@@ -19,21 +19,37 @@ vi.mock('../db/index.js', () => ({
   schema,
 }));
 
-vi.mock('../utils/federationAuth.js', () => ({
-  getOurOrigin: () => 'https://local.example',
-  buildFederationHeaders: () => ({}),
-  generateHmacSecret: () => 'test-secret',
-}));
-
-// Mock sendCallRelay so tests can control relay-result per case.
-const sendCallRelayMock = vi.fn();
-vi.mock('../utils/federationOutbox.js', async () => {
-  const actual = await vi.importActual<typeof import('../utils/federationOutbox.js')>('../utils/federationOutbox.js');
+vi.mock('../utils/federationAuth.js', async () => {
+  const actual = await vi.importActual<typeof import('../utils/federationAuth.js')>('../utils/federationAuth.js');
   return {
     ...actual,
-    sendCallRelay: (...args: unknown[]) => sendCallRelayMock(...args),
+    getOurOrigin: () => 'https://local.example',
+    buildFederationHeaders: () => ({}),
+    generateHmacSecret: () => 'test-secret',
   };
 });
+
+// Each case sets the relay's result at the HTTP layer. `sendCallRelay` is
+// reached through utils/callFanout.ts, which an import cycle loads before a
+// module mock of federationOutbox could apply.
+const fetchMock = vi.fn();
+vi.mock('../utils/federationFetch.js', async () => {
+  const actual = await vi.importActual<typeof import('../utils/federationFetch.js')>('../utils/federationFetch.js');
+  return {
+    ...actual,
+    federationFetch: (...args: unknown[]) => fetchMock(...args),
+  };
+});
+
+/** The relay reaches the peer, which takes the event. */
+function relaySucceeds(): void {
+  fetchMock.mockImplementation(async () => new Response(JSON.stringify({ accepted: [], rejected: [] }), { status: 200 }));
+}
+
+/** The relay does not reach the peer. */
+function relayFails(): void {
+  fetchMock.mockImplementation(async () => { throw new Error('timeout'); });
+}
 
 function applyMigrations(db: Database.Database): void {
   const migrationsDir = path.resolve(__dirname, '../../drizzle');
@@ -93,6 +109,8 @@ function makeFedCall(partial: Partial<FedCallEntry> = {}): FedCallEntry {
     livekitUrl: 'wss://pi.example/lk',
     tokens: new Map([['acceptor@vm', 'token']]),
     ringedUserIds: ['acceptor-user'],
+    joinedUserIds: [],
+    group: false,
     state: 'ringing',
     startedAt: Date.now(),
     ...partial,
@@ -106,7 +124,7 @@ beforeEach(() => {
   seedPeerLabel('https://pi.example', 'Pi-Instance');
   seedLocalUser('acceptor-user', 'acceptor@vm');
   seedLocalUser('caller-user', 'caller@pi');
-  sendCallRelayMock.mockReset();
+  fetchMock.mockReset();
 });
 
 afterEach(() => {
@@ -121,7 +139,7 @@ describe('handleDmCallEnd Path-2 relay failure', () => {
     const fedCall = makeFedCall({ state: 'active' });
     connectionManager.createFederatedCall(fedCall);
     const sendToUserSpy = vi.spyOn(connectionManager, 'sendToUser');
-    sendCallRelayMock.mockResolvedValue({ ok: false, reason: 'peer_transient_failure', error: 'timeout' });
+    relayFails();
 
     await handleDmCallEndForTest(
       { federatedCallId: fedCall.federatedId },
@@ -144,7 +162,7 @@ describe('handleDmCallEnd Path-2 relay failure', () => {
     const fedCall = makeFedCall({ state: 'active' });
     connectionManager.createFederatedCall(fedCall);
     const sendToUserSpy = vi.spyOn(connectionManager, 'sendToUser');
-    sendCallRelayMock.mockResolvedValue({ ok: true, undeliverable: [] });
+    relaySucceeds();
 
     await handleDmCallEndForTest(
       { federatedCallId: fedCall.federatedId },
@@ -166,7 +184,7 @@ describe('handleDmCallReject Path-2 relay failure', () => {
     const fedCall = makeFedCall();
     connectionManager.createFederatedCall(fedCall);
     const sendToUserSpy = vi.spyOn(connectionManager, 'sendToUser');
-    sendCallRelayMock.mockResolvedValue({ ok: false, reason: 'peer_rejected', error: 'rejected' });
+    relayFails();
 
     await handleDmCallRejectForTest(
       { federatedCallId: fedCall.federatedId },
@@ -191,7 +209,7 @@ describe('handleDmCallReject Path-2 relay failure', () => {
     const fedCall = makeFedCall();
     connectionManager.createFederatedCall(fedCall);
     const sendToUserSpy = vi.spyOn(connectionManager, 'sendToUser');
-    sendCallRelayMock.mockResolvedValue({ ok: true, undeliverable: [] });
+    relaySucceeds();
 
     await handleDmCallRejectForTest(
       { federatedCallId: fedCall.federatedId },
@@ -247,7 +265,7 @@ describe('handleDmCallAccept Path-2 relay failure', () => {
     connectionManager.createFederatedCall(fedCall);
     const sendToUserSpy = vi.spyOn(connectionManager, 'sendToUser');
     const sendToCallUsersSpy = vi.spyOn(connectionManager, 'sendToFederatedCallUsers');
-    sendCallRelayMock.mockResolvedValue({ ok: false, reason: 'peer_transient_failure', error: 'timeout' });
+    relayFails();
 
     await handleDmCallAcceptForTest(
       { federatedCallId: fedCall.federatedId },
@@ -282,7 +300,7 @@ describe('handleDmCallAccept Path-2 relay failure', () => {
     const fedCall = makeFedCall();
     connectionManager.createFederatedCall(fedCall);
     const sendToUserSpy = vi.spyOn(connectionManager, 'sendToUser');
-    sendCallRelayMock.mockResolvedValue({ ok: true, undeliverable: [] });
+    relaySucceeds();
 
     await handleDmCallAcceptForTest(
       { federatedCallId: fedCall.federatedId },

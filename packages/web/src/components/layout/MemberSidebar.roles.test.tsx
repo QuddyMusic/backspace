@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -59,13 +60,13 @@ beforeEach(() => {
 
 describe('MemberSidebar: roles of offline members (#302)', () => {
   it('colours an offline member by their top role', () => {
-    render(<MemberSidebar />);
+    render(<MemoryRouter><MemberSidebar /></MemoryRouter>);
     const name = screen.getByText('Mira');
     expect(name).toHaveStyle({ color: '#c4b5fd' });
   });
 
   it('opens the profile with the space member it was opened for', async () => {
-    render(<MemberSidebar />);
+    render(<MemoryRouter><MemberSidebar /></MemoryRouter>);
     await userEvent.click(screen.getByText('Mira'));
     const popout = useUIStore.getState().userProfilePopout;
     expect(popout.user?.id).toBe('u-mira');
@@ -75,10 +76,10 @@ describe('MemberSidebar: roles of offline members (#302)', () => {
   it('carries the member into the mobile profile screen', () => {
     useUIStore.setState({ isMobile: true, mobileStack: [] });
     const mira = useSpaceStore.getState().members[1]!;
-    useUIStore.getState().openUserProfile(mira.user, { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }, 'left', { spaceId: SPACE_ID, userId: mira.userId });
+    useUIStore.getState().openUserProfile(mira.user, '', { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }, 'left', { spaceId: SPACE_ID, userId: mira.userId });
     expect(useUIStore.getState().mobileStack.at(-1)).toEqual({
       screen: 'user-profile',
-      params: { userId: 'u-mira', spaceId: SPACE_ID, memberUserId: 'u-mira' },
+      params: { userId: 'u-mira', origin: '', spaceId: SPACE_ID, memberUserId: 'u-mira' },
     });
   });
 });
@@ -87,7 +88,7 @@ describe('MemberSidebar: member names', () => {
   it('names a member with an empty display name by their username, as every other surface does', () => {
     const blank: User = { ...user('u-kai', 'Kai', 'online'), displayName: '' };
     useSpaceStore.setState({ members: [member(blank, [])] });
-    render(<MemberSidebar />);
+    render(<MemoryRouter><MemberSidebar /></MemoryRouter>);
     expect(screen.getByText('kai')).toBeInTheDocument();
   });
 });

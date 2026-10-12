@@ -7,6 +7,8 @@ import { useSocialStore, type TaggedFriend, type TaggedFriendRequest } from '../
 import { useSpaceStore } from '../../stores/spaceStore';
 import { useUIStore } from '../../stores/uiStore';
 import type { Friend, FriendRequest } from '@backspace/shared';
+import { api as mockedApi } from '../../api/client';
+pageApi.client = mockedApi;
 
 // Mock the mascot animation hook
 vi.mock('../../hooks/useMascotAnimation', () => ({
@@ -25,6 +27,17 @@ vi.mock('../../audio/AudioManager', () => ({
 
 // Mock the api module
 // Keep the real HttpError class: describeError narrows on it when a request fails.
+// `api/client` and `crossStoreResolvers` import each other, so the resolver
+// module can hold the unmocked client; route the page's own origin to the
+// mocked one, as `getApiForOrigin('')` does in the app.
+const pageApi = vi.hoisted(() => ({ client: null as unknown }));
+vi.mock('../../utils/crossStoreResolvers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../utils/crossStoreResolvers')>();
+  return {
+    ...actual,
+    getApiForOrigin: (origin: string) => (origin ? actual.getApiForOrigin(origin) : pageApi.client),
+  };
+});
 vi.mock('../../api/client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../api/client')>()),
   api: {
@@ -83,18 +96,10 @@ vi.mock('../../stores/discoverStore', () => ({
   ),
 }));
 
-vi.mock('../../stores/authStore', () => ({
-  useAuthStore: Object.assign(
-    (selector: (s: any) => any) => selector({
-      user: { id: 'current-user' },
-    }),
-    {
-      getState: () => ({ user: { id: 'current-user' } }),
-      setState: vi.fn(),
-      subscribe: vi.fn(),
-    }
-  ),
-}));
+vi.mock('../../stores/authStore', async () => {
+  const state = { user: { id: 'current-user' } };
+  return (await import('../../test/authStoreMock')).authStoreMock(() => state);
+});
 
 // Mock activityStore
 vi.mock('../../stores/activityStore', () => ({
@@ -319,6 +324,62 @@ describe('FriendsPage', () => {
       expect(screen.queryByText(/Send friend request to/)).not.toBeInTheDocument();
     });
 
+    describe('search results and the lists, matched by person', () => {
+      // Bob is native to orbit (b-1); the page's instance holds a replicated row of him (nb).
+      const bobOnOrbit = {
+        id: 'b-1', username: 'bob', displayName: 'Bob', avatar: null, banner: null, accentColor: null,
+        avatarColor: null, bio: null, status: 'online' as const, customStatus: null, isAdmin: false, createdAt: 0,
+        homeUserId: 'b-1', homeInstance: null, replicatedInstances: [], _instanceOrigin: 'https://orbit.test',
+      };
+      const bobOnPage = { ...bobOnOrbit, id: 'nb', username: 'bob@orbit.test', homeInstance: 'orbit.test', _instanceOrigin: '' };
+
+      async function searchForBob() {
+        const user = userEvent.setup();
+        renderFriendsPage();
+        await user.click(screen.getByText('Add Friend'));
+        await user.type(screen.getByPlaceholderText(/Search or add by username/), 'bob');
+        return user;
+      }
+
+      it("shows a friend listed only by another instance's row as a friend", async () => {
+        useSocialStore.setState({
+          friends: [makeFriend({ ...bobOnPage, addedAt: 0 })],
+          searchUsers: vi.fn().mockResolvedValue([bobOnOrbit]),
+        });
+        await searchForBob();
+        expect(await screen.findByText('Message')).toBeInTheDocument();
+      });
+
+      it('accepts a request held on another instance with that instance\'s request id and row', async () => {
+        const mockUpdate = vi.fn().mockResolvedValue(undefined);
+        useSocialStore.setState({
+          requests: [makeRequest({ id: 'r-bob-page', fromId: 'nb', toId: 'me', _instanceOrigin: '', user: bobOnPage })],
+          searchUsers: vi.fn().mockResolvedValue([bobOnOrbit]),
+          updateFriendRequest: mockUpdate,
+        });
+        const user = await searchForBob();
+        await user.click(await screen.findByText('Accept'));
+        await waitFor(() => {
+          expect(mockUpdate).toHaveBeenCalledWith('r-bob-page', '', 'accepted', expect.objectContaining({ id: 'nb' }));
+        });
+      });
+
+      it('cancels a pending request from a search card through the store, with the card\'s row', async () => {
+        const mockCancel = vi.fn().mockResolvedValue(undefined);
+        useSocialStore.setState({
+          requests: [makeRequest({ id: 'r-bob-orbit', fromId: 'me-orbit', toId: 'b-1', _instanceOrigin: 'https://orbit.test', user: bobOnOrbit })],
+          searchUsers: vi.fn().mockResolvedValue([bobOnOrbit]),
+          cancelFriendRequest: mockCancel,
+        });
+        const user = await searchForBob();
+        await user.click(await screen.findByText('Request Pending'));
+        await waitFor(() => {
+          expect(mockCancel).toHaveBeenCalledWith('r-bob-orbit', 'https://orbit.test', expect.objectContaining({ id: 'b-1' }));
+        });
+        expect(mockedApi.social.cancelRequest).not.toHaveBeenCalled();
+      });
+    });
+
     it('calls searchUsers when typing a non-@ query', async () => {
       const user = userEvent.setup();
       const mockSearchUsers = vi.fn().mockResolvedValue([]);
@@ -485,7 +546,7 @@ describe('FriendsPage', () => {
       await user.click(cancelButton);
 
       await waitFor(() => {
-        expect(mockCancel).toHaveBeenCalledWith('req-out-1');
+        expect(mockCancel).toHaveBeenCalledWith('req-out-1', '');
       });
     });
   });
@@ -497,6 +558,7 @@ describe('FriendsPage', () => {
 
       const incomingRequest = makeRequest({
         id: 'req-in-1',
+        _instanceOrigin: 'https://orbit.test',
         fromId: 'sender-id',
         toId: 'current-user',
         user: {
@@ -534,7 +596,7 @@ describe('FriendsPage', () => {
       await user.click(acceptButton);
 
       await waitFor(() => {
-        expect(mockUpdate).toHaveBeenCalledWith('req-in-1', 'accepted');
+        expect(mockUpdate).toHaveBeenCalledWith('req-in-1', 'https://orbit.test', 'accepted');
       });
     });
 
@@ -578,7 +640,7 @@ describe('FriendsPage', () => {
       await user.click(declineButton);
 
       await waitFor(() => {
-        expect(mockUpdate).toHaveBeenCalledWith('req-in-2', 'declined');
+        expect(mockUpdate).toHaveBeenCalledWith('req-in-2', '', 'declined');
       });
     });
   });

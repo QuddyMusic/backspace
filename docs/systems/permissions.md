@@ -35,6 +35,10 @@ nor a JSON list of permission names, or a list naming something that is not
 a permission) is logged as it is replaced, with its table, row key, column
 and old text, so it can be put back by hand. It logs how many values it
 rewrote and is a no-op once applied, so each such value is logged once.
+`db/permissionStrings.resolution.test.ts` seeds a space with roles and
+overrides in each of these forms and checks that `computePermissions` gives
+every member the same defined bits in the space and in every channel before
+and after the pass.
 
 
 ---
@@ -56,6 +60,7 @@ rewrote and is a no-op once applied, so each such value is logged once.
 | 12 | ATTACH_FILES | Upload files |
 | 13 | READ_MESSAGE_HISTORY | View message history |
 | 14 | ADD_REACTIONS | Add emoji reactions |
+| 15 | MENTION_EVERYONE | Send `@everyone`, `@here` and role mentions (see "Mass mentions") |
 | 20 | CONNECT | Join voice channels |
 | 21 | SPEAK | Transmit audio |
 | 22 | MUTE_MEMBERS | Space-mute others |
@@ -64,7 +69,7 @@ rewrote and is a no-op once applied, so each such value is logged once.
 | 25 | STREAM | Screen share |
 | 26 | DISCONNECT_MEMBERS | Disconnect from voice |
 
-**Default @everyone:** VIEW_CHANNEL, SEND_MESSAGES, CREATE_INVITE, CONNECT, SPEAK, ATTACH_FILES, READ_MESSAGE_HISTORY, ADD_REACTIONS, STREAM
+**Default @everyone:** VIEW_CHANNEL, SEND_MESSAGES, CREATE_INVITE, CONNECT, SPEAK, ATTACH_FILES, READ_MESSAGE_HISTORY, ADD_REACTIONS, STREAM. MENTION_EVERYONE is not a default: it is granted per role.
 
 ---
 
@@ -120,6 +125,31 @@ if channelOverride:  base = (base & ~deny) | allow
 
 ---
 
+## Private channels and categories
+
+"Private" is not stored on its own. A channel or category is private when its
+own @everyone override (`targetType = 'role'`, `targetId` = the space id)
+denies View Channels; a member override whose id happens to equal the space id
+does not count, and the deny is read with `stringToPermissions`, as every
+permission check reads it. The rule is written once, in
+`packages/shared/src/permissions.ts`:
+
+| Function | Purpose |
+|----------|---------|
+| `isHiddenFromEveryone(overrides, spaceId)` | The rule, on the override rows of one channel or category |
+| `idsHiddenFromEveryone(rows, entityIdOf, spaceIdOf)` | The ids it holds for, over the rows of several channels or categories, each read against its own space |
+
+Every `isPrivate` the server sends comes from it: the `ready` payload
+(channels and categories, overrides of all the user's spaces read in one
+pass), `GET /api/spaces/:id`, `channel_updated` after a visibility change,
+`category_updated` and `channel_layout_updated`. The client derives the
+Private switch in channel and category settings, and the private-category
+note in the permissions editor, from the same function (re-exported by
+`web/src/utils/permissions.ts`). So the lock icon cannot disagree between
+views.
+
+---
+
 ## Role hierarchy
 
 A role's `position` ranks it: higher is more senior. `@everyone` (id = space
@@ -133,7 +163,7 @@ Moderating another member needs a strictly higher rank than theirs:
 |---|---|
 | Nobody acts on the space owner | kick, ban, role changes, voice moderation |
 | The owner and instance admins (`isAdmin`) are exempt | everything below |
-| Actor's rank > target's rank | kick (`DELETE /members/:uid`, not leaving), ban, `PATCH /members/:uid`, `POST`/`DELETE /members/:uid/roles`, WS `voice_space_mute`, `voice_space_deafen`, `voice_move`, `voice_disconnect` |
+| Actor's rank > target's rank | kick (`DELETE /members/:uid`, not leaving), ban, `PATCH /members/:uid` (roles, and another member's nickname), `POST`/`DELETE /members/:uid/roles`, WS `voice_space_mute`, `voice_space_deafen`, `voice_move`, `voice_disconnect` |
 | Role position < actor's rank | assigning or removing that role (each role a `PATCH /members/:uid` adds or removes), editing or deleting it, moving it or moving another role to that position, creating a role (new roles start at 1), writing or deleting a channel or category override on that role (`PUT`/`DELETE /channels/:id/overrides`, `/categories/:id/overrides`; @everyone is position 0) |
 | Actor's rank > target's rank | writing or deleting a channel or category override on another member (an override on oneself is not moderation) |
 
@@ -209,6 +239,7 @@ offers no controls. That is an instance from before the hierarchy, which
 stores every role at 0 and would apply a position as given.
 
 Covered by `routes/roleHierarchy.test.ts`, `routes/heldPermissions.test.ts`,
+`routes/lowerRoleHeldAbove.test.ts`, `routes/permissionEditConflicts.test.ts`,
 `utils/roleRules.test.ts` (the shared rules), `ws/voiceModerationHierarchy.test.ts`,
 `voiceMenuItems.test.ts`, `spaceSettingsPanels/roleHierarchyGating.test.tsx`,
 `ui/PermissionsEditor.hierarchy.test.tsx`, `utils/roleOrder.test.ts`,
@@ -230,7 +261,7 @@ actor a bit does not count.
 |---|---|---|
 | `POST /spaces/:id/roles` | every bit in `permissions` must be held; without `permissions` the new role gets `DEFAULT_EVERYONE_PERMISSIONS` limited to the held bits | `cannot_grant_unowned_permissions` |
 | `PATCH /spaces/:id/roles/:rid { permissions }` | compared with the stored value: an unheld bit may not be switched on or off; unheld bits already on the role stay while the actor edits the rest | on: `cannot_grant_unowned_permissions`, off: `cannot_change_unowned_permissions` |
-| `DELETE /spaces/:id/roles/:rid` | deleting switches every bit of the role off for everyone who holds it, members ranked above the actor included, so each must be held | `cannot_change_unowned_permissions` |
+| `DELETE /spaces/:id/roles/:rid` | deleting is the same change as a `PATCH` to no bits, so each bit of the role must be held | `cannot_change_unowned_permissions` |
 | `PATCH /spaces/:id/members/:uid`, `POST /spaces/:id/members/:uid/roles` | giving a member a role gives them its bits, so every bit of each role the request adds must be held; a role the member already has may stay | `cannot_grant_unowned_permissions` |
 | `PUT /channels/:id/overrides`, `PUT /categories/:id/overrides` | compared with the stored override: a newly allowed or newly denied unheld bit is refused, and so is clearing one from allow or deny; unheld bits already set stay while the actor edits the rest | allow: `cannot_grant_unowned_permissions`, deny: `cannot_deny_unowned_permissions`, clear: `cannot_change_unowned_permissions` |
 | `DELETE /channels/:id/overrides/...`, `DELETE /categories/:id/overrides/...` | a delete clears every bit the override sets, so each must be held | `cannot_change_unowned_permissions` |
@@ -239,8 +270,9 @@ The hierarchy check runs first, so a role at or above the actor's top role
 answers `role_hierarchy`. Taking a role away from a member
 (`PATCH /members/:uid`, `DELETE /members/:uid/roles/:rid`) is governed by the
 hierarchy alone: the member ranks below the actor, and taking their role only
-lowers what that one member can do. Deleting the role is different, because
-it also changes members ranked above the actor who hold it. A bit no `PermissionBits` entry defines counts as
+lowers what that one member can do. Deleting the role switches every one of
+its bits off, so it needs them all held, as a `PATCH` clearing them would. A
+bit no `PermissionBits` entry defines counts as
 unheld for everyone but a holder of every permission, so a stray bit in an old
 row never blocks the owner.
 
@@ -322,6 +354,102 @@ When an instance updates to this version:
 
 ---
 
+## Lower roles held by senior members
+
+The role hierarchy decides who may **change** a role, not who the change
+reaches. A role ranked below the actor may be edited, have its overrides
+written or removed, and be deleted, even when members ranked at or above the
+actor also hold it; those members gain or lose what the role grants like
+anyone else holding it. This is Discord's rule. Switching a bit off a lower
+role that a senior member also holds is allowed.
+
+What still protects senior members:
+
+| Rule | Effect |
+|---|---|
+| Hierarchy on the member | Acting on the senior member themselves (kick, ban, voice moderation, giving or taking their roles, an override on them) needs a higher rank |
+| Hierarchy on the role | Their own higher roles cannot be edited, moved, deleted or given an override |
+| Held-bits rule | Only bits the actor holds can be switched on a lower role, in either direction, and deleting it needs all of its bits held |
+
+So a senior member can lose a bit through a lower role only when the actor
+holds that bit too. A member who wants a bit kept regardless of lower roles
+gets it from a role at their own rank. Neither the server nor the client looks
+at who holds a role: `PATCH`/`DELETE /roles/:rid` and the override routes check
+the role's position and the bits, and the role editor (`RolesPanel.tsx`,
+`MemberRolesModal.tsx`) offers every held toggle of a role below the viewer.
+The member role editor says "Permission changes apply to every member with
+this role." Covered by `routes/lowerRoleHeldAbove.test.ts` and
+`spaceSettingsPanels/RolesPanel.concurrentEdit.test.tsx`.
+
+---
+
+## Concurrent edits
+
+Role permissions and channel and category overrides are saved as whole
+values: a role's `permissions`, an override's `allow` and `deny`. Two editors
+saving the same value from the same copy would otherwise drop each other's
+bits (#365). Each write therefore names the version of the value its edit
+started from, and the server refuses it with `409` when the stored value has
+another version by then.
+
+**The version** is derived from the value, in `packages/shared/src/permissions.ts`:
+
+| Function | Value | Wire field |
+|---|---|---|
+| `rolePermissionsVersion(permissions)` | a role's permissions | `permissionsVersion` on `PATCH /spaces/:id/roles/:rid` |
+| `overrideVersion(row)` | one target's override (`allow` and `deny`) | `version` on `PUT /channels/:id/overrides`, `PUT /categories/:id/overrides`; `?version=` on their `DELETE` |
+| `NO_OVERRIDE_VERSION` (`"none"`) | a target with no override row | as above, for a row the editor creates |
+
+Each is FNV-1a (64 bits, 16 hex digits) of the canonical value
+(`canonicalPermissionString`), so both sides compute the same version, and
+the value is read the way every permission check reads it. A content version
+needs no stored column and no migration. Equal bits always give the same
+version: a value that changed and changed back is the value the editor
+loaded, so accepting the write loses nothing. A revision counter would also
+restart when an override is deleted and created again. The override list
+(`GET .../overrides`) carries each row's `version`, and an override `PUT`
+answers the version it wrote.
+
+**Scope** is one value: one role's permissions, or one target's override. Two
+admins editing different targets of the same channel do not conflict. A
+role's name, colour and position are single values that a save replaces
+as a whole, so they are not versioned.
+
+**Refusals.** A stale override write answers `409 overrides_conflict`, a stale
+role write `409 role_permissions_conflict`, and the role `PATCH` then changes
+nothing, not even a name sent with it. A version that is not a non-empty
+string answers `400 validation_failed`. A delete of an override that is
+already gone succeeds. The check runs after the hierarchy check and before
+the held-bits rule, so a stale editor is told the value changed rather than
+refused for a bit someone else set meanwhile. The read, the check and the
+write run with no `await` between them on the synchronous better-sqlite3
+connection, so nothing else can write in between.
+
+**Older clients.** A write without a version (1.9.x and older clients, and
+API callers that do not send one) is not compared and replaces the value as
+before. Refusing it would break every released client against a newer
+instance. Only clients that send a version are protected, which includes
+every client from this release on, and federated clients reach the space's
+own instance directly (client-federation.md), so the instance's version decides.
+
+**Client.** Each editor keeps the value its edit started from:
+
+| Surface | Base | On a conflict |
+|---|---|---|
+| Channel and category overrides (`ui/PermissionsEditor.tsx`) | each staged row keeps the version of the saved row it started from (the `"none"` version for a new target; a removed row keeps it if added back), taken when the row is first staged, so a later read of the list does not change it | the `overrides_conflict` text is shown ahead of any other refusal, the staged edit is dropped, and the dialog lists the overrides again (`onSaved`) |
+| The Private switch (`useEntityOverrides().setBits`) | the @everyone row as the dialog's list holds it | the switch shows the refusal; the list is read again |
+| Role editor (`spaceSettingsPanels/RolesPanel.tsx`) | the permissions the draft was made from; with no local edit the base follows the role, so a change saved elsewhere shows up instead of reading as the viewer's own edit | the space detail is reloaded, the draft and base become the stored permissions, and `role_permissions_conflict` is shown |
+| Member role editor (`modals/MemberRolesModal.tsx`) | each role's draft keeps the permissions it was made from; switching a bit back drops the draft | that role's draft is dropped (others stay), the space detail is reloaded, and the text is shown |
+
+The words ("Someone else changed these permissions. Review them and save
+again.") come from `describeError` and the `errors` catalogs
+(localization.md). Covered by `routes/permissionEditConflicts.test.ts`,
+`ui/PermissionsEditor.concurrentEdit.test.tsx`, `modals/entityPrivacy.test.tsx`,
+`spaceSettingsPanels/RolesPanel.concurrentEdit.test.tsx` and
+`modals/MemberRolesModal.test.tsx`.
+
+---
+
 ## Helper Functions
 
 | Function | Purpose |
@@ -360,7 +488,7 @@ channel-scoped for editing or deleting one channel. The current split:
 
 | Scope | Actions |
 |---|---|
-| Channel | view, send, attach, react, read history, manage messages; connect, speak, stream; edit or delete the channel (`MANAGE_CHANNELS`); mute, deafen, move, disconnect a voice user (checked on the channel the target is in) |
+| Channel | view, send, attach, react, read history, manage messages, mention everyone, poke (VIEW_CHANNEL and SEND_MESSAGES); connect, speak, stream; edit or delete the channel (`MANAGE_CHANNELS`); mute, deafen, move, disconnect a voice user (checked on the channel the target is in) |
 | Space | create a channel; reorder channels and categories; create, rename or delete a category; read or write any channel or category override (`MANAGE_ROLES`); invites, kick, ban, space settings |
 
 Member and role actions also follow the role hierarchy and the held-bits
@@ -369,6 +497,8 @@ rule (above). Every gated surface:
 | Surface | File | Gating |
 |---|---|---|
 | Members list: kick and ban | `spaceSettingsPanels/MembersPanel.tsx` | hidden for members ranked at or above the viewer |
+| Member list owner heading: edit owner title | `layout/OwnerTitleHeading.tsx` | the signed-in user's row on the space's instance is the owner (no role or bit grants it, `MANAGE_SPACE` included), and that instance sends `ownerTitle` (`hostKeepsOwnerTitle`); desktop member list and phone members screen |
+| Member list right-click menu | `layout/memberMenu/useMemberContextMenu.tsx` | Change nickname: always for oneself; for another member with MANAGE_SPACE when they are not the owner and rank below the viewer. Roles submenu: `viewerCanEditMemberRoles`, listing the roles below the viewer's top role. Kick and Ban: KICK_MEMBERS / BAN_MEMBERS, not oneself or the owner, member ranked below the viewer |
 | Members list: role checkboxes | `spaceSettingsPanels/MembersPanel.tsx` | roles at or above the viewer's top role disabled (`settings.members.rolesAboveYou`); a role the member does not have yet and that carries a bit the viewer does not hold disabled (`settings.members.rolesUnheld`); each reason shown under the list with a lock, and as the row's title; the editor does not open for members ranked at or above the viewer |
 | Profile card: Edit Roles | `ui/UserProfilePopout.tsx` | desktop only; offered for a member of the loaded space when `viewerCanEditMemberRoles` holds: the viewer holds MANAGE_ROLES, the member is neither the viewer (by their id on the space's instance) nor the owner and ranks below the viewer, and some role other than @everyone ranks below the viewer; opens the member role editor |
 | Member role editor: role checkboxes | `modals/MemberRolesModal.tsx` | the Members list rule: roles at or above the viewer's top role disabled (`settings.members.rolesAboveYou`); a role the member does not have yet and that carries a bit the viewer does not hold disabled (`settings.members.rolesUnheld`); each reason shown under the list with a lock, and as the checkbox's title |
@@ -383,6 +513,7 @@ rule (above). Every gated surface:
 | Channel and category overrides: toggles | `ui/OverrideEntry.tsx` via `ui/PermissionsEditor.tsx` | a tri-state toggle for a bit the viewer does not hold is locked, shows its state and a lock, and the `permissions.unheldLocked` note says why |
 | Channel and category overrides: remove | `ui/OverrideEntry.tsx` via `ui/PermissionsEditor.tsx` | disabled for a saved override that sets a bit the viewer does not hold (`permissions.removeUnheld`); a row added in the same edit can always be dropped |
 | Voice user menu: mute, deafen, move, disconnect | `voice/voiceMenuItems.tsx` | no moderation items for members ranked at or above the viewer |
+| Message author right-click: Poke | `chat/useChannelPokeMenu.ts` via `chat/Message.tsx` | only for a sent message in a space channel where the viewer holds SEND_MESSAGES (`channelPermissions`) and the space's instance offered pokes in its `ready`; otherwise the right click opens the message menu. The server also needs the target to be a member with VIEW_CHANNEL (websocket.md, "Channel pokes") |
 | Voice drag-to-move | `hooks/useDragManager.ts` via `layout/ChannelSidebar.tsx` | not draggable for members ranked at or above the viewer |
 
 The helpers in `web/src/utils/roleHierarchy.ts` are the surface every role
@@ -405,6 +536,83 @@ control follows the channel.
 
 ---
 
+## Who receives role and override data
+
+A client is never sent more of a space's role or override data than it reads.
+The web client takes its own permissions from the server: the space's
+`myPermissions` and each channel's `myPermissions`, computed for the viewer
+with every role and override applied. It reads a role's `permissions` and the
+override rows only in the role editor, the member role editor and the channel
+and category Permissions tabs, and every one of those needs `MANAGE_ROLES`
+(see "Client gating"). So:
+
+| Viewer | Roles | Member rows' roles | Override rows | Own permissions |
+|---|---|---|---|---|
+| Not a member (explore, invite preview, directory, join previews) | none | none | none | none |
+| Member without `MANAGE_ROLES` (a `MANAGE_CHANNELS` holder and a member whose role has overrides included) | every role: `id`, `spaceId`, `name`, `color`, `position`, `isEveryone`, `createdAt`; no `permissions` field | display fields only | refused (`403 missing_permission`) | `myPermissions` on the space and on each channel it can see. `isPrivate` comes on channels and categories in `GET /api/spaces/:id`, on channels only in `ready`, and on neither in the `public-join` answer and `join_request_accepted` |
+| Member who holds `MANAGE_ROLES` in the space (the owner, instance admins and `ADMINISTRATOR` holders hold it) | every role with its display fields and `permissions` | display fields only | `GET /channels/:id/overrides`, `GET /categories/:id/overrides` | the same |
+
+`MANAGE_ROLES` counts at space level only: a member whose role is allowed it
+by an override on one channel holds it on that channel (it shows in that
+channel's `myPermissions`) but gets no role bits, and that channel's override
+rows are refused to them for reading, `PUT` and `DELETE` alike.
+
+Member rows list a member's roles to name, colour, group and rank them, so they
+never carry bits; a manager reads the bits from the space's role list.
+
+The rule is one module, `server/src/utils/permissionDataView.ts`:
+`viewerReadsPermissionData(spacePermissions)` decides it,
+`rolesForViewer` shapes a space's role list for the viewer, `roleView` one
+role, `memberRolesView` a member row's roles. Every send site goes through it:
+
+| Send site | Audience | Shaped by |
+|---|---|---|
+| WS `ready` (`buildReadyPayload`), each space's `roles` and `members[].roles` | the connecting user | `rolesForViewer` with the user's space permissions, `memberRolesView` |
+| `GET /api/spaces/:id` | members (`403 not_space_member` otherwise) | the same |
+| `POST /api/spaces/:id/public-join` answer and WS `join_request_accepted` (`buildFullSpace` in `routes/explore.ts`) | the member who just joined | the same, for that member |
+| `GET /api/spaces/:id/members`, `PATCH /api/spaces/:id/members/:uid` answer | members, a role manager | `memberRolesView` |
+| `POST /api/spaces/:id/roles`, `PATCH /api/spaces/:id/roles/:rid` answers | the actor | `roleView`, with the actor's permissions after the change (an actor who switched off their own `MANAGE_ROLES` gets no bits back) |
+| `GET /channels/:id/overrides`, `GET /categories/:id/overrides` | managers | refused unless `viewerReadsPermissionData` |
+| `member_joined` | the space | a new member has no roles: `roles: []` |
+| `member_updated` | the space | `memberRolesView`, the same row the `PATCH /members/:uid` answer carries |
+| `space_access_changed` | the space; after an instance admin change, that user alone | carries only `spaceId` |
+| `GET /api/spaces/explore`, `GET /api/spaces/invite/:code/preview`, `GET /api/directory/spaces` | anyone | carry no role or override data |
+
+**When a member's permissions change.** Three kinds of change move
+`MANAGE_ROLES`, and each is followed by `space_access_changed` (websocket.md):
+
+- a role write or member role write: sent to the space;
+- an ownership transfer (`PATCH /api/spaces/:id/transfer-ownership`): sent to
+  the space, after `space_updated`, with the former and the new owner as the
+  members whose own permissions changed;
+- an instance admin promoting or demoting a user
+  (`PATCH /api/admin/users/:id/role`), when the flag changes: sent to that
+  user alone, one event for each space they belong to on this instance
+  (`ConnectionManager.announceUserAccessChange`), since no other member's
+  permissions changed.
+
+The client refetches `GET /api/spaces/:id`, which is shaped for what the
+member holds now. A member who gains `MANAGE_ROLES` gets the bits on that
+refetch; a member who loses it gets the list without them, which replaces the
+one in the store. A `ready` is shaped the same way at every connect.
+
+**Federation.** A user whose home is another instance connects to the space's
+instance directly and is a member there under their local replicated id, so
+the same rule applies to them with that id. No server-to-server route serves
+role or override data.
+
+**Mixed versions.** The web client has read the space's role list only from
+`GET /api/spaces/:id`, which already left the bits out for members without
+`MANAGE_ROLES`, and it ignores the `roles` in `ready`, `public-join` and
+`join_request_accepted`. So an older client on this server and this client on
+an older server (which sends the bits to everyone) behave as before.
+
+Covered by `ws/readyPayload.roleScope.test.ts`, `routes/rolePayloadScope.test.ts`
+(both on `testing/rolePayloadFixture.ts`) and the web
+`stores/spaceStore.reducedRoles.test.ts`.
+
+---
+
 ## Broadcast audience
 
 Space membership and channel access are not the same thing, so the two
@@ -413,7 +621,7 @@ Space membership and channel access are not the same thing, so the two
 | Helper | Recipients | Carries |
 |--------|-----------|---------|
 | `sendToSpace(spaceId, event)` | every member of the space | space-level facts: `space_updated`, `member_joined`, `member_left`, `category_created` / `category_updated` / `category_deleted`, voice presence |
-| `sendToChannel(spaceId, channelId, event)` | members whose `computePermissions` grants `VIEW_CHANNEL` on that channel | anything scoped to one channel: `message_created`, `message_updated`, `message_deleted`, `typing`, `reaction_added`, `reaction_removed`, `embeds_resolved` |
+| `sendToChannel(spaceId, channelId, event)` | members whose `computePermissions` grants `VIEW_CHANNEL` on that channel | anything scoped to one channel: `message_created`, `message_updated`, `message_deleted`, `typing`, `reaction_added`, `reaction_removed`, `embeds_resolved`, `channel_poke` |
 
 Anything naming a channel or carrying its content goes through `sendToChannel`.
 A message edit ships the full `MessageWithUser` (content, author, attachments), a
@@ -435,9 +643,96 @@ the space-wide `category_created` are unaffected.
 
 ---
 
+## Mass mentions
+
+Three tokens address a group rather than one user, and all three need
+MENTION_EVERYONE (bit 15):
+
+| Token | Reaches |
+|---|---|
+| `@everyone` | every member who can see the channel |
+| `@here` | the same members as `@everyone`. Backspace has no "online only" audience when it decides an alert; each member's own settings decide |
+| `<@&roleId>` | every member holding that role in the channel's space |
+
+A token inside inline code or a fenced block is text. `@everyone` and `@here`
+count only on their own: not inside a word or an address (`a@everyone`), not
+after another `@`, not followed by a word character or `-`
+(`@everyone-else`). The one scan is `splitMentions` in
+`packages/shared/src/mentions.ts`; the server gate, the server's stamp, the
+renderer, the reply preview, the composer, the highlight and the alert rule
+all read tokens through it.
+
+**Sending.** The permission is checked at channel scope
+(`hasPermission(userId, spaceId, MENTION_EVERYONE, channelId)`), so channel and
+category overrides apply. A message with a mass mention from an author without
+it is refused, not sent as plain text: `POST /api/channels/:id/messages`
+answers `403 missing_permission` with `details.permission` =
+`MENTION_EVERYONE`, the WebSocket `message_create` sends an `error` with the
+same code and details, and nothing is stored. The web client keeps the draft
+and shows the reason. An edit (`PATCH /api/messages/:id`, WS `message_edit`)
+is refused the same way only when it adds a mass mention the stored message
+did not have (`addsMassMention`): keeping the ones it already has needs no
+permission, so a member who lost the bit, or wrote `@everyone` before the
+permission existed, can still fix the rest of the text. Edits never alert.
+DMs have no roles and no settings to suppress; their tokens are not checked
+and change nothing, since every DM message alerts anyway.
+
+**The stamp.** Every channel message the server sends (`buildMessageWithUser`,
+the WebSocket `getMessageWithUser`) carries `mentionEveryone` and
+`mentionRoleIds` (`storedMassMentionFields`), read from the stored content. Since
+the server stores a new mass mention only from an author with the
+permission, the stamp says the space allowed it. A system message (a poke)
+is stamped empty whatever its content holds: it records names members chose,
+and a nickname of `@everyone` is not a mention. Clients alert on mass
+mentions from the stamp alone, never from the text (sounds.md, "Which
+messages alert"). Messages stored before this version are stamped from their
+text too; that matters only for the highlight, since only `message_created`
+alerts.
+
+**Federation.** A space lives on one instance, and a member from another
+instance reads its channels from that instance directly with their
+replicated id there (client-federation.md). The permission is resolved there
+for that id, and the stamp comes from there. Role mentions are matched
+against the reader's roles on that instance (`myRoleIds` on the client's
+space entry, keyed by origin), never against a home id. No server-to-server
+route carries channel messages, so a peer cannot add a stamp.
+
+**Mixed versions.**
+
+| Case | Behaviour |
+|---|---|
+| 1.9.x client on this server | it sends `@everyone` as before and gets the coded refusal when the author lacks the bit; it ignores the stamp and alerts only on `<@id>`, as before |
+| this client on a 1.9.x server | that server sends no stamp, so its `@everyone` and role tokens render as badges but never alert; the suppress switches answer `400` there and the save shows as failed |
+| this client's role editor on a 1.9.x server | the bit can be switched and is stored, and that server ignores it |
+
+**Existing spaces.** No role gains the bit on upgrade: only the owner,
+instance admins and `ADMINISTRATOR` holders can send mass mentions until the
+owner grants MENTION_EVERYONE to a role. A member without it who used to type
+`@everyone` as plain text now gets the refusal. New roles start from the
+@everyone defaults, which do not include it. The held-bits rule applies as to
+every bit: a `MANAGE_ROLES` holder can switch it only if they hold it.
+
+**Editors.** The role editor (`utils/permissionGroups.ts`, text group), the
+member role editor, and the text channel and category override editors list
+it as "Mention @everyone, @here and Roles"
+(`spaces:permissions.names.mentionEveryone`).
+
+**Not yet offered.** The mention picker in the composer lists members only;
+roles, `@everyone` and `@here` are typed. The composer shows a known role
+token as `@RoleName` and paints `@everyone` and `@here`, as the sent message
+does.
+
+Covered by `routes/messages.massMentions.test.ts`,
+`utils/notificationFilters.test.ts`, `utils/mentionTokens.test.ts`,
+`chat/composerMentions.test.ts`, `chat/MassMentionBadge.test.tsx` and
+`stores/spaceStore.reducedRoles.test.ts`.
+
+---
+
 ## Reply-target confinement
 
-A message's `replyToId` must name a message in the **same channel**. Both create
+A message's `replyToId` must name a message in the **same channel**, and one a
+member wrote: a system row such as a poke takes no replies. Both create
 paths enforce it (`POST /api/channels/:id/messages` and the WebSocket
 `message_create` handler) via `isReplyTargetInChannel`, answering
 `400 Invalid reply target` / a WS `error` event without inserting anything. Every
@@ -462,7 +757,8 @@ computation: the reply preview inherits exactly the `VIEW_CHANNEL` +
 `READ_MESSAGE_HISTORY` gate that already guards the message carrying it.
 
 The DM side has the same rule with its own pair of helpers
-(`isDmReplyTargetInChannel` / `fetchDmReplyToMessages` in `routes/dm.ts`), where
+(`isDmReplyTargetInChannel` in `utils/dmMessageRules.ts` and
+`fetchDmReplyToMessages` in `routes/dm.ts`), where
 membership is binary so the two candidate predicates coincide.
 
 Covered by `packages/server/src/routes/messages.replyAuthorization.test.ts` and

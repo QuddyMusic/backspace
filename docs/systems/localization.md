@@ -6,9 +6,9 @@ moves. This spec is the contract; the foundation PR implements it and each
 surface sweep PR extends it.
 
 Shipped languages: English (`en`, the source language and the fallback),
-Russian (`ru`), German (`de`), Simplified Chinese (`zh`). Adding a language is a
-catalog directory plus one entry in `supportedLanguages`; nothing else in the
-code should need to know the list.
+Russian (`ru`), German (`de`), Brazilian Portuguese (`pt`), Simplified Chinese
+(`zh`). Adding a language is a catalog directory plus one entry in
+`supportedLanguages`; nothing else in the code should need to know the list.
 
 `zh` is the Simplified catalog and detection maps every `zh-*` tag onto it,
 Traditional included: a `zh-TW` browser gets a script its user can read
@@ -16,6 +16,13 @@ rather than English, and the picker says 简体中文 so they know which variant
 they have. A Traditional catalog would be `zh-Hant`, and adding it means
 teaching `resolveSupportedLanguage` to look at the script subtag, which it
 does not today.
+
+`pt` is the Brazilian Portuguese catalog, and it follows the same rule.
+Portuguese has two written standards, Brazilian (`pt-BR`) and European
+(`pt-PT`), which differ in spelling, vocabulary and forms of address but are
+mutually readable. Detection maps every `pt-*` tag onto the one catalog: a
+`pt-PT` browser gets Portuguese its user can read rather than English, and the
+picker says Português do Brasil so they know which variant they have.
 
 Source files:
 - Runtime setup: `packages/web/src/i18n/index.ts` (`initI18n`, `setLanguage`,
@@ -95,7 +102,7 @@ Rules:
 | `chat` | Message list, composer, attachments, embeds, reactions, replies, typing, jump-to-message |
 | `dm` | DM list, group DM management, DM calls, DM system messages |
 | `voice` | Voice channel controls, screen share, stream tiles, device pickers |
-| `spaces` | Space, category and channel CRUD, invites, discovery, membership, bans, roles; the Explore page's Inner and Outer Space sections, the connect-and-join dialog, the connections-that-need-attention chips and the per-space directory switch (`explore.inner.*`, `explore.outer.*`, `explore.connect.*`, `explore.connections.*`, `settings.discovery.directory.*`) |
+| `spaces` | Space, category and channel CRUD, invites, discovery, membership, bans, roles; the Explore page's Inner and Outer Space sections, the connect-and-join dialog, the connections-that-need-attention chips and the per-space directory switch (`explore.inner.*`, `explore.outer.*`, `explore.connect.*`, `explore.connections.*`, `settings.discovery.directory.*`); the per-space and per-channel notification settings: the bell popover, the dialog, the menu entry and the muted indicator (`notifications.*`; the level and mute-duration labels are closed unions mapped by `switch` in `NotificationSettingsControls.tsx`, never built from the value) |
 | `settings` | User settings modal and its panels (account, voice, privacy, connections, keybinds, desktop) |
 | `admin` | Instance settings panels (general, registration, users, storage, streaming, updates, federation); the space-discovery ladder and the directory status line (`general.discovery.*`, `general.directory.*`) |
 | `federation` | Connected instances UI, peering requests, identity attach and detach |
@@ -129,7 +136,13 @@ keep in step; for the shipped languages that is:
 | en | `_one`, `_other` |
 | de | `_one`, `_other` |
 | ru | `_one`, `_few`, `_many`, `_other` |
+| pt | `_one`, `_many`, `_other` |
 | zh | `_other` |
+
+Portuguese `_many` is CLDR's category for exact millions (`1000000`,
+`2000000`), the counts a spelled-out form would write as "1 milhão de
+membros". i18next selects it for those counts, so every Portuguese plural key
+carries it; with the count rendered as digits it reads the same as `_other`.
 
 A catalog directory whose code `Intl` does not know is a finding of its own,
 because the runtime could not pluralize it either.
@@ -240,10 +253,11 @@ Detection order on startup:
 Each entry in `supportedLanguages` carries a `released` flag. Only released
 languages appear in the picker (`availableLanguages`) or can be chosen by
 detection; a stored choice for an unreleased language is ignored. English,
-Russian, German and Chinese are all released. The flag exists for the next
-language: it lands surface by surface with `released: false`, so a release cut
-in between stays free of that language rather than shipping it half
-translated, and the PR that finishes it flips the flag. Tests reach an
+Russian, German, Brazilian Portuguese and Chinese are all released. The flag
+exists for the next language: it lands surface by surface with
+`released: false`, so a release cut in between stays free of that language
+rather than shipping it half translated, and the PR that finishes it flips the
+flag. Tests reach an
 unreleased language with `setLanguage` or `initI18n({ releasedLanguages })`;
 people reach it with `?lang=<code>` on the URL, which works in development
 builds only and is never persisted.
@@ -255,8 +269,8 @@ language keeps following their browser; only the picker persists.
 
 The selector lives in the user settings modal, Account panel, section
 "Language". It lists `supportedLanguages`, showing each language by its
-`nativeName` (English, Русский, Deutsch, 简体中文); the list is not translated,
-because a user who cannot read the current language needs to find their own.
+`nativeName` (English, Русский, Deutsch, Português do Brasil, 简体中文); the
+list is not translated, because a user who cannot read the current language needs to find their own.
 
 Changing the language:
 - Persists the choice.
@@ -313,6 +327,12 @@ no code or the catalog has no entry. A `code` that is missing from the
 `errors` namespace is a check-script failure, so every code shipped by the
 server has words in every language.
 
+A surface whose own failure text says more than an uncoded failure would (a
+browser exception from a clipboard write, a server's bare English `error`)
+uses `describeCodedError(err, fallback)` from the same file: the code's text
+when the error is an `HttpError` with a code, else `fallback`. The space
+menu's Invite People toasts and the notification settings save use it.
+
 Federation: error bodies relayed from a peer instance follow the same
 contract, so a code from a newer peer is localized and a bare `error` from
 an older peer is shown as is.
@@ -323,6 +343,14 @@ The space directory ([directory.md](directory.md)) added four codes:
 section shows this text as its unreachable state), `directory_private_space`
 (`directoryListed: true` on a private space) and
 `directory_requires_discovery` (`directoryEnabled: true` with discovery off).
+
+Two codes are no longer sent by a current server but stay in the list, because an older instance still sends them and a code never changes meaning: `space_uses_join_requests` (an invite link refused for a space joined by request) and `space_requires_approval` (a DM invite to one refused). Both stopped after 1.9.0, when a request space got an invite link that leads to a join request; `join_request_required` now carries `details.spaceId` for that request ([spaces.md](spaces.md), "Join by Invite Code").
+
+Concurrent permission edits ([permissions.md](permissions.md), "Concurrent
+edits") added two `409` codes: `overrides_conflict` (a channel or category
+override changed since the editor loaded it) and `role_permissions_conflict`
+(a role's permissions did). Their catalog text tells the user to review and
+save again; the editors reload before showing it.
 
 One code is minted by the client and never by a route:
 `federation_different_password`, carried by `RemoteLoginRequiredError` when a
@@ -386,8 +414,21 @@ too (`unauthorized`, `account_deleted`, `forbidden`) while keeping their
 English text. Two responses carry extra fields next to the shared shape: the
 username availability check (`available`, `reason`) and the owned-spaces
 rejection (`ownedSpaces`). The only sites left without codes are the
-test-only peer seeding route and the WebSocket handler's error messages,
-which are a separate protocol.
+test-only peer seeding route and most of the WebSocket handler's error
+messages, which are a separate protocol. A WebSocket `error` carries
+`details` next to `code` where the code's text has placeholders, and the
+client passes them to `describeErrorCode`. The WebSocket refusals that carry a
+code are `role_hierarchy` (voice moderation), every refusal of
+`dm_message_create`, `dm_message_edit` and `dm_message_delete` (the REST
+routes' codes, from `utils/dmMessageRules.ts`; see
+[websocket.md](websocket.md#dm-messages)), `dm_call_in_progress`,
+`not_dm_member` and `validation_failed` (`dm_call_start`), and
+`dm_call_not_found`, `not_dm_member` and `validation_failed`
+(`dm_call_accept`; see [voice.md](voice.md#dm-call-state-machine)), every
+refusal of `channel_poke` (`validation_failed`, `channel_not_found`,
+`missing_permission`, `member_not_found`, `poke_target_no_access`,
+`rate_limited`; see [websocket.md](websocket.md#channel-pokes)), and
+`system_message_immutable` for a `message_edit` of a channel system message.
 
 The web client no longer matches on English error text. The places that
 used to (the join page, the space invite card, the invite modal, the roles
@@ -403,8 +444,13 @@ DM system messages (member added, removed, left, ownership transferred, call
 events, space invites) are stored and relayed as structured JSON with a
 `type` discriminator and identity fields, never as English text. The client
 renders them through `dmFormatters.ts`, which now reads the `dm:system.*`
-keys. This is the only kind of server-authored text shown in chat, and it is
-already federation safe because peers relay the structure, not a rendering.
+keys. It is federation safe because peers relay the structure, not a
+rendering.
+
+Space channel system messages (a poke) follow the same rule: structured JSON
+(`channelSystemEvents.ts`) with ids and a name snapshot, rendered by
+`ChannelSystemMessage` from `chat:poke.received`. Content a client does not
+know renders `dm:system.generic` in both places.
 
 If a future feature stores a human sentence on the server, that is a bug in
 the feature, not a localization task.
@@ -417,8 +463,8 @@ The main process shows a handful of strings outside the renderer: tray menu
 items, the application menu (macOS, and the accelerator-only Edit menu on
 Windows and Linux), the update items, the recovery page and the instance
 picker. The menu strings live in `packages/desktop/src/l10n.ts` as a small
-typed catalog with `en`, `ru`, `de` and `zh` entries; `translateDesktop(language,
-key, values?)` reads it. The recovery and instance-picker pages carry their
+typed catalog with `en`, `ru`, `de`, `pt` and `zh` entries;
+`translateDesktop(language, key, values?)` reads it. The recovery and instance-picker pages carry their
 own inline `STRINGS` tables, because they are shown precisely when the
 renderer is unavailable.
 
@@ -575,7 +621,8 @@ treatment differs by script:
   UI and Microsoft YaHei, then the Noto CJK family). A Han webfont is several
   megabytes, and the OS pairs are designed to sit together, so vendoring buys
   nothing there.
-- **English and German** stay on DM Sans.
+- **English, German and Brazilian Portuguese** stay on DM Sans, whose `latin`
+  subset covers the Portuguese diacritics.
 
 Each surface is internally consistent, although the landing page keeps a
 platform stack for Russian while the app uses Inter, so the same Russian words
@@ -594,8 +641,8 @@ is omitted, so the Russian page uses it and the English page does not.
 
 1. Create `packages/web/src/locales/<lng>/` with every namespace file.
 2. Add `{ code, nativeName, dir }` to `supportedLanguages`.
-3. Add the entry to the desktop catalog in `l10n.ts` and the recovery
-   window's inline catalog.
+3. Add the entry to the desktop catalog in `l10n.ts` and to the inline
+   catalogs of the recovery window and the instance picker.
 4. Run `pnpm typecheck`; the check script confirms parity.
 
 Nothing else. If a fifth step turns out to be needed, the fix is to remove

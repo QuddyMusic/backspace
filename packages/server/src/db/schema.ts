@@ -38,6 +38,18 @@ export const users = sqliteTable('users', {
   isBot: integer('is_bot').notNull().default(0),
   /** users.id of the human who created the bot. No FK: tombstoneUser keeps the row. */
   botOwnerId: text('bot_owner_id'),
+  /**
+   * The identity a detached account (`federation_home_orphaned = 1`) had before
+   * it was detached: its former home instance and its id there. Detaching
+   * moves `home_instance`/`home_user_id` here and clears them, so the row is
+   * homed on this instance and presents itself to peers as one of its users
+   * (federation.md, "Detached accounts are homed here"). Read only to resolve
+   * a reference to the former identity back to this row (`resolveRelayActor`),
+   * for re-attach, and for the reset-cleanup admin listing. Kept on a
+   * tombstone; cleared by re-attach.
+   */
+  detachedHomeInstance: text('detached_home_instance'),
+  detachedHomeUserId: text('detached_home_user_id'),
   /** UTC day (YYYY-MM-DD) of the last authenticated WebSocket activity; written at most once per day. */
   lastActiveDay: text('last_active_day'),
   /** 'web' | 'desktop' | 'mobile', from the client's auth message. */
@@ -53,6 +65,8 @@ export const users = sqliteTable('users', {
    */
   homeUserIdx: index('idx_users_home_user_id').on(table.homeUserId),
   botOwnerIdx: index('idx_users_bot_owner_id').on(table.botOwnerId),
+  /** `resolveRelayActor` matches a former (detached) identity in the same query as `home_user_id`. */
+  detachedHomeUserIdx: index('idx_users_detached_home_user_id').on(table.detachedHomeUserId),
 }));
 
 export const spaces = sqliteTable('spaces', {
@@ -62,6 +76,7 @@ export const spaces = sqliteTable('spaces', {
   banner: text('banner'),
   avatarColor: text('avatar_color'),
   ownerId: text('owner_id').notNull().references(() => users.id),
+  ownerTitle: text('owner_title'),
   inviteCode: text('invite_code').unique(),
   visibility: text('visibility').default('private'),
   directoryListed: integer('directory_listed').notNull().default(0),
@@ -108,6 +123,7 @@ export const messages = sqliteTable('messages', {
   userId: text('user_id').notNull().references(() => users.id),
   replyToId: text('reply_to_id'),
   content: text('content'),
+  type: text('type', { enum: ['user', 'system'] }).notNull().default('user'),
   editedAt: integer('edited_at'),
   createdAt: integer('created_at').notNull(),
 }, (table) => ({
@@ -117,6 +133,13 @@ export const messages = sqliteTable('messages', {
   }).onDelete('set null'),
   channelIdx: index('idx_messages_channel_id').on(table.channelId),
   userIdx: index('idx_messages_user_id').on(table.userId),
+  // Unread counts (ws/channelUnreadCounts.ts): the messages of a channel after
+  // a read cursor, compared as numbers, with the author to leave out the
+  // reader's own and the type to leave out system rows, so a count reads the
+  // index alone. The expression is unqualified because SQLite refuses a
+  // qualified column in an index expression, and the query must spell it
+  // `CAST(... AS INTEGER)` in this case for the planner to match it.
+  unreadIdx: index('idx_messages_channel_unread').on(table.channelId, sql`CAST(id AS INTEGER)`, table.userId, table.type),
 }));
 
 export const attachments = sqliteTable('attachments', {
@@ -215,6 +238,8 @@ export const dmMessages = sqliteTable('dm_messages', {
   }).onDelete('set null'),
   channelIdx: index('idx_dm_messages_dm_channel_id').on(table.dmChannelId),
   userIdx: index('idx_dm_messages_user_id').on(table.userId),
+  // Unread counts, as idx_messages_channel_unread above.
+  unreadIdx: index('idx_dm_messages_channel_unread').on(table.dmChannelId, sql`CAST(id AS INTEGER)`, table.userId),
   sourceUniqueIdx: uniqueIndex('idx_dm_messages_source_unique')
     .on(table.sourceInstance, table.sourceMessageId)
     .where(sql`source_instance IS NOT NULL`),
@@ -251,6 +276,8 @@ export const reactions = sqliteTable('reactions', {
   createdAt: integer('created_at').notNull(),
 }, (table) => ({
   messageIdx: index('idx_reactions_message_id').on(table.messageId),
+  // One reaction per user, emoji and message. A repeat insert is refused.
+  messageUserEmojiIdx: uniqueIndex('idx_reactions_message_user_emoji').on(table.messageId, table.userId, table.emoji),
 }));
 
 export const dmReactions = sqliteTable('dm_reactions', {
@@ -261,6 +288,8 @@ export const dmReactions = sqliteTable('dm_reactions', {
   createdAt: integer('created_at').notNull(),
 }, (table) => ({
   dmMessageIdx: index('idx_dm_reactions_dm_message_id').on(table.dmMessageId),
+  // One reaction per user, emoji and message. A repeat insert is refused.
+  dmMessageUserEmojiIdx: uniqueIndex('idx_dm_reactions_message_user_emoji').on(table.dmMessageId, table.userId, table.emoji),
 }));
 
 export const roles = sqliteTable('roles', {
@@ -314,6 +343,36 @@ export const readStates = sqliteTable('read_states', {
 }, (table) => ({
   pk: primaryKey({ columns: [table.userId, table.channelId] }),
   userIdx: index('idx_read_states_user_id').on(table.userId),
+}));
+
+/**
+ * A user's notification setting for a space (`channel_id` NULL) or for one
+ * channel of it. Lives on the instance that hosts the space and is keyed by
+ * the user's row here (for a federated member, their account on this
+ * instance). `level` NULL is "not chosen": the channel inherits the space,
+ * the space uses the default. `muted` with `muted_until` NULL lasts until
+ * lifted. A row with no choice left is deleted, not kept.
+ * See docs/systems/sounds.md ("Notification settings").
+ */
+export const notificationSettings = sqliteTable('notification_settings', {
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  spaceId: text('space_id').notNull().references(() => spaces.id, { onDelete: 'cascade' }),
+  channelId: text('channel_id').references(() => channels.id, { onDelete: 'cascade' }),
+  level: text('level'),
+  muted: integer('muted').notNull().default(0),
+  mutedUntil: integer('muted_until'),
+  suppressEveryone: integer('suppress_everyone').notNull().default(0),
+  suppressRoles: integer('suppress_roles').notNull().default(0),
+  updatedAt: integer('updated_at').notNull(),
+}, (table) => ({
+  // One space-wide row and one row per channel, per user. Two partial
+  // indexes because a NULL channel_id never collides in a plain unique index.
+  spaceRowIdx: uniqueIndex('idx_notification_settings_space_row')
+    .on(table.userId, table.spaceId)
+    .where(sql`${table.channelId} IS NULL`),
+  channelRowIdx: uniqueIndex('idx_notification_settings_channel_row')
+    .on(table.userId, table.channelId)
+    .where(sql`${table.channelId} IS NOT NULL`),
 }));
 
 export const spaceFolders = sqliteTable('space_folders', {
@@ -466,7 +525,10 @@ export const federationPeers = sqliteTable('federation_peers', {
   approvalToken: text('approval_token'),
   peerInstanceId: text('peer_instance_id'),
   observedPeerInstanceId: text('observed_peer_instance_id'),
-  needsAttentionReason: text('needs_attention_reason'),
+  // Why the row is in its status, for the statuses that carry a reason
+  // (needs_attention, rejected); NULL for every other status. Written only by
+  // utils/federationPeerState.ts. See docs/systems/federation.md, "Peer state".
+  statusReason: text('status_reason'),
 });
 
 // Pull-sync position per peer and context ('dm' | 'friend' | 'profile'): the

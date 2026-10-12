@@ -21,6 +21,12 @@ Source files:
 - Settings: `packages/web/src/stores/voiceStore.ts`
   (`soundEffectVolume`, `messageSoundAllChannels`),
   `packages/web/src/components/modals/settingsPanels/VoicePanel.tsx`
+- Per-space and per-channel notification settings:
+  `packages/web/src/stores/notificationSettingsStore.ts`,
+  `packages/web/src/hooks/useNotificationSettings.ts`,
+  `packages/web/src/components/notifications/`, server
+  `packages/server/src/routes/notificationSettings.ts`, shared rule
+  `resolveChannelNotificationPolicy` in `packages/shared/src/types.ts`
 
 ---
 
@@ -55,28 +61,139 @@ rule `isMessageAlert` in `utils/notificationFilters.ts`. `SoundController`
 calls it before `message.ogg` and `NotificationController` calls it before the
 new-message OS notification, so the two outputs cannot drift apart.
 
-**Rule.** Never for the user's own message. Otherwise yes for a DM, and yes for
-a message whose content mentions the user (`<@id>`). Every other message does
-not alert.
+**Rule.** Never for the user's own message. Otherwise always for a DM. For a
+space channel it follows the channel's notification policy (below): never
+while the channel or its space is muted, never on `nothing` (mentions
+included), always on `all`, and on `mentions` (the default) only for a message
+that mentions the user (`messageMentions`): a `<@id>` token for them, a
+`@everyone` / `@here` unless the space's `suppressEveryone` is on, or a role
+they hold unless `suppressRoles` is on. The switches never hold back a direct
+mention, and they do not change `all`, `nothing`, a mute, the every-message
+sound or DMs.
 
-**The user's ids.** The home account's `id`, its `homeUserId`, and the id the
-user holds on the channel's instance (`getMyUserIdForOrigin` of the channel's
-origin). On a remote instance's channel, the user's own messages carry that
-instance's id and mentions of the user are written with it, so without it the
-user's own messages there would alert and mentions there would not.
+| Channel policy | Plain message | Mentions the user | `@everyone` / `@here` | Role the user holds | `messageSoundAllChannels` on (sound only) |
+|---|---|---|---|---|---|
+| `all` | alerts | alerts | alerts | alerts | alerts |
+| `mentions` (default) | no | alerts | alerts unless `suppressEveryone` | alerts unless `suppressRoles` | alerts |
+| `nothing` | no | no | no | no | no |
+| muted (any level) | no | no | no | no | no |
+| DM (any setting) | alerts | alerts | alerts | alerts | alerts |
+
+**Mass mentions come from the stamp.** `@everyone`, `@here` and roles are read
+from the message's `mentionEveryone` and `mentionRoleIds`, which the instance
+hosting the space sets only for what it let an author with MENTION_EVERYONE
+send (permissions.md, "Mass mentions"), never from the text. A space on an
+instance from before the permission sends no stamp, so its `@everyone` does
+not alert. Direct `<@id>` mentions are read from the text, as before. The
+user's roles are their roles on the space's instance (`myRoleIds` on the
+space, from `ready` and from each `GET /api/spaces/:id`, kept for spaces that
+are not open, read by `selectMyRoleIdsInChannel`). The message highlight in
+`Message.tsx` uses the same `messageMentions` and shows any of the three,
+whatever the switches say.
+
+**Whose message, whose mention.** Both are decided with the channel's origin
+(`getChannelOrigin`). The author is the user when `isMe(author, origin)` holds
+(the identity rule, client-federation.md §5). A mention is of the user when the
+content has `<@id>` for the id the channel's instance gave them
+(`getMyUserIdForOrigin(origin)`); until that instance's `ready` named it,
+nothing there mentions the user. On a remote instance's channel the user's
+own messages carry that instance's row and mentions are written with its id,
+so checking against the session row alone would alert on their own messages
+there and miss mentions.
 
 **The every-message preference.** `messageSoundAllChannels` ("Play sound for
 every message") widens the sound only. `SoundController` passes it as
-`everyMessage`; `NotificationController` does not, so OS notifications stay on
-DMs and mentions whatever the preference says.
+`everyMessage`; `NotificationController` does not, so OS notifications follow
+the channel policy whatever the preference says. It widens a channel on
+`mentions` only: a channel the user set to `nothing`, or muted, stays silent,
+because that choice is about the one channel and the preference is a general
+one.
 
-**Per-channel and per-space settings.** There are none today: no channel or
-space mute and no notification level. When one is added it belongs in
-`messageAlertsUser`, so both outputs follow it.
+**Pokes never alert.** A poke (websocket.md, "Channel pokes") reaches the
+client as a `channel_poke` event, not a `message_created`, and
+`chatStore.addRealtimeMessage` keeps channel system rows out of
+`realtimeMessageEvents`, so the predicate never sees one: no `message.ogg`,
+no OS notification and no unread dot, on any notification level. A poke has
+no sound of its own; its only cue is the avatar animation in the open
+channel, which follows the same gates as an alert would (not in DND, not in
+a muted channel or one set to `nothing`, unless the viewer is the poker) and
+also skips reduced motion.
 
 **Order.** The predicate decides first, then Do Not Disturb (below) withholds
 what it allowed. A batch of events raises at most one sound and at most one
 notification, for the first message that alerts.
+
+**Desktop clicks.** The main process keeps each native notification
+referenced until it is clicked or closed, so Windows does not drop its click
+(desktop.md, "Notifications").
+
+---
+
+## Notification settings
+
+Per-space and per-channel settings decide which space messages alert. DMs are
+not governed by them.
+
+**Values.** A level, `all` | `mentions` | `nothing`, and a mute: off, or on
+until a time (1 h, 8 h, 24 h from when it was set, server clock) or until
+lifted. A space's level defaults to `mentions`; a channel's level is "not
+chosen" until set, and then it inherits its space's. A channel is muted while
+its own mute or its space's is in force. `resolveChannelNotificationPolicy`
+in `@backspace/shared` holds the inheritance and mute rules in one place.
+The space setting also has two switches, `suppressEveryone` and
+`suppressRoles` (off by default). They are space-wide only: a channel inherits
+them and cannot set them, so a channel's level never undoes them.
+
+**Where they live.** On the instance that hosts the space, in
+`notification_settings` (database.md), keyed by the user's row there: for a
+space on a remote instance that is the user's account on that instance,
+never their home id. The client reaches it through origin routing
+(`getApiForOrigin` of the space's origin). Routes: api.md, "Notification
+settings". Every change is pushed as `notification_settings_updated` to the
+user's sockets on that instance (websocket.md), so their other sessions there
+follow at once. Sessions on other devices that connect later read the list
+when that instance's `ready` arrives.
+
+**Client.** `stores/notificationSettingsStore.ts` keeps every connected
+instance's settings, keyed by origin and id (ids are per instance). Each
+instance's list is loaded on its `ready`; pushes and the response to the
+user's own change are merged last-write-wins on the server's `updatedAt`, and
+a push that lands while a list is loading is merged over the list rather than
+lost. The entries of an instance go when it is removed
+(`removeInstanceSpaces`) and all of them on sign-out (`resetUserStores`). One
+timer fires at the nearest end of a timed mute and bumps the store's `clock`,
+so the muted indicator and the open controls update at that moment; the
+filter itself compares `mutedUntil` with the time of each message.
+`hooks/useNotificationSettings.ts` resolves a channel's origin and space from
+the space-channel index (`getChannelNotificationPolicy` for event-time code,
+`useChannelNotificationPolicy` for render). A channel the index does not know
+yet resolves to the defaults.
+
+**Applied in one place.** `messageAlertsUser` reads the channel's policy and
+passes it to `isMessageAlert`, so `message.ogg` and the OS notification follow
+the same settings. Do Not Disturb then applies on top, as before.
+
+**UI.**
+- The channel header's bell (`ChannelNotificationButton`) opens a `.glass`
+  popover (`ChannelNotificationPopover`) with the channel's level (including
+  "Space default (…)") and the mute options; while muted it shows the end and
+  an Unmute button. The bell is crossed out while the channel is muted.
+- "Notification settings" in the space context menu (desktop and mobile) opens
+  the same controls for the space in a `.glass-modal` dialog
+  (`NotificationSettingsModal`). On mobile, which has no header bell, the
+  channel menu has the same entry for the channel. The dialog for a space
+  also has a "Group mentions" section with the two suppress switches and a
+  note that `@here` reaches the same members as `@everyone` and that
+  mentions by name always notify. The channel popover does not show them.
+- A muted channel shows a crossed-out bell in the channel list
+  (`ChannelMutedIndicator`), for its own mute or its space's. Unread state and
+  counts are unchanged by settings, as they are by Do Not Disturb. The one
+  visible difference: a muted space draws its unread count badge in
+  `interactive-muted` instead of the notification colour (websocket.md,
+  "Unread counts").
+
+The controls live in `components/notifications/`. Voice channels have no
+bell; their text chat follows the space setting.
 
 ---
 
@@ -210,7 +327,7 @@ unsubscribe twin; there is no public `numSubscribers` API. Backspace uses a
 small data-channel ping instead, mirroring the existing `deafen` pattern in
 `useLiveKit.ts`.
 
-**Wire format** (`streamWatchProtocol.ts`), two message types:
+**Wire format** (`streamWatchProtocol.ts`), the watch ping and the sharer's share signals:
 ```ts
 interface StreamWatchPayload {
   type: 'stream_watch';
@@ -219,10 +336,19 @@ interface StreamWatchPayload {
   watching: boolean;
 }
 
-interface StreamRepublishPayload {
-  type: 'stream_republish';   // sender is the sharer; no other fields
+interface ShareSignalPayload {
+  // sender is the sharer; no other fields
+  type: 'stream_republish' | 'stream_resume' | 'stream_stop';
 }
 ```
+
+`stream_resume` (the sharer's full reconnect published its share again) and
+`stream_stop` (the share ended for good) let a viewer that was watching watch
+again after a full reconnect; they are described in `docs/systems/voice.md`
+(Screen Sharing, "Viewers across a full reconnect"). A viewer that resumes
+sends `stream_watch { watching: true }` without a cue of its own; on the
+sharer's side its own full reconnect keeps viewers that come back in the
+watcher set, so they play no `stream_user_left` / `stream_user_joined` pair.
 
 `stream_republish` is sent by a sharer right before a codec change unpublishes
 its screen share to publish the same capture again (`republishScreenShare`).
@@ -268,7 +394,12 @@ diff transitions and fires the streamer-only sounds.
 **Crash / drop cleanup.** `RoomEvent.ParticipantDisconnected` evicts the
 disconnecting participant identity from every watcher set
 (`voiceStore.evictWatcher`). The `stream_user_left` cue plays on the streamer
-side at that point.
+side at that point. A disconnect seen while the room is not `Connected` may be
+the room's own full reconnect dropping everyone, so nothing is evicted then.
+Every return to `Connected` runs `voiceStore.retainWatchers`, which drops the
+viewers not in the room: those that did not come back after a full reconnect,
+and a viewer that really left during a signal resume (whose signal is live
+again before the room is `Connected`).
 
 **Self-stream-end suppression.** When the streamer themselves stops sharing
 (a real stop; a codec republish is not one, see above),

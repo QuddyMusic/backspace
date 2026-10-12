@@ -4,7 +4,6 @@ import { useLocation } from 'react-router-dom';
 import { useSpaceStore } from '../../stores/spaceStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useUIStore } from '../../stores/uiStore';
-import { useAuthStore } from '../../stores/authStore';
 import { MessageList } from '../chat/MessageList';
 import { MessageInput } from '../chat/MessageInput';
 import { VoiceGrid } from '../voice/VoiceGrid';
@@ -16,10 +15,12 @@ import { ProjectHubPage } from '../projectHub/ProjectHubPage';
 import { Avatar } from '../ui/Avatar';
 import { AvatarStack } from '../ui/AvatarStack';
 import { useVoiceStore } from '../../stores/voiceStore';
-import { canStartDmCall, startDmCall, cancelOutgoingDmCall } from '../../utils/voiceActions';
+import { canStartDmCall, startDmCall, cancelOutgoingDmCall, isDmCallRunning, joinDmCall } from '../../utils/voiceActions';
+import { useActiveDmCall } from '../../hooks/useActiveDmCall';
 import { MemberListToggleButton } from './MemberListToggleButton';
 import { TransferIndicator } from './TransferIndicator';
-import { isSelf, isFederationGlobeApplicable, userDisplayName } from '../../utils/identity';
+import { isMine, isFederationGlobeApplicable, userDisplayName } from '../../utils/identity';
+import { useDmViewer } from '../../hooks/useDmViewer';
 import { formatDmHeaderName, formatDmInputLabel, isDeletedPartnerDm } from '../../utils/dmFormatters';
 import { DmDeletedNotice } from '../chat/DmDeletedNotice';
 import { useCanonicalUserView } from '../../utils/userViewLookup';
@@ -27,6 +28,8 @@ import type { User } from '@backspace/shared';
 import { Tooltip } from '../ui/Tooltip';
 import { joinVoiceChannel } from '../../utils/voice';
 import { SearchPopover } from '../chat/SearchPopover';
+import { ChannelNotificationButton } from '../notifications/ChannelNotificationButton';
+import { ChannelHeaderTopic } from './ChannelHeaderTopic';
 import { isDmChannel } from '../../stores/spaceStore';
 import { usePointerReveal, VOICE_CHROME_ATTR } from '../../hooks/usePointerReveal';
 import { BotBadge } from '../ui/BotBadge';
@@ -72,11 +75,12 @@ export function MainContent() {
   const location = useLocation();
   const isExplorePage = location.pathname === '/explore';
   const isProjectHubPage = location.pathname === '/backspace';
-  const activeDmCall = useVoiceStore((s) => s.activeDmCall);
+  // The DM call's conversation as this client opens it (never the call's key).
+  const { dmChannelId: dmCallChannel } = useActiveDmCall();
   const outgoingCall = useVoiceStore((s) => s.outgoingCall);
   const canStartCall = useVoiceStore(canStartDmCall);
+  const dmCallRunning = useVoiceStore((s) => !!currentChannelId && isDmCallRunning(s, currentChannelId));
   const dmChannels = useSpaceStore((s) => s.dmChannels);
-  const authUser = useAuthStore((s) => s.user);
   const openModal = useUIStore((s) => s.openModal);
 
   const voiceContainerRef = useRef<HTMLDivElement>(null);
@@ -94,9 +98,10 @@ export function MainContent() {
   // cache. The hook must be called unconditionally at the component top, so we
   // pass a fallback when there is no current DM channel or 1-on-1 partner.
   const _dmChannel = dmChannels.find(dm => dm.id === currentChannelId);
-  const _rawFirstOther = _dmChannel?.members.filter(m => !isSelf(m, authUser))[0] ?? null;
+  const dmViewer = useDmViewer(_dmChannel?.id);
+  const _rawFirstOther = _dmChannel?.members.filter(m => !isMine(m, dmViewer.origin, dmViewer.self))[0] ?? null;
   const _FALLBACK_USER = { id: '', username: '', createdAt: 0, isAdmin: false, replicatedInstances: [] } as unknown as User;
-  const _canonicalFirstOther = useCanonicalUserView(_rawFirstOther ?? _FALLBACK_USER);
+  const _canonicalFirstOther = useCanonicalUserView(_rawFirstOther ?? _FALLBACK_USER, dmViewer.origin);
 
   // Reset search when channel changes
   useEffect(() => {
@@ -199,7 +204,7 @@ export function MainContent() {
     }
 
     const dmChannel = dmChannels.find(dm => dm.id === currentChannelId);
-    const otherMembers = dmChannel?.members.filter(m => !isSelf(m, authUser)) ?? [];
+    const otherMembers = dmChannel?.members.filter(m => !isMine(m, dmViewer.origin, dmViewer.self)) ?? [];
     const isGroupDm = !!dmChannel?.ownerId;
     // Use the canonicalized view of the 1-on-1 partner (resolved above the
     // conditional so the hook is called unconditionally).
@@ -208,7 +213,7 @@ export function MainContent() {
     // back to joined member names); 1-on-1 DMs keep the canonical-view path
     // so replicated aliases still surface the home-instance display name.
     const dmName = isGroupDm && dmChannel
-      ? formatDmHeaderName(dmChannel, authUser)
+      ? formatDmHeaderName(dmChannel, dmViewer)
       : ((firstOther && userDisplayName(firstOther)) || t('spaces:main.dm.fallbackName'));
     // Message-input placeholder — groups use `formatDmInputLabel` which
     // collapses unnamed groups to "the group" so the textarea doesn't render
@@ -217,17 +222,22 @@ export function MainContent() {
     // resolves the raw partner; on replicated aliases the canonical view
     // can disagree).
     const dmInputPlaceholder = isGroupDm && dmChannel
-      ? t('spaces:main.dm.composerPlaceholder', { target: formatDmInputLabel(dmChannel, authUser) })
+      ? t('spaces:main.dm.composerPlaceholder', { target: formatDmInputLabel(dmChannel, dmViewer) })
       : dmChannel
         ? t('spaces:main.dm.composerPlaceholder', { target: `@${dmName}` })
         : undefined;
-    const dmPartnerDeleted = dmChannel ? isDeletedPartnerDm(dmChannel, authUser) : false;
+    const dmPartnerDeleted = dmChannel ? isDeletedPartnerDm(dmChannel, dmViewer) : false;
 
-    const isInDmCall = activeDmCall?.dmChannelId === currentChannelId;
+    const isInDmCall = !!currentChannelId && dmCallChannel === currentChannelId;
     const isCallingThisDm = outgoingCall?.dmChannelId === currentChannelId;
 
-    const handleStartVoiceCall = () => {
-      if (currentChannelId) startDmCall(currentChannelId);
+    // A DM whose call already has people in it gets a join button; starting
+    // a second call there is what the server would refuse.
+    // The video button does the same with the camera on once connected.
+    const handleStartCall = (withCamera: boolean) => {
+      if (!currentChannelId) return;
+      if (dmCallRunning) joinDmCall(currentChannelId, { withCamera });
+      else startDmCall(currentChannelId, { withCamera });
     };
 
     const handleCancelCall = () => {
@@ -306,7 +316,7 @@ export function MainContent() {
                 className="flex-shrink-0 cursor-pointer"
                 aria-label={t('spaces:main.dm.openGroupSettings')}
               >
-                <AvatarStack members={otherMembers} size={32} border="chat" iconUrl={dmChannel?.icon} />
+                <AvatarStack members={otherMembers} origin={dmViewer.origin} size={32} border="chat" iconUrl={dmChannel?.icon} />
               </div>
             ) : (
               <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" className="text-txt-tertiary flex-shrink-0">
@@ -365,26 +375,31 @@ export function MainContent() {
             )}
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
-            <button
-              onClick={handleStartVoiceCall}
-              disabled={!canStartCall}
-              className="w-8 h-8 flex items-center justify-center text-txt-tertiary hover:text-txt-primary transition-colors rounded-[6px] hover:bg-interactive-hover disabled:opacity-50 disabled:cursor-not-allowed"
-              title={t('spaces:main.dm.startVoiceCall')}
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" />
-              </svg>
-            </button>
-            <button
-              onClick={handleStartVoiceCall}
-              disabled={!canStartCall}
-              className="w-8 h-8 flex items-center justify-center text-txt-tertiary hover:text-txt-primary transition-colors rounded-[6px] hover:bg-interactive-hover disabled:opacity-50 disabled:cursor-not-allowed"
-              title={t('spaces:main.dm.startVideoCall')}
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.54-.18L19.73 21 21 19.73 3.27 2z" />
-              </svg>
-            </button>
+            {/* A 1-on-1 whose partner was deleted has nobody to ring, as on mobile. */}
+            {!dmPartnerDeleted && (
+              <>
+                <button
+                  onClick={() => handleStartCall(false)}
+                  disabled={!canStartCall}
+                  className={`w-8 h-8 flex items-center justify-center transition-colors rounded-[6px] hover:bg-interactive-hover disabled:opacity-50 disabled:cursor-not-allowed ${dmCallRunning ? 'text-accent-mint hover:text-accent-mint/80' : 'text-txt-tertiary hover:text-txt-primary'}`}
+                  title={dmCallRunning ? t('spaces:main.dm.joinCall') : t('spaces:main.dm.startVoiceCall')}
+                >
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => handleStartCall(true)}
+                  disabled={!canStartCall}
+                  className={`w-8 h-8 flex items-center justify-center transition-colors rounded-[6px] hover:bg-interactive-hover disabled:opacity-50 disabled:cursor-not-allowed ${dmCallRunning ? 'text-accent-mint hover:text-accent-mint/80' : 'text-txt-tertiary hover:text-txt-primary'}`}
+                  title={dmCallRunning ? t('spaces:main.dm.joinCall') : t('spaces:main.dm.startVideoCall')}
+                >
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" />
+                  </svg>
+                </button>
+              </>
+            )}
             <button
               onClick={() => openModal('addDmMember', { dmChannelId: currentChannelId })}
               className="w-8 h-8 flex items-center justify-center text-txt-tertiary hover:text-txt-primary transition-colors rounded-[6px] hover:bg-interactive-hover"
@@ -529,18 +544,11 @@ export function MainContent() {
           <span className="text-[20px] font-medium text-txt-tertiary flex-shrink-0 leading-none">#</span>
           <span className="font-bold text-[15px] tracking-[-0.02em] text-txt-primary truncate leading-tight">{channel.name}</span>
           {channel.topic && (
-            <>
-              <div className="w-[1px] h-5 bg-border-soft mx-2" />
-              <span className="text-[13px] text-txt-tertiary truncate leading-tight">{channel.topic}</span>
-            </>
+            <ChannelHeaderTopic key={channel.id} channelName={channel.name} topic={channel.topic} />
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          <button className="w-8 h-8 flex items-center justify-center text-txt-tertiary hover:text-txt-primary transition-colors rounded-[6px] hover:bg-interactive-hover" title={t('spaces:main.notificationSettings')}>
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />
-            </svg>
-          </button>
+          <ChannelNotificationButton channelId={currentChannelId} channelName={channel.name} />
           <button
             ref={searchButtonRef}
             onClick={() => setSearchOpen(!searchOpen)}

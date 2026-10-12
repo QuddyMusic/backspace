@@ -9,6 +9,7 @@ Source files:
 - `packages/server/src/utils/storageJanitor.ts` -- `cleanupSoftDeletedDmChannels()` (24h grace period hard-delete)
 - `packages/server/src/utils/userDeletion.ts` -- `tombstoneUser()`: DM membership partition (1-on-1 kept / group dropped) + dead-DM purge on "zero live members" (see "DM Tombstone Semantics")
 - `packages/server/src/utils/permissions.ts` -- `isDeadOneOnOne()` read-only guard for Deleted-User 1-on-1 threads
+- `packages/server/src/utils/dmMessageRules.ts` -- `checkDmMessageCreate` / `checkDmMessageEdit` / `checkDmMessageDelete`: the message write checks shared by the REST routes and the WebSocket events
 - `packages/server/src/db/migrate.ts` -- Self-healing migration for corrupted group DM ownership; `backfillOneOnOneDmMembership()` restores pre-fix Deleted-User 1-on-1 threads
 - `packages/web/src/components/chat/DmDeletedNotice.tsx` -- read-only composer notice; `packages/web/src/utils/dmFormatters.ts:isDeletedPartnerDm()` gates it
 - `packages/server/src/ws/handler.ts` -- `sendToDmMembers()` broadcasts (ConnectionManager method)
@@ -123,7 +124,7 @@ interface GroupDmUserIdentity {
    - Else: direct ID lookup, falling back to `resolveLocalUser()` for remote snowflake IDs
 4. No duplicate resolved IDs
 5. Caller cannot include themselves
-6. All target users must be friends with the caller (exception: existing DM members when `fromDmChannelId` references a 1-on-1 DM the caller belongs to)
+6. All target users must be friends with the caller (exception: existing DM members when `fromDmChannelId` references a 1-on-1 DM the caller belongs to). The check reads this instance's `friends` table, so the client sends the request to the user's home when it holds a session there ("Add DM Member Modal" below)
 
 **Creation transaction:**
 1. Insert `dm_channels` with `ownerId = caller`
@@ -447,7 +448,8 @@ The scan is **scoped** to `userDmChannelIds` (not a global `dm_channels` sweep) 
 A Deleted-User 1-on-1 is a **read-only archive** — you can never message a tombstoned (and possibly dead-incarnation) partner, and an edit/delete relay would still be addressed to the tombstoned partner's home instance, risking mis-direction to a new incarnation. The server is the enforcement boundary:
 
 - **Helper:** `permissions.ts:isDeadOneOnOne(dmChannelId, requesterId)` → `true` when the channel is 1-on-1 (`ownerId IS NULL`) **and** every member other than the requester has `isDeleted = 1` (returns `false` for groups and when there are no other members).
-- **Applied to all three message-mutation endpoints** in `dm.ts`: `POST /api/dm/:id/messages` (after the `isDmMember` gate), `PATCH /api/dm/messages/:id`, and `DELETE /api/dm/messages/:id`. Each rejects with **`403 { error: "This user's account was deleted", code: 'recipient_deleted', statusCode: 403 }`**.
+- **Applied to all three message mutations on both paths** through `utils/dmMessageRules.ts`: `POST /api/dm/:id/messages` and WS `dm_message_create` (after the `isDmMember` gate), `PATCH /api/dm/messages/:id` and WS `dm_message_edit`, `DELETE /api/dm/messages/:id` and WS `dm_message_delete`. REST rejects with **`403 { error: "This user's account was deleted", code: 'recipient_deleted', statusCode: 403 }`**; the WS events answer an `error` event with `code: 'recipient_deleted'`. Nothing is stored, broadcast or relayed.
+- **Identity:** the check compares row ids on this instance (the session's user row and the conversation's `dm_members` rows), so it holds on a copy of a federated conversation too: a federated account acting here is judged by its own row, and a replicated partner whose home deleted them is tombstoned here by the identity delete and counts as deleted.
 - **Applied to DM reactions on the WebSocket path** in `ws/events.ts`: `handleReactionAdd` and `handleReactionRemove` call `isDeadOneOnOne(dmMsg.dmChannelId, userId)` after the `isDmMember` gate and **silently drop** the frame (WS has no response channel). Without this, a survivor could add/remove reactions on historical messages and the reaction would relay to the tombstoned partner's home instance — the exact mis-directed relay the read-only invariant exists to prevent.
 - **Client mirror (consistency, not the boundary):** `components/chat/Message.tsx` withdraws the add-reaction affordances (hover button, emoji picker, context-menu "Add Reaction") and no-ops existing-pill toggles when the message's DM is a dead 1-on-1 (`isDeletedPartnerDm(dm, currentUser)`). Existing reactions still **display** read-only; only add/remove is disabled.
 
@@ -469,19 +471,20 @@ Users tombstoned **before** this fix already had their 1-on-1 `dm_members` row d
 
 **Endpoint:** `POST /api/dm/:id/messages` -- `dm.ts:dmRoutes`
 
-**Rate limit:** 5 per 5 seconds per user
+**Rate limit:** 5 per 5 seconds per client address (`DM_MESSAGE_CREATE_RATE_LIMIT` in `utils/dmMessageRateLimit.ts`), `429 rate_limited` over it. The WS `dm_message_create` event applies the same numbers to the socket's address (recorded when it connects, `ws/socketAddress.ts`) before any other check and refuses with an `error` carrying `rate_limited`. The two paths count separately: the REST counter lives inside `@fastify/rate-limit`, which nothing outside the plugin can reach.
 
 **Request:** `{ content?: string, attachments?: string[], replyToId?: string }`
 
 **Cross-instance access:** Federated users (those with `homeInstance` set) can send messages on any DM channel where they are a member, regardless of which instance serves the request. The `requireLocalUser` gate that previously blocked federated users from DM write endpoints has been removed. DM calls work across federated instances. The caller's instance hosts the LiveKit room; remote clients connect directly. Call signaling is relayed to all active federation peers via synchronous HTTP POST (not the outbox worker). Relay failures at any call state transition emit `dm_call_undeliverable { phase, terminal, failures }` to the originator — see `docs/systems/voice.md` for the full call state machine and failure surface. Federated call-start to a remote instance with no reachable recipient surfaces as `dm_call_undeliverable` with reason `no_recipient` — see `voice.md` for the full failure-surface table.
 
-**Validation:**
+**Validation** (`checkDmMessageCreate` in `utils/dmMessageRules.ts`, in this order; the WS `dm_message_create` event runs the same check and answers each refusal with an `error` event carrying the code):
 - Caller must be a member (`isDmMember`)
 - Rejected with `403 recipient_deleted` if `isDeadOneOnOne(id, caller)` — read-only Deleted-User thread (see "DM Tombstone Semantics")
-- Must have content or attachments (not both empty)
-- Content max length: 4000 chars (`MAX_MESSAGE_LENGTH`)
-- Attachment ownership verified (must be unlinked and owned by caller)
-- `replyToId`, when present, must name a message in this same DM channel (`isDmReplyTargetInChannel`) -- otherwise `400 Invalid reply target` and nothing is inserted. The WebSocket `dm_message_create` path applies the same rule and answers with an `error` event instead.
+- `content` a string, `attachments` a list of ids, `replyToId` a string, where present (`400 validation_failed`)
+- Must have content or attachments (not both empty; `400 content_required`)
+- Content max length: 4000 chars (`MAX_MESSAGE_LENGTH`; `400 content_too_long` with `details: { max }`)
+- `replyToId`, when present, must name a message in this same DM channel (`isDmReplyTargetInChannel`) -- otherwise `400 reply_target_invalid` and nothing is inserted
+- Attachment ownership verified (must be unlinked, `attachment_invalid`, and uploaded by the caller, `attachment_not_owned`)
 
 **Reply hydration:** every DM read path resolves `replyTo` through `fetchDmReplyToMessages(dmChannelId, rows)` (`dm.ts`), which scopes the reply lookup to the channel being read -- `getDmMessageWithUser`, `GET /api/dm/:id/messages`, `GET /api/dm/:id/search` and `GET /api/dm/:id/messages/around`. A `replyToId` pointing outside the channel hydrates as `replyTo: null` rather than surfacing the other conversation's message, so rows predating the create-time check stay contained. Relay never introduces a cross-channel target either: an inbound federated DM message never adopts the wire's `replyToId` (the sender's local id). Its reply target comes from `message.replyTo`, a `FederationMessageRef` resolved by `resolveRelayedReplyTarget` (`federation/dmChannels.ts`) and kept only when it names a message in the channel the reply is stored in; otherwise the reply is stored with `replyToId: null`. See "Outbound: Relay Payload Structure" below.
 
@@ -496,24 +499,26 @@ Users tombstoned **before** this fix already had their 1-on-1 `dm_members` row d
 
 **Endpoint:** `PATCH /api/dm/messages/:id` -- `dm.ts:dmRoutes`
 
-0. Rejected with `403 recipient_deleted` if `isDeadOneOnOne(msg.dmChannelId, caller)` (see "DM Tombstone Semantics")
-1. Author-only (`msg.userId !== request.userId` returns 403)
-2. Update content and set `editedAt`
-3. Delete old embeds, re-resolve new embeds asynchronously
-4. Broadcast `dm_message_updated` to all members
-5. Queue federation relay via `queueDmRelay(updated, channelId, 'update')`
+Checks (`checkDmMessageEdit`, shared with WS `dm_message_edit`), in order: content present (`content_required`) and within `MAX_MESSAGE_LENGTH` (`content_too_long`), the message exists (`404 message_not_found`), the caller is a member of the message's conversation (`isDmMember`, `403 not_dm_member`), `dmMessageEditRefusal` (`system_message_immutable`, then author-only `not_message_author`), then `403 recipient_deleted` if `isDeadOneOnOne(msg.dmChannelId, caller)` (see "DM Tombstone Semantics"). Then:
+
+1. Update content and set `editedAt`
+2. Delete old embeds, re-resolve new embeds asynchronously
+3. Broadcast `dm_message_updated` to all members
+4. Queue federation relay via `queueDmRelay(updated, channelId, 'update')`
+
+A member who left or was removed from a group no longer has a `dm_members` row in it, so they cannot edit or delete the messages they wrote there before; the check reads this instance's copy of the conversation, so it holds on every instance that hosts one. A member who closed a conversation keeps the row.
 
 ### Delete Message
 
 **Endpoint:** `DELETE /api/dm/messages/:id` -- `dm.ts:dmRoutes`
 
-0. Rejected with `403 recipient_deleted` if `isDeadOneOnOne(msg.dmChannelId, caller)` (see "DM Tombstone Semantics")
-1. Author-only
-2. Collect attachment filenames before deletion
-3. Delete attachments, reactions, and message atomically in a transaction
-4. Clean up files from disk
-5. Broadcast `dm_message_deleted` to all members
-6. Federation: `queueDmMessageDeleteRelay(id, dmChannelId)`
+Checks (`checkDmMessageDelete`, shared with WS `dm_message_delete`), in order: the message exists (`404 message_not_found`), the caller is a member of the message's conversation (`isDmMember`, `403 not_dm_member`), author-only (`403 not_message_author`), then `403 recipient_deleted` if `isDeadOneOnOne(msg.dmChannelId, caller)` (see "DM Tombstone Semantics"). Then:
+
+1. Collect attachment filenames before deletion
+2. Delete attachments, reactions, and message atomically in a transaction
+3. Clean up files from disk
+4. Broadcast `dm_message_deleted` to all members
+5. Federation: `queueDmMessageDeleteRelay(id, dmChannelId)`
 
 **Note:** `queueDmMessageDeleteRelay(messageId, dmChannelId, target)` (`federationOutbox.ts`) is the single source of truth for the delete relay and is shared with the WebSocket delete path (`ws/events.ts`). Both callers build `target` with `dmMessageMutationTarget` before deleting the row (see "Relayed edits and deletes"). It appends the mutation log entry and enqueues the outbox event with `getGroupDmTargetOrigins(dmChannelId)`, so a delete reaches exactly the peers that host a participant -- the same targeting create/update use.
 
@@ -792,7 +797,7 @@ System messages (`type = 'system'` in `dm_messages`) record group lifecycle even
 - **User ids in content are the storing instance's own.** Membership and metadata system messages are never relayed as messages: every instance writes its own from the relay event it applies, whose users are named by home identity (see "Instance-Local Creation"). So `targetUserId` and `newOwnerId` always name rows of the instance that stored them. No renderer reads them; the names shown are the `*DisplayName` fields recorded at the time of the event.
 - **Only `space_invite` is relayed as a message** (`RELAYABLE_DM_SYSTEM_EVENTS`). The space invite route builds its content through `parseDmSystemEvent` and refuses an invite that would not parse (`invite_invalid`), so it never sends one a receiver refuses.
 - **Relayed system content is validated.** `processCreateEvent` parses a relayed `type: 'system'` message before it writes anything and stores it only when it is a well-formed relayable event, in its canonical form; anything else is refused with `invalid_system_message`.
-- **System messages cannot be edited**, by anyone, their author included. `PATCH /api/dm/messages/:id` and the WS `dm_message_edit` share `dmMessageEditRefusal` and answer `system_message_immutable`; a relayed `update` of a system message is refused with the same reason. How a sender's outbox treats both relay reasons, by sender version: `federation.md`, "Rejection reasons". Deleting a system message follows the ordinary delete rules.
+- **System messages cannot be edited**, by anyone, their author included. `PATCH /api/dm/messages/:id` and the WS `dm_message_edit` share `dmMessageEditRefusal` (through `checkDmMessageEdit`) and answer `system_message_immutable`; a relayed `update` of a system message is refused with the same reason. How a sender's outbox treats both relay reasons, by sender version: `federation.md`, "Rejection reasons". Deleting a system message follows the ordinary delete rules.
 
 ### Event Types
 
@@ -806,7 +811,7 @@ System messages (`type = 'system'` in `dm_messages`) record group lifecycle even
 
 ### `space_invite` (user-initiated, federated via processCreateEvent)
 
-Sent by `POST /api/dm/space-invite` (see `docs/systems/spaces.md`). Unlike membership-event system messages, this one is user-initiated content — the inviter authored it deliberately. It travels through the standard DM message create relay (`processCreateEvent`), not a dedicated event kind.
+Sent by `POST /api/dm/space-invite` (see `docs/systems/spaces.md`). Unlike membership-event system messages, this one is user-initiated content — the inviter authored it deliberately. It travels through the standard DM message create relay (`processCreateEvent`), not a dedicated event kind. The route hands every invite to `queueDmRelay`, as the message routes do, so it reaches each instance that hosts a participant, the sender's own home included when the sender is a federated account acting on this instance (a homeward relay, `attributionRefusal` case 2).
 
 JSON content shape:
 
@@ -827,7 +832,7 @@ JSON content shape:
 }
 ```
 
-The `spaceInstanceOrigin` is the space's home instance, **not** the sender's. The recipient's client uses it to fetch the live preview (`getApiForOrigin(spaceInstanceOrigin).spaces.invitePreview`) and to call `joinByCode(code, spaceInstanceOrigin)` on click.
+The `spaceInstanceOrigin` is the space's home instance, **not** the sender's. The recipient's client uses it to fetch the live preview (`getApiForOrigin(spaceInstanceOrigin).spaces.invitePreview`) and to call `joinByCode(code, spaceInstanceOrigin)` on click. For a space joined by request (the live preview's `visibility`, or a join answered with `join_request_required`) the card's action is "Ask to join", which sends a join request to the same origin; the route sends invites to such spaces since it stopped refusing them with `space_requires_approval` after 1.9.0 (spaces.md, "Invite links to a space joined by request").
 
 ### Rendering
 
@@ -951,9 +956,10 @@ When the owner's instance is not connected, or does not list the conversation, t
 - Shows the caller's friends list, filtered by search query
 - Excludes current DM members (shown as "Already in this DM")
 - Enforces 10-member cap in the UI (`remainingSlots` calculation)
+- Both requests go to `getFriendsHomeOrigin()` (`instanceStore.ts`): the instance whose friend list the server checks them against. That is the page's instance for a native account, and the connected true home for a federated account signed in to another instance (`erin@nova` on orbit), whose friendships with the home's own users exist only at home (#391; before, the request went to the page's instance, which answered `not_a_friend`). With no live session on the true home it is the page's instance, which applies the friendships it holds. The conversation is named by that instance's copy (`dmCopyOnOrigin`) and each person as that instance knows them (`personRequest(row, origin, home)`); a friend it cannot name (a legacy stub another instance issued) fails the request with "Failed to add members" before anything is sent. A created group is added as that instance's copy (`upsertDmCopy(home, …)`).
 - Two creation paths:
-  - **1-on-1 DM upgrade:** If `dmChannel.ownerId` is null, calls `api.dm.createGroup()` with the existing other member + selected friends + `fromDmChannelId`
-  - **Existing group DM:** Calls `api.dm.addMember()` sequentially for each selected friend
+  - **1-on-1 DM upgrade:** If `dmChannel.ownerId` is null, calls `createGroup()` with the existing other member + selected friends + `fromDmChannelId` (the home's copy, when it holds one)
+  - **Existing group DM:** Calls `addMember()` sequentially for each selected friend on the home's copy; without one it fails with "Failed to add members"
 
 ---
 

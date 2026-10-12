@@ -1,3 +1,5 @@
+import { MAX_OWNER_TITLE_LENGTH, normalizeOwnerTitle } from '@backspace/shared/src/constants.js';
+import { updateSpaceMemberRoutes, roleGrantRefusal } from './spaceMemberUpdate.js';
 import path from 'path';
 import type { FastifyInstance } from 'fastify';
 import { eq, and, inArray } from 'drizzle-orm';
@@ -6,7 +8,7 @@ import { authenticate } from '../utils/auth.js';
 import { markDirectoryDirty } from '../directory/state.js';
 import { generateSnowflake } from '../utils/snowflake.js';
 import { isMember, isSpaceOwner, isBanned, hasPermission, computePermissions, PermissionBits } from '../utils/permissions.js';
-import { DEFAULT_EVERYONE_PERMISSIONS, ALL_PERMISSIONS, permissionsToString, stringToPermissions, parsePermissionString, roleBitsChangeRefusal, type HeldBitsRefusal } from '@backspace/shared/src/permissions.js';
+import { DEFAULT_EVERYONE_PERMISSIONS, ALL_PERMISSIONS, permissionsToString, stringToPermissions, parsePermissionString, roleBitsChangeRefusal, idsHiddenFromEveryone, rolePermissionsVersion, type HeldBitsRefusal } from '@backspace/shared/src/permissions.js';
 import crypto from 'crypto';
 import { connectionManager } from '../ws/handler.js';
 import { deleteAttachmentFiles, deleteUploadFile, deleteAttachmentByFilename } from '../utils/fileCleanup.js';
@@ -16,7 +18,6 @@ import type {
   CreateSpaceRequest,
   UpdateSpaceRequest,
   JoinSpaceRequest,
-  UpdateMemberRequest,
   Space,
   Channel,
   ChannelCategory,
@@ -27,12 +28,14 @@ import type {
 import { AVATAR_COLORS } from '@backspace/shared';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { checkVoicePermissions } from '../ws/events.js';
-import { getLocalInviteSnapshot } from '../utils/spaceInviteSnapshot.js';
+import { getLocalInvitePreview } from '../utils/spaceInviteSnapshot.js';
 import { sendError } from '../utils/httpErrors';
+import type { ErrorCode, ErrorDetails } from '@backspace/shared/src/errors';
 import { canActOnMemberInSpace, canManageRoleInSpace, getHierarchyStanding } from '../utils/roleHierarchy.js';
 import { canActOnMember, canManageRoleAt } from '@backspace/shared/src/permissions.js';
 import { moveRoleToPosition, normalizeRolePositions, positionNextTo } from '../db/rolePositions.js';
 import { removeUserFromSpace } from '../utils/spaceMembership.js';
+import { memberRolesView, roleView, rolesForViewer, viewerReadsPermissionData } from '../utils/permissionDataView.js';
 
 function rowToSpace(row: typeof schema.spaces.$inferSelect): Space {
   return {
@@ -42,6 +45,7 @@ function rowToSpace(row: typeof schema.spaces.$inferSelect): Space {
     banner: row.banner ?? null,
     avatarColor: (row.avatarColor as Space['avatarColor']) ?? null,
     ownerId: row.ownerId,
+    ownerTitle: row.ownerTitle,
     inviteCode: row.inviteCode,
     visibility: (row.visibility ?? 'private') as Space['visibility'],
     directoryListed: row.directoryListed === 1,
@@ -74,10 +78,11 @@ function generateInviteCode(): string {
 }
 
 /**
- * After a change to the space's roles or to a member's roles: every connected
- * member is told with `space_access_changed` (docs/systems/websocket.md) and
- * refetches the space's detail, which carries their permissions, the channels
- * they can see, the roles and the member list. `affectedUserIds` are the
+ * After a change to the space's roles, to a member's roles or to its owner
+ * (the owner holds every permission): every connected member is told with
+ * `space_access_changed` (docs/systems/websocket.md) and refetches the
+ * space's detail, which carries their permissions, the channels they can
+ * see, the roles and the member list. `affectedUserIds` are the
  * members whose own permissions may have changed; each is also sent the voice
  * state they can see now (`announceSpaceAccessChange`). Voice permissions are
  * re-checked here too, since a role can carry SPEAK or STREAM.
@@ -104,15 +109,6 @@ type RoleChangeRefusal = {
   code: 'missing_permission' | 'cannot_change_own_roles' | 'space_owner_only' | 'member_not_found' | 'role_not_in_space' | 'everyone_role_not_assignable' | 'role_hierarchy' | HeldBitsRefusal;
   details?: Record<string, string>;
 };
-
-/**
- * Held-bits rule for handing out a role (permissions.md, "Held-bits rule"):
- * giving a member a role gives them its bits, so the actor must hold every
- * one of them. Taking a role away is governed by the hierarchy alone.
- */
-function roleGrantRefusal(spaceId: string, actorId: string, rolePermissions: string | null): HeldBitsRefusal | null {
-  return roleBitsChangeRefusal(computePermissions(actorId, spaceId), 0n, stringToPermissions(rolePermissions));
-}
 
 /**
  * The checks shared by the two single-role routes (add one role to a member,
@@ -150,6 +146,83 @@ function checkSingleRoleChange(
     if (refusal) return { status: 403, code: refusal };
   }
   return null;
+}
+
+interface InviteJoinRefusal {
+  status: number;
+  code: ErrorCode;
+  details?: ErrorDetails;
+}
+
+/**
+ * Why a valid invite code does not admit this user, or null when it does.
+ * Shared by both join-by-code routes. Read against the space's visibility at
+ * the time of the call, so a link follows the space when its visibility
+ * changes.
+ *
+ * Banned and already-member answer as every join path does. A request space
+ * never admits anyone by code: entry is `POST /api/spaces/:id/request-join`
+ * and a manager's approval. A user with a request waiting is told so
+ * (`409 join_request_pending`, the answer the request route gives); anyone
+ * else gets `403 join_request_required` with the space's id, which is all a
+ * client needs to send the request. Private and public spaces admit by code.
+ */
+function inviteJoinRefusal(space: typeof schema.spaces.$inferSelect, userId: string): InviteJoinRefusal | null {
+  if (isBanned(space.id, userId)) {
+    return { status: 403, code: 'user_banned' };
+  }
+  if (isMember(space.id, userId)) {
+    return { status: 409, code: 'already_member' };
+  }
+  if (space.visibility === 'request') {
+    const pending = getDb().select({ id: schema.joinRequests.id }).from(schema.joinRequests)
+      .where(and(
+        eq(schema.joinRequests.spaceId, space.id),
+        eq(schema.joinRequests.userId, userId),
+        eq(schema.joinRequests.status, 'pending'),
+      ))
+      .get();
+    if (pending) {
+      return { status: 409, code: 'join_request_pending' };
+    }
+    return { status: 403, code: 'join_request_required', details: { spaceId: space.id } };
+  }
+  return null;
+}
+
+/**
+ * Add a member admitted by an invite code: the membership row, the user's
+ * WebSocket subscription to the space, and `member_joined` to the space.
+ */
+function admitByInvite(spaceId: string, userId: string): void {
+  const db = getDb();
+  const now = Date.now();
+  db.insert(schema.spaceMembers).values({
+    spaceId,
+    userId,
+    joinedAt: now,
+  }).run();
+
+  // Register the user in connectionManager so they receive WS broadcasts for this space
+  connectionManager.addUserSpace(userId, spaceId);
+
+  // Broadcast member_joined to existing space members
+  const joiningUser = db.select().from(schema.users).where(eq(schema.users.id, userId)).get();
+  if (joiningUser) {
+    const memberPayload: MemberWithUser = {
+      spaceId,
+      userId,
+      nickname: null,
+      joinedAt: now,
+      user: sanitizeUser(joiningUser),
+      roles: [],
+    };
+    connectionManager.sendToSpace(spaceId, {
+      type: 'member_joined',
+      spaceId,
+      member: memberPayload,
+    });
+  }
 }
 
 export async function spaceRoutes(app: FastifyInstance): Promise<void> {
@@ -363,20 +436,9 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
         const user = userMap.get(m.userId);
         if (!user) return null;
 
-        const assignedRoleIds = memberRoleRows
+        const assignedRoleIds = new Set(memberRoleRows
           .filter(mr => mr.userId === m.userId)
-          .map(mr => mr.roleId);
-        
-        const memberRoles = roles
-          .filter(r => assignedRoleIds.includes(r.id))
-          .map(r => ({
-            id: r.id,
-            spaceId: r.spaceId,
-            name: r.name,
-            color: r.color ?? '#b9bbbe',
-            position: r.position ?? 0,
-            createdAt: r.createdAt,
-          }));
+          .map(mr => mr.roleId));
 
         return {
           spaceId: m.spaceId,
@@ -384,7 +446,7 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
           nickname: m.nickname,
           joinedAt: m.joinedAt,
           user: sanitizeUser(user),
-          roles: memberRoles,
+          roles: memberRolesView(roles, assignedRoleIds),
         };
       })
       .filter((m): m is MemberWithUser => m !== null);
@@ -395,20 +457,15 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       .where(eq(schema.channelCategories.spaceId, id))
       .all();
 
-    // Batch-fetch category overrides for @everyone to determine isPrivate
+    // Batch-fetch the @everyone category overrides to determine isPrivate
+    // (`isHiddenFromEveryone`, read per category).
     const catEveryoneOverrides = db.select().from(schema.categoryOverrides)
       .where(and(
         eq(schema.categoryOverrides.targetType, 'role'),
         eq(schema.categoryOverrides.targetId, id),
       ))
       .all();
-    const privateCategoryIds = new Set<string>();
-    for (const o of catEveryoneOverrides) {
-      const denyBits = BigInt(o.deny || '0');
-      if ((denyBits & PermissionBits.VIEW_CHANNEL) !== 0n) {
-        privateCategoryIds.add(o.categoryId);
-      }
-    }
+    const privateCategoryIds = idsHiddenFromEveryone(catEveryoneOverrides, (o) => o.categoryId, () => id);
 
     const categories: ChannelCategory[] = categoryRows.map(c => ({
       id: c.id,
@@ -422,20 +479,15 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
     // Compute space-level permissions for the requesting user
     const spacePerms = computePermissions(request.userId, id);
 
-    // Batch-fetch all channel overrides for @everyone (role = spaceId) to determine isPrivate
+    // Batch-fetch the @everyone channel overrides (role = spaceId) to determine
+    // isPrivate (`isHiddenFromEveryone`, read per channel).
     const everyoneOverrides = db.select().from(schema.channelOverrides)
       .where(and(
         eq(schema.channelOverrides.targetType, 'role'),
         eq(schema.channelOverrides.targetId, id),
       ))
       .all();
-    const privateChannelIds = new Set<string>();
-    for (const o of everyoneOverrides) {
-      const denyBits = BigInt(o.deny || '0');
-      if ((denyBits & PermissionBits.VIEW_CHANNEL) !== 0n) {
-        privateChannelIds.add(o.channelId);
-      }
-    }
+    const privateChannelIds = idsHiddenFromEveryone(everyoneOverrides, (o) => o.channelId, () => id);
 
     // Filter channels by VIEW_CHANNEL permission and attach per-channel myPermissions
     const visibleChannels: (Channel & { isPrivate: boolean; myPermissions: string })[] = [];
@@ -450,22 +502,12 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       }
     }
 
-    const canManageRoles = (spacePerms & PermissionBits.MANAGE_ROLES) !== 0n;
-
     const result: SpaceWithChannelsAndMembers = {
       ...rowToSpace(server),
       channels: visibleChannels,
       categories,
       members,
-      roles: roles.map(r => ({
-        id: r.id,
-        spaceId: r.spaceId,
-        name: r.name,
-        color: r.color ?? '#b9bbbe',
-        position: r.position ?? 0,
-        permissions: canManageRoles ? (r.permissions ?? '0') : undefined,
-        createdAt: r.createdAt,
-      })),
+      roles: rolesForViewer(roles, spacePerms),
       myPermissions: permissionsToString(spacePerms),
     };
 
@@ -477,7 +519,7 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
     preHandler: authenticate,
   }, async (request, reply) => {
     const { id } = request.params;
-    const { name, icon, banner, avatarColor, visibility, description, directoryListed } = request.body;
+    const { name, icon, banner, avatarColor, visibility, description, directoryListed, ownerTitle } = request.body;
     const db = getDb();
 
     const server = db.select().from(schema.spaces).where(eq(schema.spaces.id, id)).get();
@@ -485,11 +527,24 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 404, 'space_not_found');
     }
 
+    // The title belongs to the owner, not to anyone granted MANAGE_SPACE.
+    if (ownerTitle !== undefined && server.ownerId !== request.userId) {
+      return sendError(reply, 403, 'space_owner_only');
+    }
+
     if (!hasPermission(request.userId, id, PermissionBits.MANAGE_SPACE)) {
       return sendError(reply, 403, 'missing_permission', { permission: 'MANAGE_SPACE' });
     }
 
     const updates: Partial<typeof schema.spaces.$inferInsert> = {};
+
+    if (ownerTitle !== undefined) {
+      const normalized = normalizeOwnerTitle(ownerTitle);
+      if (normalized === undefined) {
+        return sendError(reply, 400, 'space_owner_title_invalid', { max: MAX_OWNER_TITLE_LENGTH });
+      }
+      updates.ownerTitle = normalized;
+    }
 
     if (name !== undefined) {
       const trimmedName = name.trim();
@@ -693,12 +748,9 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 403, 'missing_permission', { permission: 'CREATE_INVITE' });
     }
 
-    // Request-only spaces are approval-gated and never joinable by invite code
-    // (see the join endpoints), so they have no usable invite links. Refuse to
-    // hand one out rather than mint a code that would dead-end at the join guard.
-    if (server.visibility === 'request') {
-      return sendError(reply, 403, 'space_uses_join_requests');
-    }
+    // Every space hands out its link, a request space included: the link
+    // never admits anyone to a request space (see inviteJoinRefusal), it leads
+    // to the join request flow.
 
     // Return existing invite code if one exists, otherwise generate a new one
     if (server.inviteCode) {
@@ -733,49 +785,12 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 400, 'invite_not_found');
     }
 
-    if (isBanned(id, request.userId)) {
-      return sendError(reply, 403, 'user_banned');
+    const refusal = inviteJoinRefusal(server, request.userId);
+    if (refusal) {
+      return sendError(reply, refusal.status, refusal.code, refusal.details);
     }
 
-    if (isMember(id, request.userId)) {
-      return sendError(reply, 409, 'already_member');
-    }
-
-    // Request-only spaces are gated by manager approval: entry must go through
-    // POST /request-join + approval, never a bearer invite code. (Private spaces
-    // remain invite-joinable — that is their only entry path; public too.)
-    if (server.visibility === 'request') {
-      return sendError(reply, 403, 'join_request_required');
-    }
-
-    const now = Date.now();
-    db.insert(schema.spaceMembers).values({
-      spaceId: id,
-      userId: request.userId,
-      joinedAt: now,
-    }).run();
-
-    // Register the user in connectionManager so they receive WS broadcasts for this server
-    connectionManager.addUserSpace(request.userId, id);
-
-    // Broadcast member_joined to existing server members
-    const joiningUser = db.select().from(schema.users).where(eq(schema.users.id, request.userId)).get();
-    if (joiningUser) {
-      const memberPayload: MemberWithUser = {
-        spaceId: id,
-        userId: request.userId,
-        nickname: null,
-        joinedAt: now,
-        user: sanitizeUser(joiningUser),
-        roles: [],
-      };
-      connectionManager.sendToSpace(id, {
-        type: 'member_joined',
-        spaceId: id,
-        member: memberPayload,
-      });
-    }
-
+    admitByInvite(server.id, request.userId);
     return reply.code(200).send(rowToSpace(server));
   });
 
@@ -796,47 +811,12 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 404, 'invite_not_found');
     }
 
-    if (isBanned(server.id, request.userId)) {
-      return sendError(reply, 403, 'user_banned');
+    const refusal = inviteJoinRefusal(server, request.userId);
+    if (refusal) {
+      return sendError(reply, refusal.status, refusal.code, refusal.details);
     }
 
-    if (isMember(server.id, request.userId)) {
-      return sendError(reply, 409, 'already_member');
-    }
-
-    // Request-only spaces are gated by manager approval (see POST /:id/join).
-    if (server.visibility === 'request') {
-      return sendError(reply, 403, 'join_request_required');
-    }
-
-    const now = Date.now();
-    db.insert(schema.spaceMembers).values({
-      spaceId: server.id,
-      userId: request.userId,
-      joinedAt: now,
-    }).run();
-
-    // Register the user in connectionManager so they receive WS broadcasts for this server
-    connectionManager.addUserSpace(request.userId, server.id);
-
-    // Broadcast member_joined to existing server members
-    const joiningUser = db.select().from(schema.users).where(eq(schema.users.id, request.userId)).get();
-    if (joiningUser) {
-      const memberPayload: MemberWithUser = {
-        spaceId: server.id,
-        userId: request.userId,
-        nickname: null,
-        joinedAt: now,
-        user: sanitizeUser(joiningUser),
-        roles: [],
-      };
-      connectionManager.sendToSpace(server.id, {
-        type: 'member_joined',
-        spaceId: server.id,
-        member: memberPayload,
-      });
-    }
-
+    admitByInvite(server.id, request.userId);
     return reply.code(200).send(rowToSpace(server));
   });
 
@@ -884,20 +864,9 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
         const user = userMap.get(m.userId);
         if (!user) return null;
 
-        const assignedRoleIds = memberRoleRows
+        const assignedRoleIds = new Set(memberRoleRows
           .filter(mr => mr.userId === m.userId)
-          .map(mr => mr.roleId);
-
-        const assignedRoles = roles
-          .filter(r => assignedRoleIds.includes(r.id))
-          .map(r => ({
-            id: r.id,
-            spaceId: r.spaceId,
-            name: r.name,
-            color: r.color ?? '#b9bbbe',
-            position: r.position ?? 0,
-            createdAt: r.createdAt,
-          }));
+          .map(mr => mr.roleId));
 
         return {
           spaceId: m.spaceId,
@@ -905,7 +874,7 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
           nickname: m.nickname,
           joinedAt: m.joinedAt,
           user: sanitizeUser(user),
-          roles: assignedRoles,
+          roles: memberRolesView(roles, assignedRoleIds),
         };
       })
       .filter((m): m is MemberWithUser => m !== null);
@@ -913,176 +882,7 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
     return reply.code(200).send(members);
   });
 
-  // PATCH /api/spaces/:id/members/:uid - Update member roles
-  app.patch<{ Params: { id: string; uid: string }; Body: UpdateMemberRequest }>('/api/spaces/:id/members/:uid', {
-    preHandler: authenticate,
-  }, async (request, reply) => {
-    const { id, uid } = request.params;
-    const { roleIds } = request.body;
-    const db = getDb();
-
-    const server = db.select().from(schema.spaces).where(eq(schema.spaces.id, id)).get();
-    if (!server) {
-      return sendError(reply, 404, 'space_not_found');
-    }
-
-    if (!hasPermission(request.userId, id, PermissionBits.MANAGE_ROLES)) {
-      return sendError(reply, 403, 'missing_permission', { permission: 'MANAGE_ROLES' });
-    }
-
-    if (uid === request.userId) {
-      return sendError(reply, 400, 'cannot_change_own_roles');
-    }
-
-    // A set of role ids: each a string, none twice. The whole list replaces
-    // the member's roles, and the table holds each role once per member.
-    if (!Array.isArray(roleIds)
-      || !roleIds.every((roleId): roleId is string => typeof roleId === 'string')
-      || new Set(roleIds).size !== roleIds.length) {
-      return sendError(reply, 400, 'role_ids_invalid');
-    }
-
-    // Cannot modify the server owner's roles unless you are the owner
-    if (isSpaceOwner(id, uid) && !isSpaceOwner(id, request.userId)) {
-      return sendError(reply, 403, 'space_owner_only');
-    }
-
-    const member = db.select()
-      .from(schema.spaceMembers)
-      .where(and(
-        eq(schema.spaceMembers.spaceId, id),
-        eq(schema.spaceMembers.userId, uid),
-      ))
-      .get();
-
-    if (!member) {
-      return sendError(reply, 404, 'member_not_found');
-    }
-
-    // Validate all roleIds belong to this server and are not @everyone
-    const spaceRoles = db.select()
-      .from(schema.roles)
-      .where(eq(schema.roles.spaceId, id))
-      .all();
-    const spaceRolePositions = new Map(spaceRoles.map(r => [r.id, r.position ?? 0]));
-
-    for (const roleId of roleIds) {
-      if (!spaceRolePositions.has(roleId)) {
-        return sendError(reply, 400, 'role_not_in_space', { roleId });
-      }
-      if (roleId === id) {
-        return sendError(reply, 400, 'everyone_role_not_assignable');
-      }
-    }
-
-    // Role hierarchy: the member must rank below the actor, and every role
-    // this request adds or removes must sit below the actor's top role.
-    const actorStanding = getHierarchyStanding(id, request.userId);
-    if (!canActOnMember(actorStanding, getHierarchyStanding(id, uid))) {
-      return sendError(reply, 403, 'role_hierarchy');
-    }
-    const currentRoleIds = new Set(
-      db.select({ roleId: schema.memberRoles.roleId })
-        .from(schema.memberRoles)
-        .where(and(eq(schema.memberRoles.spaceId, id), eq(schema.memberRoles.userId, uid)))
-        .all()
-        .map(r => r.roleId),
-    );
-    const requestedRoleIds = new Set(roleIds);
-    const changedRoleIds = [
-      ...roleIds.filter(r => !currentRoleIds.has(r)),
-      ...[...currentRoleIds].filter(r => !requestedRoleIds.has(r)),
-    ];
-    for (const roleId of changedRoleIds) {
-      if (!canManageRoleAt(actorStanding, spaceRolePositions.get(roleId) ?? 0)) {
-        return sendError(reply, 403, 'role_hierarchy');
-      }
-    }
-    // Held-bits rule: a role this request adds must carry only bits the actor holds.
-    for (const roleId of roleIds.filter(r => !currentRoleIds.has(r))) {
-      const refusal = roleGrantRefusal(id, request.userId, spaceRoles.find(r => r.id === roleId)?.permissions ?? null);
-      if (refusal) {
-        return sendError(reply, 403, refusal);
-      }
-    }
-
-    // Atomically replace member's role assignments
-    db.transaction((tx) => {
-      // Remove all existing role assignments for this member in this server
-      tx.delete(schema.memberRoles)
-        .where(and(
-          eq(schema.memberRoles.spaceId, id),
-          eq(schema.memberRoles.userId, uid),
-        ))
-        .run();
-
-      // Insert new role assignments
-      for (const roleId of roleIds) {
-        tx.insert(schema.memberRoles).values({
-          spaceId: id,
-          userId: uid,
-          roleId,
-        }).run();
-      }
-    });
-
-    announceAccessChange(id, [uid]);
-
-    // Build response with populated roles
-    const updatedMember = db.select()
-      .from(schema.spaceMembers)
-      .where(and(
-        eq(schema.spaceMembers.spaceId, id),
-        eq(schema.spaceMembers.userId, uid),
-      ))
-      .get();
-
-    if (!updatedMember) {
-      return sendError(reply, 500, 'member_update_failed');
-    }
-
-    const user = db.select().from(schema.users).where(eq(schema.users.id, uid)).get();
-    if (!user) {
-      return sendError(reply, 500, 'user_not_found');
-    }
-
-    const updatedRoleRows = db.select()
-      .from(schema.memberRoles)
-      .where(and(
-        eq(schema.memberRoles.spaceId, id),
-        eq(schema.memberRoles.userId, uid),
-      ))
-      .all();
-
-    const updatedRoleIds = updatedRoleRows.map(r => r.roleId);
-    const allRoles = db.select()
-      .from(schema.roles)
-      .where(eq(schema.roles.spaceId, id))
-      .orderBy(schema.roles.position)
-      .all();
-
-    const memberRoles = allRoles
-      .filter(r => updatedRoleIds.includes(r.id))
-      .map(r => ({
-        id: r.id,
-        spaceId: r.spaceId,
-        name: r.name,
-        color: r.color ?? '#b9bbbe',
-        position: r.position ?? 0,
-        createdAt: r.createdAt,
-      }));
-
-    const result: MemberWithUser = {
-      spaceId: updatedMember.spaceId,
-      userId: updatedMember.userId,
-      nickname: updatedMember.nickname,
-      joinedAt: updatedMember.joinedAt,
-      user: sanitizeUser(user),
-      roles: memberRoles,
-    };
-
-    return reply.code(200).send(result);
-  });
+  updateSpaceMemberRoutes(app);
 
   // DELETE /api/spaces/:id/members/:uid - Kick member (owner) or leave (self)
   app.delete<{ Params: { id: string; uid: string } }>('/api/spaces/:id/members/:uid', {
@@ -1204,19 +1004,22 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
     normalizeRolePositions(rawDb, id);
 
     const role = db.select().from(schema.roles).where(eq(schema.roles.id, roleId)).get();
+    if (!role) {
+      return sendError(reply, 500, 'internal_error');
+    }
 
     // A new role has no holders yet, so nobody's own access changed.
     announceAccessChange(id, []);
 
-    return reply.code(201).send(role);
+    return reply.code(201).send(roleView(role, viewerReadsPermissionData(computePermissions(request.userId, id))));
   });
 
   // PATCH /api/spaces/:id/roles/:roleId - Update a role
-  app.patch<{ Params: { id: string; roleId: string }; Body: { name?: string; color?: string; position?: number; above?: unknown; below?: unknown; permissions?: string } }>('/api/spaces/:id/roles/:roleId', {
+  app.patch<{ Params: { id: string; roleId: string }; Body: { name?: string; color?: string; position?: number; above?: unknown; below?: unknown; permissions?: string; permissionsVersion?: unknown } }>('/api/spaces/:id/roles/:roleId', {
     preHandler: authenticate,
   }, async (request, reply) => {
     const { id, roleId } = request.params;
-    const { name, color, permissions, above, below } = request.body;
+    const { name, color, permissions, above, below, permissionsVersion } = request.body;
     let position = request.body.position;
     const db = getDb();
 
@@ -1293,6 +1096,17 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       if (requested === null) {
         return sendError(reply, 400, 'permissions_invalid');
       }
+      // Concurrent edits (permissions.md): a value saved from an outdated copy
+      // of the role is refused. Without `permissionsVersion` (a client from
+      // before the check) the write is not compared, as before.
+      if (permissionsVersion !== undefined) {
+        if (typeof permissionsVersion !== 'string' || permissionsVersion.length === 0) {
+          return sendError(reply, 400, 'validation_failed');
+        }
+        if (rolePermissionsVersion(role.permissions) !== permissionsVersion) {
+          return sendError(reply, 409, 'role_permissions_conflict');
+        }
+      }
       // Held-bits rule: only bits the actor holds may be switched, on or off.
       const refusal = roleBitsChangeRefusal(
         computePermissions(request.userId, id),
@@ -1317,10 +1131,16 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       moveRoleToPosition(getRawDb(), id, roleId, position);
     }
     const updated = db.select().from(schema.roles).where(eq(schema.roles.id, roleId)).get();
+    if (!updated) {
+      return sendError(reply, 404, 'role_not_in_space', { roleId });
+    }
 
     announceAccessChange(id, membersHoldingRole(id, roleId));
 
-    return reply.code(200).send(updated);
+    // The actor may have just switched off their own MANAGE_ROLES (a role
+    // below their top role can carry it), so the answer is shaped for what
+    // they hold now.
+    return reply.code(200).send(roleView(updated, viewerReadsPermissionData(computePermissions(request.userId, id))));
   });
 
   // DELETE /api/spaces/:id/roles/:roleId - Delete a role
@@ -1352,8 +1172,10 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 403, 'role_hierarchy');
     }
 
-    // Held-bits rule: deleting a role switches its bits off for everyone who
-    // holds it, including members ranked above the actor.
+    // Held-bits rule: deleting a role switches every bit of it off, the same
+    // change as a PATCH to no bits, so each bit must be held. Who holds the
+    // role (members ranked above the actor included) does not matter: the
+    // hierarchy decides who may change a role, not who the change reaches.
     const deleteRefusal = roleBitsChangeRefusal(computePermissions(request.userId, id), stringToPermissions(role.permissions), 0n);
     if (deleteRefusal) {
       return sendError(reply, 403, deleteRefusal);
@@ -1453,7 +1275,8 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 400, 'new_owner_not_member');
     }
 
-    db.update(schema.spaces).set({ ownerId: newOwnerId }).where(eq(schema.spaces.id, id)).run();
+    // Do not transfer the previous owner's personal title to the new owner.
+    db.update(schema.spaces).set({ ownerId: newOwnerId, ownerTitle: null }).where(eq(schema.spaces.id, id)).run();
 
     const updated = db.select().from(schema.spaces).where(eq(schema.spaces.id, id)).get();
     if (!updated) {
@@ -1468,17 +1291,22 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       space: spaceData,
     });
 
+    // The owner holds every permission, so the former owner's and the new
+    // owner's own permissions both changed: their clients refetch the detail,
+    // which carries role bits only for what each holds now.
+    announceAccessChange(id, [request.userId, newOwnerId]);
+
     return reply.code(200).send(spaceData);
   });
 
   // GET /api/spaces/invite/:code/preview — Public invite preview (no auth)
   app.get<{ Params: { code: string } }>('/api/spaces/invite/:code/preview', async (request, reply) => {
     const { code } = request.params;
-    const snapshot = getLocalInviteSnapshot(code);
-    if (!snapshot) {
+    const preview = getLocalInvitePreview(code);
+    if (!preview) {
       return sendError(reply, 404, 'invite_not_found');
     }
-    return reply.code(200).send(snapshot);
+    return reply.code(200).send(preview);
   });
 
   // ─── Ban Management ───────────────────────────────────────────────────────

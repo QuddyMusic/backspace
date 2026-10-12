@@ -52,6 +52,15 @@
       "rename": "Kanal umbenennen",
       "nameLabel": "Kanalname",
       "channelLabel": "Kanal",
+      "topic": {
+        "label": "Thema",
+        "placeholder": "Worum geht es in diesem Kanal?",
+        "hint": "Wird in der Kopfzeile des Kanals angezeigt. Dort kann jeder den vollständigen Text öffnen.",
+        "counter": "{{used}}/{{max}}",
+        "tooLong": "Kürze das Thema auf höchstens {{max}} Zeichen, um es zu speichern.",
+        "empty": "Kein Thema festgelegt.",
+        "reset": "Änderungen verwerfen"
+      },
       "private": {
         "label": "Privater Kanal",
         "description": "Nur ausgewählte Mitglieder und Rollen können diesen Kanal sehen.",
@@ -99,10 +108,7 @@
   "invite": {
     "title": "Freunde einladen",
     "intro": "Schick die Einladung an Freunde oder teile einen Link.",
-    "requestOnly": {
-      "notice": "Dieser Space nutzt Beitrittsanfragen. Wer beitreten will, bittet die Verwaltung um Freigabe, deshalb gibt es keinen Einladungslink zum Teilen.",
-      "dismiss": "Verstanden"
-    },
+    "introRequest": "Schick die Einladung an Freunde oder teile einen Link. Wer ihn öffnet, fragt den Beitritt an, und die Verwaltung gibt jede Anfrage frei.",
     "searchPlaceholder": "Freunde suchen…",
     "noMatches": "Keine Freunde passen zu deiner Suche",
     "noFriends": "Noch keine Freunde",
@@ -158,6 +164,12 @@
       "passwordPlaceholder": "Passwort auf der anderen Instanz",
       "submit": "Anmelden und beitreten",
       "submitting": "Anmeldung läuft…"
+    },
+    "request": {
+      "notice": "Dieser Space nimmt Beitrittsanfragen an. Sende eine, und die Verwaltung prüft sie.",
+      "messageLabel": "Notiz zu deiner Anfrage",
+      "sent": "Anfrage gesendet. Die Verwaltung prüft sie, und sobald sie zustimmt, erscheint der Space in deiner Liste.",
+      "pending": "Du hast für diesen Space schon angefragt. Deine Anfrage wartet auf die Verwaltung."
     }
   },
   "explore": {
@@ -454,7 +466,8 @@
       "deafenMembers": "Mitgliedern den Ton ausschalten",
       "moveMembers": "Mitglieder verschieben",
       "stream": "Streamen",
-      "disconnectMembers": "Mitglieder trennen"
+      "disconnectMembers": "Mitglieder trennen",
+      "mentionEveryone": "@everyone, @here und Rollen erwähnen"
     },
     "tristate": {
       "deny": "Verbieten",
@@ -509,6 +522,7 @@
     },
     "space": {
       "inviteCopied": "Einladungslink kopiert",
+      "inviteCopiedRequest": "Einladungslink kopiert. Wer ihn öffnet, kann den Beitritt anfragen.",
       "inviteFailed": "Einladung konnte nicht erstellt werden",
       "transferOwnership": "Besitz übertragen",
       "settings": "Space-Einstellungen",
@@ -521,7 +535,10 @@
         "description": "Willst du diesen Space wirklich verlassen? Zum erneuten Beitreten brauchst du eine neue Einladung."
       },
       "left": "Du hast den Space verlassen",
-      "leaveFailed": "Space konnte nicht verlassen werden"
+      "leaveFailed": "Space konnte nicht verlassen werden",
+      "unreadMessages_one": "{{count}} ungelesene Nachricht",
+      "unreadMessages_other": "{{count}} ungelesene Nachrichten",
+      "unreadMessagesOver99": "Mehr als 99 ungelesene Nachrichten"
     },
     "dmList": {
       "explore": "Entdecken",
@@ -552,7 +569,10 @@
       "spaceMuted": "Im Space stummgeschaltet",
       "spaceDeafened": "Ton im Space ausgeschaltet",
       "permissionMuted": "Stummgeschaltet (keine Sprechberechtigung)"
-    }
+    },
+    "dmUnreadMessages_one": "{{count}} ungelesene Direktnachricht",
+    "dmUnreadMessages_other": "{{count}} ungelesene Direktnachrichten",
+    "dmUnreadMessagesOver99": "Mehr als 99 ungelesene Direktnachrichten"
   },
   "channels": {
     "loading": "Kanäle werden geladen",
@@ -583,6 +603,25 @@
     "loading": "Mitglieder werden geladen",
     "groups": {
       "owner": "Besitzer"
+    },
+    "ownerTitle": {
+      "edit": "Besitzertitel bearbeiten",
+      "label": "Besitzertitel",
+      "hint": "Für alle Mitglieder dieses Spaces sichtbar. 1 bis {{max}} Zeichen; Berechtigungen bleiben unverändert.",
+      "reset": "Standard wiederherstellen"
+    },
+    "menu": {
+      "profile": "Profil anzeigen",
+      "nickname": "Space-Spitznamen ändern…",
+      "roles": "Rollen"
+    },
+    "nickname": {
+      "title": "Space-Spitznamen ändern",
+      "label": "Space-Spitzname",
+      "descriptionSelf": "Gilt nur in diesem Space. Dein Kontoname und deine Spitznamen in anderen Spaces bleiben gleich. Leer lassen, um deinen Kontonamen zu zeigen.",
+      "descriptionOther": "Gilt nur in diesem Space. Der Kontoname von {{name}} bleibt gleich. Leer lassen, um den Kontonamen zu zeigen.",
+      "reset": "Auf Kontonamen zurücksetzen",
+      "shownAs": "Spitzname in diesem Space: {{nickname}}"
     }
   },
   "mobile": {
@@ -597,6 +636,10 @@
     "selectChannel": "Wähle einen Kanal",
     "selectChannelHint": "Wähle einen Text- oder Sprachkanal, um loszulegen",
     "notificationSettings": "Benachrichtigungseinstellungen",
+    "topic": {
+      "show": "Vollständiges Thema anzeigen",
+      "dialogTitle": "#{{name}}"
+    },
     "voice": {
       "connectionFailed": "Verbindung fehlgeschlagen",
       "connected": "Verbunden",
@@ -617,6 +660,7 @@
       "memberCount_one": "({{count}} Mitglied)",
       "memberCount_other": "({{count}} Mitglieder)",
       "startVoiceCall": "Sprachanruf starten",
+      "joinCall": "Anruf beitreten",
       "startVideoCall": "Videoanruf starten",
       "addFriends": "Freunde zur Unterhaltung hinzufügen"
     }
@@ -631,5 +675,35 @@
     "loading": "Mitglieder werden geladen…",
     "success": "Besitz an {{name}} übertragen",
     "failed": "Besitz konnte nicht übertragen werden"
+  },
+  "notifications": {
+    "open": "Benachrichtigungseinstellungen",
+    "channelTitle": "Benachrichtigungen für #{{channel}}",
+    "spaceTitle": "Benachrichtigungen für {{space}}",
+    "levelHeading": "Benachrichtigungen",
+    "level": {
+      "all": "Alle Nachrichten",
+      "mentions": "Nur @Erwähnungen",
+      "nothing": "Keine",
+      "inherit": "Standard des Space ({{level}})"
+    },
+    "dmNote": "Bei Direktnachrichten wirst du immer benachrichtigt.",
+    "muteHeading": "Stummschalten",
+    "mute": {
+      "oneHour": "Für 1 Stunde",
+      "eightHours": "Für 8 Stunden",
+      "oneDay": "Für 24 Stunden",
+      "indefinite": "Bis ich es wieder aufhebe"
+    },
+    "unmute": "Stummschaltung aufheben",
+    "mutedUntil": "Stummgeschaltet bis {{time}}",
+    "mutedIndefinitely": "Stummgeschaltet, bis du es aufhebst",
+    "spaceMuted": "Dieser Space ist stummgeschaltet, damit auch seine Kanäle.",
+    "mutedIndicator": "Stummgeschaltet",
+    "saveFailed": "Benachrichtigungseinstellungen konnten nicht gespeichert werden",
+    "suppressEveryone": "@everyone und @here unterdrücken",
+    "suppressRoles": "Rollenerwähnungen unterdrücken",
+    "massHeading": "Gruppenerwähnungen",
+    "massNote": "@here erreicht dieselben Mitglieder wie @everyone. Erwähnungen von dir mit Namen benachrichtigen dich immer."
   }
 }

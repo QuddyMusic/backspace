@@ -1,10 +1,14 @@
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { getDb, schema } from '../db/index.js';
+import { getDb, getRawDb, schema } from '../db/index.js';
 import { extractDomain } from '../routes/federation.js';
 import { connectionManager } from '../ws/handler.js';
-import { tombstoneUser, collectDeletionBroadcastTargets } from './userDeletion.js';
+import { tombstoneUser, collectDeletionBroadcastTargets, collectProfileBroadcastTargetIds } from './userDeletion.js';
+import { rehomeDetachedAccount, type RehomeResult } from './detachedIdentity.js';
+import { getOurOrigin } from './federationAuth.js';
+import { announceDmReconcile } from './dmConversationEvents.js';
 import { sanitizeUser } from './sanitize.js';
 import type { PeerActivationReason } from './federationPeerActivation.js';
+import { applyPeerTransition, readPeerState, runPeerTransitionEffects } from './federationPeerState.js';
 
 /** Pure-stub sentinel: a user replicated purely over S2S (no local credentials). */
 const REPLICATED_STUB_SENTINEL = '!federation-replicated';
@@ -21,8 +25,23 @@ const REPLICATED_STUB_SENTINEL = '!federation-replicated';
  * permissive on format while exact on domain.
  */
 export function homeInstanceMatch(origin: string) {
+  return instanceColumnMatch(schema.users.homeInstance, origin);
+}
+
+/**
+ * SQL predicate matching every local user that was detached from `origin`:
+ * its former home (`users.detached_home_instance`, see
+ * `rehomeDetachedAccount`) is `origin`, in the same permissive formats as
+ * `homeInstanceMatch`. A detached account is homed here, so
+ * `homeInstanceMatch` no longer finds it.
+ */
+export function detachedHomeInstanceMatch(origin: string) {
+  return instanceColumnMatch(schema.users.detachedHomeInstance, origin);
+}
+
+function instanceColumnMatch(column: typeof schema.users.homeInstance | typeof schema.users.detachedHomeInstance, origin: string) {
   const domain = extractDomain(origin);
-  return sql`(${schema.users.homeInstance} = ${domain} OR ${schema.users.homeInstance} = ${'https://' + domain} OR ${schema.users.homeInstance} = ${'http://' + domain})`;
+  return sql`(${column} = ${domain} OR ${column} = ${'https://' + domain} OR ${column} = ${'http://' + domain})`;
 }
 
 /**
@@ -58,18 +77,34 @@ export function homeInstanceMatch(origin: string) {
 export function markPeerReset(peerId: string, origin: string, deadEpoch: string, observedEpoch: string): void {
   const db = getDb();
 
-  db.transaction((tx) => {
+  const committed = db.transaction((tx) => {
+    // Seeing the same new incarnation again (it handshakes or is probed once
+    // more) is not a new detection: the users were snapshotted and the journal
+    // written the first time. Re-running either would flag stubs created since
+    // (which must survive the heal) and undo the admin's dismissal.
+    const current = readPeerState(peerId, tx);
+    const seenBefore = tx.select({ observed: schema.federationPeers.observedPeerInstanceId })
+      .from(schema.federationPeers)
+      .where(eq(schema.federationPeers.id, peerId))
+      .get();
+    const repeat =
+      current?.status === 'needs_attention' &&
+      current.statusReason === 'peer_reset_detected' &&
+      seenBefore?.observed === observedEpoch;
+    if (repeat) return null;
+
     // 1. Route the peer to needs_attention and record the observed (untrusted)
     //    epoch. peer_instance_id (trusted baseline) and hmac_secret are NOT
-    //    touched — an unauthenticated observation never rekeys trust.
-    tx.update(schema.federationPeers)
-      .set({
-        status: 'needs_attention',
-        needsAttentionReason: 'peer_reset_detected',
-        observedPeerInstanceId: observedEpoch,
-      })
-      .where(eq(schema.federationPeers.id, peerId))
-      .run();
+    //    touched: an unauthenticated observation never rekeys trust. Only an
+    //    established peering is routed; a revoked or deleted row is left alone.
+    const moved = applyPeerTransition(tx, peerId, {
+      from: ['active', 'unreachable', 'needs_attention'],
+      to: 'needs_attention',
+      reason: 'peer_reset_detected',
+      cause: 'reset_detected',
+      fields: { observedPeerInstanceId: observedEpoch },
+    });
+    if (!moved.applied) return null;
 
     // 2. Snapshot exactly the current (dead-incarnation) users for this origin.
     //    Any stub created AFTER this point (e.g. a friend-add reaching the new
@@ -151,9 +186,12 @@ export function markPeerReset(peerId: string, origin: string, deadEpoch: string,
         })
         .run();
     }
+
+    return moved.effects;
   });
 
-  connectionManager.sendToAdmins({ type: 'federation_peers_changed' as const });
+  if (!committed) return;
+  void runPeerTransitionEffects(committed);
   connectionManager.sendToAdmins({ type: 'federation_peer_reset_detected' as const, origin });
 }
 
@@ -184,6 +222,9 @@ const HANDSHAKE_ACTIVATION_REASONS: ReadonlySet<PeerActivationReason> = new Set(
   'accept_awaiting_approval_fallback',
   'approval_handshake',
   'ensure_peered',
+  // A parked row activated because a signed /epoch round-trip verified the
+  // remote holds our secret: the epoch it carries is authenticated.
+  'stale_peering_verified',
 ]);
 
 /**
@@ -299,9 +340,21 @@ export function healResetIncarnation(origin: string, newEpoch: string, reason: P
 
   // Detach the flagged REAL accounts (flag-only: sovereign local accounts, no
   // freeze, no rename — see quarantineOrphanedAccounts docstring). §6.3b.
-  const orphanedCount = quarantineOrphanedAccounts(origin);
+  quarantineOrphanedAccounts(origin);
 
-  // Resolve the journal and refresh the orphaned-account count to the detached set.
+  // Resolve the journal and refresh the orphaned-account count to the detached
+  // set: every live account detached from this origin, including those an
+  // earlier reset of it detached (they are homed here, so the snapshot above
+  // no longer flags them). The same set the reset-cleanup listing shows.
+  const orphanedCount = db
+    .select({ n: sql<number>`count(*)` })
+    .from(schema.users)
+    .where(and(
+      eq(schema.users.federationHomeOrphaned, 1),
+      eq(schema.users.isDeleted, 0),
+      detachedHomeInstanceMatch(origin),
+    ))
+    .get()?.n ?? 0;
   db.update(schema.federationResetEvents)
     .set({ newEpoch, resolvedAt: Date.now(), orphanedAccountCount: orphanedCount })
     .where(eq(schema.federationResetEvents.origin, origin))
@@ -310,21 +363,26 @@ export function healResetIncarnation(origin: string, newEpoch: string, reason: P
 
 /**
  * Post-heal DETACH of the dead incarnation's REAL federated accounts (design
- * §6.3b, revised by the 2026-07-02 detach spec). Called from
+ * §6.3b, revised by the 2026-07-02 detach spec and by #310). Called from
  * `healResetIncarnation`'s genuine-reset branch AFTER the stub soft-tombstone
  * loop. Real accounts carry non-re-syncable local content and are NEVER
  * auto-deleted — and, unlike the original quarantine, they are NOT frozen or
  * renamed either.
  *
  * `federation_home_orphaned = 1` marks the account as DETACHED: it operates as
- * a sovereign local account from here on. The owner keeps logging in with the
- * local password (auth.ts skips only the self-heal path); every S2S surface
- * keyed by the home domain excludes detached rows, so the domain's new
- * incarnation can never capture, mutate, re-bind, or delete the account.
+ * a sovereign local account from here on, homed on this instance
+ * (`rehomeDetachedAccount`): its former identity moves to the
+ * `detached_home_*` columns, and peers know it from now on as one of this
+ * instance's users, under its local id. The owner keeps logging in with the
+ * local password; the reset domain's new incarnation can never capture,
+ * mutate, re-bind, or delete the account, because a reference to the former
+ * identity resolves to a detached row, which every S2S guard refuses.
  *
  * Usernames are preserved (first-come-first-served on this instance) and there
  * is no space-owner special case — owners simply keep managing their spaces.
- * Content is preserved in all cases. No broadcast: nothing visible changes.
+ * Content is preserved in all cases. The account's identity changes, so each
+ * one is announced (`user_updated` to everyone who sees it and to its own
+ * sessions) together with the 1-on-1 DMs re-keyed for it.
  *
  * @returns the number of accounts detached — used to refresh the journal's
  *          `orphaned_account_count`.
@@ -342,12 +400,34 @@ export function quarantineOrphanedAccounts(origin: string): number {
       homeInstanceMatch(origin),
     ))
     .all();
+  if (accounts.length === 0) return 0;
 
-  if (accounts.length > 0) {
+  const ids = accounts.map((a) => a.id);
+  const ourOrigin = getOurOrigin();
+  const rawDb = getRawDb();
+  const homed = rawDb.transaction((): RehomeResult[] => {
     db.update(schema.users)
       .set({ federationHomeOrphaned: 1, federationHealPending: 0 })
-      .where(inArray(schema.users.id, accounts.map((a) => a.id)))
+      .where(inArray(schema.users.id, ids))
       .run();
+    const results: RehomeResult[] = [];
+    for (const id of ids) {
+      const result = rehomeDetachedAccount(rawDb, id, ourOrigin);
+      if (result) results.push(result);
+    }
+    return results;
+  })();
+
+  for (const { userId, reconciled } of homed) {
+    const row = db.select().from(schema.users).where(eq(schema.users.id, userId)).get();
+    if (row) {
+      const targets = collectProfileBroadcastTargetIds(userId);
+      for (const targetId of targets) {
+        connectionManager.sendToUser(targetId, { type: 'user_updated', user: sanitizeUser(row, false) });
+      }
+      connectionManager.sendToUser(userId, { type: 'user_updated', user: sanitizeUser(row, true) });
+    }
+    announceDmReconcile(reconciled);
   }
 
   return accounts.length;

@@ -17,7 +17,8 @@
       "jump": "跳转到原消息"
     },
     "mention": {
-      "unknownUser": "未知用户"
+      "unknownUser": "未知用户",
+      "unknownRole": "未知身份组"
     },
     "reactions": {
       "you": "您",
@@ -85,7 +86,6 @@
     "sendMessage": "发送消息",
     "uploadFailed": "上传 {{file}} 失败：{{reason}}",
     "uploadFailedReason": "上传失败",
-    "sendFailed": "发送消息失败",
     "typing": {
       "named_other": "{{names}} 正在输入",
       "several": "多人正在输入"
@@ -145,7 +145,13 @@
     "revoked": "邀请不再有效",
     "join": "加入",
     "joining": "正在加入…",
-    "joinFailed": "加入失败"
+    "joinFailed": "加入失败",
+    "askToJoin": "申请加入",
+    "sendingRequest": "正在发送…",
+    "requestSent": "申请已发送",
+    "requestPending": "申请待处理",
+    "requestNotice": "此空间采用申请加入模式，每个申请都由管理员批准。",
+    "requestReview": "管理员会审核您的申请。"
   },
   "notification": {
     "unknownSender": "有人",
@@ -165,5 +171,10 @@
     "playNamed": "播放 {{title}}",
     "playUnnamed": "播放视频",
     "videoTitle": "视频"
+  },
+  "poke": {
+    "action": "戳一戳",
+    "received": "{{actor}} 戳了戳 {{target}}",
+    "disconnected": "连接已断开，戳一戳未发送"
   }
 }

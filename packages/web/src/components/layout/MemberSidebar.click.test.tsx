@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -11,7 +12,7 @@ vi.mock('../../audio/AudioManager', () => ({
 }));
 
 import { MemberSidebar } from './MemberSidebar';
-import { useSpaceStore, setMyUserIdForOrigin, type TaggedSpace } from '../../stores/spaceStore';
+import { useSpaceStore, type TaggedSpace } from '../../stores/spaceStore';
 import { useAuthStore } from '../../stores/authStore';
 import { useUIStore } from '../../stores/uiStore';
 import { ALL_PERMISSIONS, PermissionBits, permissionsToString } from '../../utils/permissions';
@@ -69,7 +70,7 @@ beforeEach(() => {
 });
 
 async function clickMember(name: string): Promise<void> {
-  render(<MemberSidebar />);
+  render(<MemoryRouter><MemberSidebar /></MemoryRouter>);
   await userEvent.click(screen.getByText(name));
 }
 
@@ -99,7 +100,7 @@ describe('MemberSidebar: a click on a member', () => {
       [member('owner', 'Olga', []), member('lead-local', 'Lena', [LEADS]), member('helper', 'Hugo', [HELPERS])],
       PermissionBits.MANAGE_ROLES,
     );
-    setMyUserIdForOrigin(ORBIT, 'lead-local');
+    useAuthStore.getState().recordMyRow(ORBIT, 'lead-local');
     await clickMember('Lena');
 
     expect(useUIStore.getState().activeModal).toBeNull();

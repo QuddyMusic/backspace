@@ -4,13 +4,12 @@ import { Modal } from '../ui/Modal';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { useUIStore } from '../../stores/uiStore';
 import { useSpaceStore } from '../../stores/spaceStore';
-import { PermissionBits, hasPermissionBit } from '../../utils/permissions';
+import { PermissionBits, hasPermissionBit, isHiddenFromEveryone } from '../../utils/permissions';
 import { InlineNameEditor } from '../ui/InlineNameEditor';
 import { PermissionsEditor } from '../ui/PermissionsEditor';
 import type { PermissionDef } from '../ui/OverrideEntry';
 import { describeError } from '../../i18n/errors';
 import { useEntityOverrides } from '../../hooks/useEntityOverrides';
-import { isHiddenFromEveryone } from '../../utils/overrideBits';
 import { PrivacySetting } from './PrivacySetting';
 import { CATEGORY_NAME_MAX_LENGTH, normalizeCategoryName } from '@backspace/shared/src/constants';
 
@@ -21,6 +20,7 @@ const CATEGORY_PERMISSIONS: PermissionDef[] = [
   { key: 'SEND_MESSAGES', bit: PermissionBits.SEND_MESSAGES },
   { key: 'MANAGE_MESSAGES', bit: PermissionBits.MANAGE_MESSAGES },
   { key: 'ATTACH_FILES', bit: PermissionBits.ATTACH_FILES },
+  { key: 'MENTION_EVERYONE', bit: PermissionBits.MENTION_EVERYONE },
   { key: 'READ_MESSAGE_HISTORY', bit: PermissionBits.READ_MESSAGE_HISTORY },
   { key: 'ADD_REACTIONS', bit: PermissionBits.ADD_REACTIONS },
   { key: 'CONNECT', bit: PermissionBits.CONNECT },

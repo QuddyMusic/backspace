@@ -8,7 +8,7 @@ Source files:
 - `packages/web/src/components/chat/FriendsPage.tsx` -- Friends page UI: tabs (Online/All/Pending/Add Friend/Activity), discover grid, search
 - `packages/web/src/components/modals/UserProfileModal.tsx` -- Profile modal with friendship actions and mutual display
 - `packages/web/src/utils/mutuals.ts` -- Cross-instance mutual friend/space loading with dedup
-- `packages/web/src/utils/identity.ts` -- Federated identity helpers (parseFederatedUsername, isSelf, canonicalUserMatch)
+- `packages/web/src/utils/identity.ts` -- Federated identity helpers (parseFederatedUsername, userKey, isMine; see `client-federation.md` section 5)
 - `packages/web/src/hooks/useWebSocket.ts` -- WS event handlers for social events (friend_request_received, etc.)
 - `packages/server/src/routes/federation.ts` -- Inbound friend relay event processors (5 functions)
 - `packages/server/src/utils/federationOutbox.ts` -- `buildFriendContextId()`, `getFriendEventTargets()`
@@ -460,13 +460,36 @@ Source: `packages/web/src/stores/socialStore.ts`
 
 ### Origin Tagging
 
-All friends and requests are tagged with `_instanceOrigin: string` (empty string = home instance, full URL = remote instance). This enables the store to track which API client to use for mutations and to disambiguate users with the same local ID on different instances.
+Every friend and request row is tagged with `_instanceOrigin: string` (empty string = home instance, full URL = remote instance), the instance that issued it. A row is named by its id together with that origin, never by its id alone: row ids are local to an instance, and two instances can each have a different user with the same id.
 
 ```typescript
-type TaggedFriend = Friend & { _instanceOrigin: string };
-type TaggedFriendRequest = FriendRequest & { _instanceOrigin: string };
+type FriendRow = Friend & { _instanceOrigin: string };
+type FriendRequestRow = FriendRequest & { _instanceOrigin: string };
+type ListEntry<R> = R & { _rows?: readonly R[] };
+type TaggedFriend = ListEntry<FriendRow>;
+type TaggedFriendRequest = ListEntry<FriendRequestRow>;
 type TaggedUser = User & { _instanceOrigin: string };
 ```
+
+### One entry per person
+
+`friends` and `requests` hold one entry per person: the friend, or a request's other party (`request.user`). Two rows are the same person when their `userKey` (each with its own origin, `client-federation.md` section 5) is equal, so a person listed by two instances (their home's row and a replicated row of them) is one entry, and two users native to different instances are two entries whatever their ids (#353). A request without a `user` is only ever itself.
+
+An entry's own fields are the row it is shown by: the row from the person's home (`isIssuedByHome`) when an instance listed one, else the first row listed. Its ids and `_instanceOrigin` therefore line up with the discover and search cards and the profile modal, and mutations go to that row's instance. When more than one instance listed the person, `_rows` holds every instance's row (the shown one included), so an event from any of those instances finds the entry; a person only one instance listed has no `_rows`.
+
+All list changes go through the same helpers in `socialStore.ts`: `mergeRows` (group rows by person, pick the shown row), `withRow` (add a row, or replace the row the same instance issued with the same id), `withoutPeople` (drop the people any of whose rows match), `withoutRows` (drop only the matching rows; a person whose rows all go is dropped, otherwise the entry is shown by a row that is left) and `withEachRow` (apply an update to every row).
+
+Removals are of two kinds:
+
+- **A relationship ends** (`friend_removed`, a request cancelled, declined, accepted or its relay failed, and the user's own remove, accept, decline and cancel): the event or action names one row by id and origin, and the person's whole entry goes. The friendship or request is one relationship however many instances list it, for one identity; the relay clears the other instances' rows, and their own events then find nothing. A detached connection (`federationHomeOrphaned`, before re-attach) is a second identity, and a friendship it holds merges with the home's friendship with the same person (as it did before entries kept `_rows`): a `friend_removed` from the detached instance drops the entry until the next reload, although the home friendship remains.
+- **A user row is deleted** (`user_updated` with `isDeleted`): only the rows the deletion reaches go (`updateIsAbout`, `client-federation.md` section 5). A deleted copy drops that instance's row and the person stays, shown by another instance's row.
+- **A connection is disconnected or removed** (`instanceStore.disconnectInstance`, `forceRemoveEntry`): `removeInstanceRows(origin)` drops every row that instance issued, next to `removeInstanceSpaces(origin)`. A person another instance also lists stays, shown by that instance's row, so actions on them go to an instance the client still holds. A socket that drops (`setInstanceStatus`) keeps the rows: the instance is still held and its HTTP client still answers.
+
+Crossed requests are one entry. When the user sends Bob a request from home while Bob sends one from orbit, each instance keeps its own pending row, so home lists an outgoing row and orbit an incoming one. They are one entry, shown by the row from Bob's home (the incoming one), and an accept drops both. This is intended: it is one relationship either way.
+
+Removals that match nothing return the same arrays (and the same state), so subscribers do not re-render for, say, the second `friend_removed` that follows a relay.
+
+Other modules never read `_rows`. They look rows up through the store's exports: `friendRowAt(friends, id, origin)` (any instance's friend row, used by `presenceSubject.ts` for a server that sends only its row id), `friendEntryOf(friends, row, origin)` (the friend entry of a person), and `pendingRequestWith(requests, row, origin)` (the pending request row with a person, the one `origin` holds when it holds one, else the entry's shown row; used by the Add Friend search cards).
 
 ### Cross-Instance Friend Loading (`loadFriends`)
 
@@ -474,39 +497,43 @@ type TaggedUser = User & { _instanceOrigin: string };
 2. Fires `Promise.allSettled()` with:
    - Home instance: `api.social.friends()`
    - Each connected remote instance: `inst.api.social.friends()`
-3. **Deduplication by canonical identity:** Uses `Map<string, number>` keyed by `friend.homeUserId ?? friend.id`. First occurrence wins, but **native profiles replace replicated stubs**: a native profile (`homeInstance` is null) found for a canonical ID that was previously seen as a stub replaces the entry. Critically, the "native" check is `!homeInstance`, **not** `!homeUserId` -- the server backfills native users' `homeUserId` to their own id so federation tier-1 lookups succeed (see `federation.ts:backfillHomeUserId`), so `homeUserId` is set on natives too.
-4. **Asset normalization:** For remote-origin friends, calls `normalizeUserAssets(friend, origin)` to resolve relative avatar/banner URLs to absolute remote URLs
-5. Stores the merged, tagged array as `friends`
+3. **Asset normalization:** For remote-origin friends, calls `normalizeUserAssets(friend, origin)` to resolve relative avatar/banner URLs to absolute remote URLs, and upserts every row into the `userViews` cache
+4. **One entry per person** (`mergeRows`, see "One entry per person" above), stored as `friends`. The home-view check is `isIssuedByHome`, which for a row without `homeInstance` is always true; `homeUserId` alone is not a native indicator, since the server backfills native users' `homeUserId` to their own id (`federation.ts:backfillHomeUserId`).
 
 ### Cross-Instance Request Loading (`loadRequests`)
 
-Same `Promise.allSettled()` fan-out pattern as `loadFriends`. **Dedup by the other party's canonical identity** (`request.user.homeUserId ?? request.user.id`), preferring the record from the instance where the other party is native (`!request.user.homeInstance`). This is critical: a cross-instance request exists as two rows -- one on each instance -- and both sides return it, but only the record from the target's home instance has the canonical (non-stub) user ids and the correct `_instanceOrigin` tag. Matching those is what lets the Add Friend search card flip to "Request Pending" after sending. Normalizes assets for remote request user profiles.
+Same `Promise.allSettled()` fan-out pattern as `loadFriends`, and one entry per other party (`mergeRows`). A cross-instance request exists as two rows, one on each instance, and both sides return it; the entry is shown by the row from the other party's home, which has their own ids and the matching `_instanceOrigin`. Matching those is what lets the Add Friend search card flip to "Request Pending" after sending. Normalizes assets for remote request user profiles.
 
 ### Sending Friend Requests
 
-`sendFriendRequest(username: string)` sends the trimmed handle verbatim to the home instance API (`POST /api/social/requests`). As of 2026-04-25, all routing, peering, and remote lookup happen server-side — the client no longer resolves the domain to a connected instance or throws `InstanceNotConnectedError`/`InstanceDisconnectedError`. The server returns a structured error code on any failure; the catch block in `socialStore` maps it via `mapServerErrorToMessage` from `packages/web/src/utils/friendErrors.ts` and surfaces it as a toast.
+`sendFriendRequest(target: SendFriendRequest)` posts to the user's home (`getFriendsHomeOrigin()` in `instanceStore.ts`), the only instance that accepts a request from them: any other instance refuses a federated account with `not_authoritative_for_sender`. That is the page's instance (`''`) for a native or detached account, and the home's connected origin otherwise (the same rule as group DM creation and space invites, #391).
+
+`target` is written as the page's instance reads it: a typed handle is `{ username }` (trimmed), and a user the client holds is named by `friendRequestTarget(user, origin)` (`utils/friendRequestTarget.ts`). `addressedTo(target, home)` readdresses it for the home: a bare username names a user on the page's instance, so it gets the page's host (`bob` becomes `bob@<page host>`, which is what the Add Friend box shows for it); an identity, or a username that names its host, is sent as it is. All lookup and peering happen server-side. A failure is an `HttpError` with a server error code, which the caller shows through `describeError`.
 
 After success, reloads requests via `loadRequests()`.
 
 ### Cross-Instance Search (`searchUsers`)
 
-1. Fires parallel searches to home + all connected instances
-2. **Deduplication by canonical identity:** Uses `Map<string, number>` keyed by `user.homeUserId ?? user.id`
-   - First occurrence wins, but **native profiles replace replicated stubs**: if a native profile (`homeInstance` is null) is found for a canonical ID that was previously seen as a replicated stub, it replaces the entry
-   - The "native" check is `!homeInstance`, **not** `!homeUserId`. Native users have `homeUserId` backfilled to their own id by the server so federation tier-1 lookups succeed (`federation.ts:backfillHomeUserId`). `homeInstance` is the only field that reliably distinguishes native users (null) from replicated stubs (set to domain).
-   - This ensures the user sees the "real" profile (including the correct `_instanceOrigin` tag) rather than a replicated stub whose origin would be the caller's home instance
+1. Fires parallel searches to the page's instance and every connected instance, normalizes remote assets, and upserts every row into the `userViews` cache.
+2. **One result per person** (`userKey`), grouped by the same helpers as the friends and requests lists (`groupByPerson`, `shownRow`): a person two instances return (their home's row and a replicated row of them) is one result, shown by their home's row (`isIssuedByHome`) when one was returned, else by the first. Two users native to different instances are two results whatever their ids (#353). Results are plain `TaggedUser` rows without `_rows`: events do not change them.
 
-### Instance API Resolution (`getApiForOrigin`)
+The Add Friend tab matches each result to the lists by person, not by the shown row: `friendEntryOf` for "already a friend", and `pendingRequestWith` for a pending request. A card with a request is shown by that request's row of the person (its user and origin), because the request id is valid only on the instance that holds it.
+
+### Instance API Resolution (`apiAt`)
 
 ```typescript
-function getApiForOrigin(origin: string) {
-  if (!origin) return api;  // Home instance
+function apiAt(origin: string): BackspaceApiClient {
+  if (!origin) return api;  // The page's own instance
   const instance = useInstanceStore.getState().instances.find(i => i.origin === origin);
-  return instance?.api ?? api;  // Fallback to home if not found
+  if (!instance) throw new SocialInstanceNotConnectedError(origin);
+  return instance.api;
 }
 ```
 
-Used by `updateFriendRequest`, `cancelFriendRequest`, and `removeFriend` to route mutations to the correct instance.
+Used by `sendFriendRequest`, `updateFriendRequest`, `cancelFriendRequest` and `removeFriend`. It is strict: an origin the client holds no entry for (a connection removed from Connections) throws `SocialInstanceNotConnectedError`, whose message is `social:instanceNotConnected` with the host, and nothing is sent. It never falls back to the page's instance, which would receive another instance's row ids and fail, or act on whichever of its own rows has the same id. The shared `getApiForOrigin` in `crossStoreResolvers.ts` keeps its fallback because other surfaces rely on it (asset URLs, for one); `apiAt` is local to `socialStore`. The callers show the error like any other failed social action (`describeError` in a toast, or the card's error line).
+
+- `updateFriendRequest(id, origin, status, other?)` and `cancelFriendRequest(id, origin, other?)` take the request's id and the origin of the instance that holds it (a request entry's `_instanceOrigin`, or a discover card's for its `requestId`), call that instance, and drop the person's request entry. `other` is the other party as `origin` issued them; a discover card passes its user, so the person's entry is found by `userKey` when the list does not hold the card's request row yet (for example a card loaded from orbit before the list reloaded). Every request action on a card goes through the store; none calls the API directly.
+- `removeFriend(row, origin)` takes any row of the person and its origin (a friend entry, or a group DM member row with the DM copy's origin), finds the friend entry by `userKey`, calls the instance the entry is shown by with that row's id, and drops the entry. It does nothing when the person is not a friend.
 
 ### WS Event Handlers
 
@@ -514,11 +541,13 @@ From `useWebSocket.ts`, social events are dispatched to store methods:
 
 | WS Event | Store Method | Effect |
 |----------|-------------|--------|
-| `friend_request_received` | `addIncomingRequest(request, origin)` | Appends to requests (dedup check by `id:origin`) |
-| `friend_request_accepted` | `addFriendFromAccepted(friend, requestId, origin)` | Appends to friends, removes matching request |
-| `friend_removed` | `removeFriendLocally(userId, origin)` | Filters friend out by `id` + `origin` |
-| `friend_request_cancelled` | `removeRequestById(requestId, origin)` | Filters request out by `id` + `origin` |
-| `friend_request_declined` | `removeRequestById(requestId, origin)` | Filters request out by `id` + `origin` |
+| `friend_request_received` | `addIncomingRequest(request, origin)` | Adds the row (`withRow`): a new entry, or another instance's row of a listed person |
+| `friend_request_sent` | `addOutboundRequest(request, origin)` | Same as `friend_request_received` (multi-tab sync) |
+| `friend_request_accepted` | `addFriendFromAccepted(friend, requestId, origin)` | Adds the friend row (`withRow`); drops the request entry holding row `requestId` + `origin` and any request entry for the same person |
+| `friend_removed` | `removeFriendLocally(userId, origin)` | Drops the friend entry holding row `userId` + `origin` |
+| `friend_request_cancelled` | `removeRequestById(requestId, origin, userId)` | Drops the request entry holding a row from `origin` with id `requestId` or other party `userId` (that instance's row id) |
+| `friend_request_declined` | `removeRequestById(requestId, origin, userId)` | Same as `friend_request_cancelled` |
+| `friend_request_relay_failed` | `removeRequestById(requestId, origin)` | Drops the request entry holding row `requestId` + `origin` |
 
 All handlers also update `discoverStore` relationship state via lazy import.
 
@@ -526,8 +555,8 @@ All handlers also update `discoverStore` relationship state via lazy import.
 
 | WS Event | Store Method | Effect |
 |----------|-------------|--------|
-| `presence_update` | `updateFriendPresence(userId, status)` | Updates `status` on matching friend by ID (all origins). Server broadcasts to friends + DM co-members + space co-members (`collectProfileBroadcastTargetIds`). For federated friends, status is projected by the home instance via S2S `presence_update` relay (see `federation.md` §10 — Presence Sync) and broadcast to the same recipient set on the receiving instance. |
-| `user_updated` | `updateFriendProfile(user)` | Updates displayName, avatar, banner, accentColor, avatarColor, bio, customStatus, status on matching friend by ID |
+| `presence_update` | `updateFriendPresence(subject, origin, status)` | Updates `status` on every row of the friend whose `userKey` matches the subject's (with its delivering origin), so the delivery from any instance reaches the friend it is about and no other. Server broadcasts to friends + DM co-members + space co-members (`collectProfileBroadcastTargetIds`). For federated friends, status is projected by the home instance via S2S `presence_update` relay (see `federation.md` §10, Presence Sync) and broadcast to the same recipient set on the receiving instance. |
+| `user_updated` | `updateFriendProfile(user, origin)` | Updates displayName, avatar, banner, accentColor, avatarColor, bio, customStatus, status (`profileFieldsOf`) on the friend rows the event is about, every row of each entry (`userUpdateReach`, `identity.ts`): the issuing instance's row with that id, and other instances' rows of the same person when the event is their home's row. Never a friend on another instance who only has the same id. With `isDeleted`, `removeDeletedUser(user, origin)` drops the friend rows and pending requests it is about by the same rule (client-federation.md §5) |
 
 ---
 
@@ -585,7 +614,7 @@ Follows the same `Promise.allSettled()` fan-out pattern:
 
 1. Computes `canonicalHomeId = targetHomeUserId ?? targetUserId`
 2. Fires `api.users.getMutuals(targetUserId, canonicalHomeId)` to home + all connected instances
-3. **Friend dedup:** By canonical identity `friend.homeUserId ?? friend.id` (prevents the same friend appearing from multiple instances)
+3. **Friend dedup:** By person (`userKey(friend, origin)`), so the same friend listed by several instances appears once, and two users native to different instances with the same id stay two
 4. **Space dedup:** By `${space.id}:${origin}` (spaces on different instances are distinct entities)
 5. **Asset normalization:** Remote-origin friend avatars and space icons are resolved to absolute URLs
 
@@ -612,21 +641,9 @@ Source: `packages/web/src/utils/identity.ts`
 
 Splits `"erin@nova.ddns.net"` into `{ baseName: "erin", domain: "nova.ddns.net" }`. Uses `indexOf('@')` (first occurrence). Returns `{ baseName: username, domain: null }` for non-federated usernames.
 
-### `isSelf(user, homeUser)`
+### Matching people
 
-Determines if a user object represents the current user (including cross-instance replicas):
-1. Same `id` -> true
-2. `user.id` in `_knownSelfIds` set (populated from WS `ready` events) -> true
-3. `user.homeInstance === window.location.host` AND base username matches -> true
-
-### `canonicalUserMatch(a, b)`
-
-Federation-safe identity comparison with cascading strategies:
-1. Same `id` -> true
-2. `homeUserId` cross-matching: `a.homeUserId === b.homeUserId`, or `a.homeUserId === b.id`, or `b.homeUserId === a.id` -> true
-3. **Username + homeInstance fallback:** Parse base names, compare home instances (accounting for null = local)
-
-Used by `UserProfileModal:getFriendshipStatus()` to find the correct friend/request for a viewed user across instances.
+Whether two rows are the same person (`userKey`) and whether a row is the signed-in user (`isMine`) are described in `client-federation.md` section 5. `UserProfileModal:getFriendshipStatus()` matches friends and requests to the viewed user by `userKey` of each row with its own origin.
 
 ---
 
@@ -640,7 +657,7 @@ Source: `packages/web/src/components/chat/FriendsPage.tsx`
 |-----|---------|--------------|
 | Online | Online friends only | Filters by `status !== 'offline'` |
 | All | Complete friend list | No filter |
-| Pending | Incoming + outgoing requests | Split into sections; incoming shows badge count in tab |
+| Pending | Incoming + outgoing requests | Split into sections; incoming shows badge count in tab (and on the mobile nav). A request is incoming when its other party (`user`) is its sender (`isIncomingRequest`, `isOutgoingRequest` in `socialStore.ts`): its ids are the holding instance's, so `fromId` is never compared with the session row's id |
 | Add Friend | Search + discover grid | Unified search/discover with direct-add |
 | Activity | Friends grouped by activity | Active (rich presence) / Online (no activity) / Offline sections |
 
@@ -682,16 +699,18 @@ Source: `packages/web/src/components/modals/UserProfileModal.tsx`
 
 ### Friendship Status Resolution
 
-Uses `getFriendshipStatus()` with `canonicalUserMatch()` for federation-safe matching:
+Uses `getFriendshipStatus()`, matching by person (`userKey`, client-federation.md section 5), never by id or username:
 
 ```typescript
-function getFriendshipStatus(viewedUser, currentUser, friends, requests): FriendshipStatus
-  → { state: 'self' }              // isSelf() check
-  | { state: 'friends', friend }   // canonicalUserMatch against friends list
-  | { state: 'outbound_pending', request }  // request.user matches viewed user, user.id === toId
-  | { state: 'inbound_pending', request }   // request.user matches viewed user, user.id === fromId
+function getFriendshipStatus(viewedUser, origin, self, friends, requests): FriendshipStatus
+  → { state: 'self' }              // isMine(viewedUser, origin, self)
+  | { state: 'friends', friend }   // userKey(friend, friend._instanceOrigin) === userKey(viewedUser, origin)
+  | { state: 'outbound_pending', request }  // request.user is the viewed person, user.id === toId
+  | { state: 'inbound_pending', request }   // request.user is the viewed person, user.id === fromId
   | { state: 'none' }
 ```
+
+On the user's own profile the action bar (Send Message, friend actions) is not shown.
 
 ### Tabs
 
@@ -704,7 +723,7 @@ function getFriendshipStatus(viewedUser, currentUser, friends, requests): Friend
 ### Action Buttons
 
 Displayed in footer based on friendship state:
-- Always: "Send Message" (opens/creates DM)
+- Every state except `self`: "Send Message" (opens/creates DM)
 - `none`: "Add Friend"
 - `outbound_pending`: "Cancel Request"
 - `inbound_pending`: "Accept" + "Ignore" (decline)

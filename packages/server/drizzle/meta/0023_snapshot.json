@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8d51ce98-38ef-41f1-8462-ccdc14c9709b",
+  "id": "03a3fa87-cdf5-4a34-8bcb-40fb6021e37d",
   "prevId": "24305c4b-09cf-4b11-9741-7a999a6f9426",
   "tables": {
     "attachments": {
@@ -273,82 +273,6 @@
           "name": "bans_space_id_user_id_pk"
         }
       },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "bot_commands": {
-      "name": "bot_commands",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "bot_id": {
-          "name": "bot_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "description": {
-          "name": "description",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "options": {
-          "name": "options",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'[]'"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "idx_bot_commands_bot_name": {
-          "name": "idx_bot_commands_bot_name",
-          "columns": [
-            "bot_id",
-            "name"
-          ],
-          "isUnique": true
-        }
-      },
-      "foreignKeys": {
-        "bot_commands_bot_id_users_id_fk": {
-          "name": "bot_commands_bot_id_users_id_fk",
-          "tableFrom": "bot_commands",
-          "tableTo": "users",
-          "columnsFrom": [
-            "bot_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
@@ -1812,8 +1736,8 @@
           "notNull": false,
           "autoincrement": false
         },
-        "needs_attention_reason": {
-          "name": "needs_attention_reason",
+        "status_reason": {
+          "name": "status_reason",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -2618,123 +2542,6 @@
       },
       "indexes": {},
       "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "interactions": {
-      "name": "interactions",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "bot_id": {
-          "name": "bot_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "channel_id": {
-          "name": "channel_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "dm_channel_id": {
-          "name": "dm_channel_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "command": {
-          "name": "command",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "options": {
-          "name": "options",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'{}'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "responses": {
-          "name": "responses",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        }
-      },
-      "indexes": {
-        "idx_interactions_expires_at": {
-          "name": "idx_interactions_expires_at",
-          "columns": [
-            "expires_at"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "interactions_bot_id_users_id_fk": {
-          "name": "interactions_bot_id_users_id_fk",
-          "tableFrom": "interactions",
-          "tableTo": "users",
-          "columnsFrom": [
-            "bot_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "interactions_user_id_users_id_fk": {
-          "name": "interactions_user_id_users_id_fk",
-          "tableFrom": "interactions",
-          "tableTo": "users",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -4453,21 +4260,6 @@
           "autoincrement": false,
           "default": 0
         },
-        "is_bot": {
-          "name": "is_bot",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": 0
-        },
-        "bot_owner_id": {
-          "name": "bot_owner_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "last_active_day": {
           "name": "last_active_day",
           "type": "text",
@@ -4502,13 +4294,6 @@
           "name": "idx_users_home_user_id",
           "columns": [
             "home_user_id"
-          ],
-          "isUnique": false
-        },
-        "idx_users_bot_owner_id": {
-          "name": "idx_users_bot_owner_id",
-          "columns": [
-            "bot_owner_id"
           ],
           "isUnique": false
         }
@@ -4626,7 +4411,9 @@
   "_meta": {
     "schemas": {},
     "tables": {},
-    "columns": {}
+    "columns": {
+      "\"federation_peers\".\"needs_attention_reason\"": "\"federation_peers\".\"status_reason\""
+    }
   },
   "internal": {
     "indexes": {}

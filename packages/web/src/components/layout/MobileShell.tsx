@@ -139,13 +139,14 @@ export const mobileScreenMap: Readonly<Record<string, (params?: Record<string, s
   'user-profile': (params) => {
     // Open the user profile modal with the userId from params
     if (params?.userId) {
-      // Set modalData so UserProfileModal can read it. A profile opened for a
-      // space member carries that member, so the modal can show their roles
-      // and read their user from the space rather than the home instance.
+      // Set modalData so UserProfileModal can read it. `origin` is the
+      // instance whose id `userId` is. A profile opened for a space member
+      // carries that member, so the modal can show their roles and read their
+      // user from the space rather than the home instance.
       const member = params.spaceId && params.memberUserId
         ? { spaceId: params.spaceId, userId: params.memberUserId }
         : null;
-      useUIStore.getState().openModal('userProfile', { userId: params.userId, member });
+      useUIStore.getState().openModal('userProfile', { userId: params.userId, origin: params.origin ?? '', member });
     }
     return <UserProfileModal />;
   },
@@ -156,6 +157,7 @@ export function MobileShell() {
   const popMobileScreen = useUIStore((s) => s.popMobileScreen);
   const mobileStack = useUIStore((s) => s.mobileStack);
   const currentVoiceChannelId = useVoiceStore((s) => s.currentVoiceChannelId);
+  const activeDmCall = useVoiceStore((s) => s.activeDmCall);
   const location = useLocation();
 
   // Edge swipe back gesture
@@ -205,8 +207,8 @@ export function MobileShell() {
         screenMap={mobileScreenMap}
       />
 
-      {/* Voice mini-bar — shown when in a voice call */}
-      {currentVoiceChannelId && <MobileVoiceMiniBar />}
+      {/* Voice mini-bar: shown in a voice channel or a DM call */}
+      {(currentVoiceChannelId || activeDmCall) && <MobileVoiceMiniBar />}
 
       {/* Bottom nav — MobileBottomNav hides itself when stack is non-empty */}
       <MobileBottomNav />
