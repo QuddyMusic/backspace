@@ -146,10 +146,17 @@ export function createSystemAudioController(deps: SystemAudioDeps): SystemAudioC
 }
 
 /**
- * `ownAudioInSystemAudio()` describes what Chromium's loopback does. When this
- * module can build the capture instead, Backspace's own playback is left out
- * whatever the OS table says.
+ * `ownAudioInSystemAudio()` describes what Chromium's loopback does. A web
+ * client that opens the source this module builds says so when it asks
+ * (`clientUsesSource`), and for it Backspace's own playback is left out
+ * whatever the OS table says. A web client from before the source never opens
+ * it and keeps the loopback, so it gets the OS verdict, and the module is not
+ * loaded for it. Only `true` counts: the argument comes from the renderer.
  */
-export function withSystemAudioSource<T extends string>(base: T, sourceAvailable: boolean): T | 'excluded' {
-  return sourceAvailable ? 'excluded' : base;
+export function withSystemAudioSource<T extends string>(
+  base: T,
+  clientUsesSource: unknown,
+  sourceAvailable: () => boolean,
+): T | 'excluded' {
+  return clientUsesSource === true && sourceAvailable() ? 'excluded' : base;
 }

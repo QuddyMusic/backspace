@@ -210,9 +210,18 @@ describe('createSystemAudioController', () => {
 });
 
 describe('withSystemAudioSource', () => {
-  it('says the app is left out when the source can be built, and keeps the OS verdict otherwise', () => {
-    expect(withSystemAudioSource('included', true)).toBe('excluded');
-    expect(withSystemAudioSource('included', false)).toBe('included');
-    expect(withSystemAudioSource('unavailable', false)).toBe('unavailable');
+  it('says the app is left out when the client uses the source and it can be built', () => {
+    expect(withSystemAudioSource('included', true, () => true)).toBe('excluded');
+    expect(withSystemAudioSource('included', true, () => false)).toBe('included');
+    expect(withSystemAudioSource('unavailable', true, () => false)).toBe('unavailable');
+  });
+
+  it('gives a client that does not use the source the OS verdict, without probing for it', () => {
+    // A web client from before the source keeps Chromium's loopback, which carries the app.
+    const available = vi.fn(() => true);
+    expect(withSystemAudioSource('included', undefined, available)).toBe('included');
+    expect(withSystemAudioSource('included', false, available)).toBe('included');
+    expect(withSystemAudioSource('included', 'true', available)).toBe('included');
+    expect(available).not.toHaveBeenCalled();
   });
 });

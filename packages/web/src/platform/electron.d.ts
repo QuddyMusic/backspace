@@ -145,7 +145,7 @@ interface BackspaceElectronAPI {
    * Optional: older desktop builds lack it, and the stream settings
    * then keep their generic per-platform System Audio note.
    */
-  getSystemAudioCapability?: () => Promise<OwnAudioInSystemAudio>;
+  getSystemAudioCapability?: (usesAppSource?: boolean) => Promise<OwnAudioInSystemAudio>;
   /**
    * Linux: route every other app's playback into a virtual source that the
    * renderer opens as a microphone (`label` names the device). Optional: only

@@ -20,6 +20,17 @@ export function isAppSystemAudioSource(device: Pick<MediaDeviceInfo, 'kind' | 'l
   return device.kind === 'audioinput' && device.label.includes(SOURCE_LABEL);
 }
 
+/**
+ * Whether this desktop app has the bridge the source needs. The web client
+ * tells the main process so when it asks what a system-audio share carries
+ * (`getSystemAudioCapability`): only a client that opens the source leaves
+ * Backspace's own playback out on Linux.
+ */
+export function canOpenAppSystemAudioSource(): boolean {
+  const api = getElectronAPI();
+  return typeof api?.startSystemAudio === 'function' && typeof api.stopSystemAudio === 'function';
+}
+
 type StartResult = Awaited<ReturnType<NonNullable<NonNullable<ReturnType<typeof getElectronAPI>>['startSystemAudio']>>>;
 
 /**

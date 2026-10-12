@@ -813,11 +813,12 @@ function registerIpcHandlers(): void {
   });
   // Whether System Audio on this OS build carries Backspace's own playback
   // (the call) to viewers; the stream settings say so before it is turned on.
-  ipcMain.handle('get-system-audio-capability', (event) => {
+  ipcMain.handle('get-system-audio-capability', (event, clientUsesSource: unknown) => {
     if (event.sender !== mainWindow?.webContents) return 'unknown';
     return withSystemAudioSource(
       ownAudioInSystemAudio(process.platform, process.getSystemVersion()),
-      systemAudio.isAvailable(),
+      clientUsesSource,
+      () => systemAudio.isAvailable(),
     );
   });
   // The virtual source that carries every other app's playback (Linux). The
