@@ -1,4 +1,5 @@
 import { useMentionComposer } from './useMentionComposer';
+import { useComposerMention } from './useComposerMention';
 import { MentionTextarea } from './MentionTextarea';
 import { layoutRect } from '../../platform/interfaceScale';
 import React, { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
@@ -84,6 +85,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useComposerMention(channelId, textareaRef);
   const mentionAnchorRef = useRef<HTMLSpanElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
   // Note: this ref is intentionally typed `HTMLDivElement | null` (mutable

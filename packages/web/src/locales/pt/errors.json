@@ -237,5 +237,10 @@
   "bot_unavailable": "O bot não está conectado no momento",
   "interaction_not_found": "Interação não encontrada",
   "interaction_expired": "Esta interação expirou",
-  "interaction_responses_exceeded": "O limite de respostas desta interação foi atingido"
+  "interaction_responses_exceeded": "O limite de respostas desta interação foi atingido",
+  "sticker_invalid_image": "Envie uma imagem PNG, JPEG, WebP ou GIF de no máximo {{max}} MB.",
+  "sticker_not_local": "Esta figurinha está guardada em outro servidor, por isso não foi adicionada à sua coleção.",
+  "sticker_not_found": "Essa figurinha não existe mais.",
+  "sticker_collection_full": "Sua coleção está cheia com {{max}} figurinhas. Remova uma para adicionar outra.",
+  "sticker_name_invalid": "O nome da figurinha pode ter de 1 a {{max}} caracteres em uma linha, com pelo menos um caractere visível e sem caracteres de controle."
 }

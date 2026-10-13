@@ -222,8 +222,15 @@
     {
       "idx": 31,
       "version": "6",
-      "when": 1791786295033,
-      "tag": "0031_loud_butterfly",
+      "when": 1791785539220,
+      "tag": "0031_personal_stickers",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1791864640234,
+      "tag": "0032_bots",
       "breakpoints": true
     }
   ]

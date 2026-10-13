@@ -42,7 +42,7 @@ Source: `packages/server/src/ws/handler.ts`, `packages/server/src/ws/events.ts`
 ### Reactions (space + DM, auto-detected)
 | type | fields | notes |
 |------|--------|-------|
-| `reaction_add` | messageId, emoji | ADD_REACTIONS perm (space). One reaction per user and emoji: a repeat stores nothing, sends no `reaction_added` and queues no relay. The client does not send one either (`chatStore.addReaction` skips a reaction the user holds or has an add in flight for) |
+| `reaction_add` | messageId, emoji | ADD_REACTIONS perm (space). `emoji` is a native emoji or a sticker token (`sticker:<asset URL>`, uploads.md "Personal stickers"); the server stores and relays either as the same string. One reaction per user and emoji: a repeat stores nothing, sends no `reaction_added` and queues no relay. The client does not send one either (`chatStore.addReaction` skips a reaction the user holds or has an add in flight for) |
 | `reaction_remove` | messageId, emoji | own reactions only |
 
 ### Read State
@@ -127,9 +127,11 @@ to a peer, and DMs have none.
 **Capability.** `ready.supportsPoke` is `true` from an instance that handles
 `channel_poke`. The client keeps it per origin (`stores/channelPokeStore.ts`)
 and offers Poke only for messages from an origin that said so. A 1.10.0 or
-older instance sends no flag; there, and in DMs, without SEND_MESSAGES and on
-a message still sending, right-clicking the author opens the message menu as
-before.
+older instance sends no flag, so its messages get no Poke. On any instance,
+the author menu also has no Poke in DMs, without SEND_MESSAGES, on a message
+still sending, or on the viewer's own message. It may still offer Mention, which only writes into the composer and
+sends nothing; with neither item, right-clicking the author opens the message
+menu (permissions.md, the author right-click row).
 
 **Checks**, in order, each refused with an `error` and its code on the
 sending socket only, storing and sending nothing:

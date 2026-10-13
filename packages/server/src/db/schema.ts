@@ -829,3 +829,16 @@ export const interactions = sqliteTable('interactions', {
 }, (table) => ({
   expiresIdx: index('idx_interactions_expires_at').on(table.expiresAt),
 }));
+
+// Assets outlive personal collections so removing a favorite cannot break message history.
+export const stickerAssets = sqliteTable('sticker_assets', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+});
+
+export const personalStickers = sqliteTable('personal_stickers', {
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  stickerId: text('sticker_id').notNull().references(() => stickerAssets.id),
+  name: text('name').notNull(),
+  createdAt: integer('created_at').notNull(),
+}, (table) => ({ pk: primaryKey({ columns: [table.userId, table.stickerId] }) }));
