@@ -33,7 +33,9 @@ export function addUserToSpace(spaceId: string, userId: string): void {
 /**
  * Takes a user out of a space: the member row, their voice restrictions and
  * read states for the space's channels, then a `member_left` broadcast and the
- * end of live delivery of that space's events to their sockets. The broadcast
+ * end of live delivery of that space's events to their sockets. A bot also
+ * loses its role assignments and its per-member channel overrides here: a bot
+ * leaves nothing behind (a person keeps their roles, as before). The broadcast
  * goes first so the removed user's own sessions still learn they are out.
  * Callers have checked who may remove whom.
  */
@@ -56,6 +58,21 @@ export function removeUserFromSpace(spaceId: string, userId: string): void {
       eq(schema.readStates.userId, userId),
       inArray(schema.readStates.channelId, spaceChannelIds),
     )).run();
+  }
+
+  const account = db.select({ isBot: schema.users.isBot }).from(schema.users)
+    .where(eq(schema.users.id, userId)).get();
+  if (account?.isBot === 1) {
+    db.delete(schema.memberRoles)
+      .where(and(eq(schema.memberRoles.spaceId, spaceId), eq(schema.memberRoles.userId, userId)))
+      .run();
+    if (spaceChannelIds.length > 0) {
+      db.delete(schema.channelOverrides).where(and(
+        eq(schema.channelOverrides.targetType, 'member'),
+        eq(schema.channelOverrides.targetId, userId),
+        inArray(schema.channelOverrides.channelId, spaceChannelIds),
+      )).run();
+    }
   }
 
   connectionManager.sendToSpace(spaceId, { type: 'member_left', spaceId, userId });

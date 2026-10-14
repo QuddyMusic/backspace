@@ -48,7 +48,7 @@ Authorization: Bot <token>
 | GET | `/api/bots/search?q=` | -- | `{ bots: BotSearchResult[] }` (native discoverable bots, username substring of 2-32 characters, up to 25; any signed-in account; each result adds `ownerUsername`, `null` when the owner is deleted or not discoverable) |
 | GET | `/api/bots/:id/spaces` | -- | `{ spaces: [{ id, name, icon, botIsMember }] }` (owner; the caller's MANAGE_SPACE spaces plus every space the bot already sits in) |
 | POST | `/api/bots/:id/spaces` | `{ spaceId }` | `{ success }` (any native bot of this instance; MANAGE_SPACE in the space) |
-| DELETE | `/api/bots/:id/spaces/:spaceId` | -- | `{ success }` (the bot's owner, or MANAGE_SPACE in the space; the bot gets `member_left` and no further events of that space) |
+| DELETE | `/api/bots/:id/spaces/:spaceId` | -- | `{ success }` (the bot's owner, or MANAGE_SPACE in the space; the bot gets `member_left` and no further events of that space; its role assignments and per-member channel overrides in that space are deleted too, whichever path removed it: this route, a kick or a ban) |
 
 `BotSummary` is `{ id, username, displayName, avatarColor, avatar, createdAt }`. `avatar` is a bare upload filename (upload through tus first) or `null`. Errors use the project format `{ error, code, statusCode, details? }`; the codes specific to bots are `bot_not_found`, `bot_limit_reached`, `bot_name_invalid`, `bot_name_suffix_required`, `bots_native_only`, `bot_profile_owner_only`, `bot_home_not_peered`, `bot_proof_invalid`, `bot_account_required`, `bots_no_friends`.
 
