@@ -244,6 +244,81 @@ describe('a bot in a space on the host', () => {
   });
 });
 
+describe('a bot in several voice channels of a space on the host', () => {
+  // The bot's account on B is a federated row with is_bot = 1; its seats are B's own.
+  let voiceOne: string;
+  let voiceTwo: string;
+  let textChannel: string;
+  let hostBotWs: WsCapture;
+
+  const seatEvent = (ws: WsCapture, channelId: string, action: string): boolean =>
+    ws.events.some(e => e.type === 'voice_state_update' && e.channelId === channelId && e.userId === hostBot.id && e.action === action);
+
+  it('sits in two voice channels at once on the host, each with its own LiveKit token', async () => {
+    const makeChannel = async (name: string, type: 'voice' | 'text'): Promise<string> => {
+      const r = await api<{ id: string }>(B, 'POST', `/api/spaces/${spaceId}/channels`, hostHuman.token, { name, type });
+      expect(r.status).toBeLessThan(300);
+      return r.body.id;
+    };
+    voiceOne = await makeChannel('host-radio-one', 'voice');
+    voiceTwo = await makeChannel('host-radio-two', 'voice');
+    textChannel = await makeChannel('host-chat', 'text');
+
+    hostBotWs = await connectWs(B.origin, hostBot.token);
+    sockets.push(hostBotWs);
+    await hostBotWs.waitForEvent('ready');
+
+    hostBotWs.send({ type: 'bot_voice_join', channelId: voiceOne });
+    hostBotWs.send({ type: 'bot_voice_join', channelId: voiceTwo });
+    expect(await waitUntil(() => seatEvent(hostBotWs, voiceOne, 'join') && seatEvent(hostBotWs, voiceTwo, 'join'), 5_000)).toBe(true);
+    expect(seatEvent(hostBotWs, voiceOne, 'leave')).toBe(false);
+
+    const tokenOne = await api<{ token?: string }>(B, 'POST', '/api/livekit/token', hostBot.token, { channelId: voiceOne });
+    const tokenTwo = await api<{ token?: string }>(B, 'POST', '/api/livekit/token', hostBot.token, { channelId: voiceTwo });
+    expect(tokenOne.status).toBe(200);
+    expect(tokenTwo.status).toBe(200);
+    expect(tokenOne.body.token).not.toBe(tokenTwo.body.token);
+  });
+
+  it('a person on the host sees the bot in both channels, and leaving one keeps the other', async () => {
+    const watcher = await connectWs(B.origin, hostHuman.token);
+    sockets.push(watcher);
+    const ready = await watcher.waitForEvent('ready');
+    const states = (ready as { voiceStates?: Record<string, string[]> }).voiceStates ?? {};
+    expect(states[voiceOne]).toContain(hostBot.id);
+    expect(states[voiceTwo]).toContain(hostBot.id);
+
+    hostBotWs.send({ type: 'bot_voice_leave', channelId: voiceOne });
+    expect(await waitUntil(() => seatEvent(watcher, voiceOne, 'leave'), 5_000)).toBe(true);
+    expect(seatEvent(watcher, voiceTwo, 'leave')).toBe(false);
+  });
+
+  it('refuses a text channel on the host', async () => {
+    hostBotWs.send({ type: 'bot_voice_join', channelId: textChannel });
+    expect(await waitUntil(
+      () => hostBotWs.events.some(e => e.type === 'error' && e.message === 'Target channel is not a voice channel'),
+      5_000,
+    )).toBe(true);
+    expect(seatEvent(hostBotWs, textChannel, 'join')).toBe(false);
+  });
+
+  it('keeps its seats while one of its host sockets is still open', async () => {
+    // The invite test above left a socket of this bot open: closing the one that
+    // took the seats must not end them (they end 5 s after the LAST socket closes).
+    hostBotWs.send({ type: 'bot_voice_join', channelId: voiceOne });
+    expect(await waitUntil(() => seatEvent(hostBotWs, voiceOne, 'join'), 5_000)).toBe(true);
+
+    const watcher = await connectWs(B.origin, hostHuman.token);
+    sockets.push(watcher);
+    const ready = await watcher.waitForEvent('ready');
+    expect(((ready as { voiceStates?: Record<string, string[]> }).voiceStates ?? {})[voiceOne]).toContain(hostBot.id);
+
+    hostBotWs.close();
+    await new Promise(r => setTimeout(r, 7_000));
+    expect(seatEvent(watcher, voiceOne, 'leave')).toBe(false);
+  });
+});
+
 describe('editing a bot on its home', () => {
   it('only the owner can edit, and the input is validated', async () => {
     const stranger = await registerLocal(A, 'stranger');
