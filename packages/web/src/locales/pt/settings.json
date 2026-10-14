@@ -131,7 +131,8 @@
       "keybinds": "Atalhos",
       "desktop": "Desktop",
       "instance": "Instância",
-      "bots": "Contas de bot"
+      "bots": "Contas de bot",
+      "developer": "Desenvolvedor"
     },
     "logOut": "Sair",
     "backToMenu": "Voltar ao menu de configurações"
@@ -480,6 +481,13 @@
       "add": "Adicionar",
       "added": "Adicionado",
       "remove": "Remover"
+    }
+  },
+  "developer": {
+    "title": "Desenvolvedor",
+    "mode": {
+      "label": "Modo de desenvolvedor",
+      "description": "Mostra ferramentas de desenvolvedor, como a aba Bots, nas configurações. Desativar apenas as oculta; seus bots continuam funcionando."
     }
   }
 }

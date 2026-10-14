@@ -10,7 +10,7 @@ Source files:
 - `packages/server/src/utils/auth.ts` -- `tokenFromAuthHeader` (`Bearer` / `Bot`)
 - `packages/server/src/routes/auth.ts` -- `POST /api/auth/register` with `botProof`
 - `packages/server/src/routes/federation/handlers/attach.ts` -- `verify-attach-proof` answers `isBot`
-- `packages/web/src/components/modals/settingsPanels/BotsPanel.tsx` -- Settings > Bots
+- `packages/web/src/components/modals/settingsPanels/BotsPanel.tsx` -- Settings > Bots, shown only while Settings > Developer > Developer Mode is on (`stores/developerModeStore.ts`, a per-account, per-browser UI switch; it does not restrict the API)
 - `packages/server/src/routes/botCommands.ts`, `routes/interactions.ts`, `utils/botAuth.ts` -- slash commands
 - `packages/server/src/ws/handler.ts`, `ws/events.ts` -- bot voice seats (`botJoinRoom`, `bot_voice_join`)
 - `packages/web/src/components/chat/CommandPopover.tsx` -- the command lists in the message box
@@ -96,7 +96,7 @@ The reaction calls serve channel and DM messages alike (the kind is found by the
 
 ### Limits
 
-Messages in channels and in DMs: 5 per 5 s each. Reactions: 10 per 5 s. Both are counted per client address, like every limit in this app ([api.md](api.md), "Rate limiting"). Bot creation and token regeneration: 5 per 15 min per owner.
+Messages in channels and in DMs: 5 per 5 s each. Reactions: 10 per 5 s. Both are counted per client address, like every limit in this app ([api.md](api.md), "Rate limiting"). Bot creation and token regeneration: 5 per 15 min, also counted per client address.
 
 ## 5b. Slash commands
 
@@ -208,7 +208,7 @@ B verifies the proof with A over the signed server-to-server channel (`POST /api
 - An instance without bot support ignores `botProof`: the account there is an ordinary user (no bot flag). A person can also automate a human account without declaring it; the server cannot tell.
 - The token is a full user session: a bot can call any REST endpoint a user can. Hashed tokens in their own table, scopes and revocation of a single token are not built.
 - `isBot` is not carried by the DM relay: on other instances a DM with a bot shows no bot marker.
-- Revocation on another instance depends on the peer: an unreachable or inactive peer leaves the account there until the call is repeated (the answer says which); a bot that owns a space there answers `owns_spaces` and stays.
+- Revocation on another instance depends on the peer: an unreachable or inactive peer leaves the account there (the answer says which); the bot's credential rows are deleted regardless, so the call cannot be repeated for that origin; a bot that owns a space there answers `owns_spaces` and stays.
 - A regenerated token removes the bot from its spaces on other instances (the account is recreated).
 - The peer of the home instance is found by host without port; two instances on one host and different ports are not supported. `homeInstance` in `register` cannot carry a port.
 - When a person replies to a message and mentions a bot, the event carries the replied text in `replyTo`.
@@ -217,6 +217,6 @@ B verifies the proof with A over the signed server-to-server channel (`POST /api
 
 ## 9. Database
 
-Migration `0023_good_pandemic.sql` adds to `users`: `is_bot` (INTEGER NOT NULL DEFAULT 0) and `bot_owner_id` (TEXT, the owner's user id) and an index `idx_users_bot_owner_id` on it. Nothing else is stored per bot; the avatar and display name are the ordinary `users` columns. The cascade and revocation rules are in 1 and 7.
+Migration `0032_bots.sql` adds to `users`: `is_bot` (INTEGER NOT NULL DEFAULT 0) and `bot_owner_id` (TEXT, the owner's user id) and an index `idx_users_bot_owner_id` on it. Nothing else is stored per bot; the avatar and display name are the ordinary `users` columns. The cascade and revocation rules are in 1 and 7.
 
 The same migration adds the two tables of the slash commands. `bot_commands`: `id` (PK), `bot_id` (FK to `users`, cascade), `name`, `description`, `options` (JSON array, default `'[]'`), `updated_at`; unique index on `(bot_id, name)`. `interactions`: `id` (random 32-hex string, PK), `bot_id` and `user_id` (FKs to `users`, cascade), `channel_id` / `dm_channel_id` (exactly one is set), `command`, `options` (JSON object of the parsed values), `created_at`, `expires_at`, `responses` (default 0); index on `expires_at`. A spent interaction is dropped by the first invocation that comes a day after it expired. A bot's `bot_commands` rows are deleted when the bot is tombstoned.

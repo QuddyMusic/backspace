@@ -9,6 +9,7 @@ import { useChatStore } from '../stores/chatStore';
 import { useVoiceStore } from '../stores/voiceStore';
 import { useSocialStore } from '../stores/socialStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useDeveloperModeStore } from '../stores/developerModeStore';
 import type { ServerEvent, ClientEvent, ActiveCallInfo, Activity, FederatedIdentity, User } from '@backspace/shared';
 import { resolveAssetUrl, normalizeUserAssets, normalizeMessageAssets } from '../utils/assetUrls';
 import { broadcastVoiceStatus, broadcastDeafenViaLiveKit } from '../utils/voice';
@@ -285,6 +286,7 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
         // Whose acknowledgements to read: the store cannot import authStore
         // without dragging the audio pipeline into every settings test.
         useSettingsStore.getState().setUpdateAckUser(event.user.id);
+        useDeveloperModeStore.getState().setUser(event.user.id);
         // This is what moved the release lookup off the Updates panel: the dot
         // has to be able to appear before an admin ever navigates there. Gated
         // on the flag this event just delivered, not on store state.

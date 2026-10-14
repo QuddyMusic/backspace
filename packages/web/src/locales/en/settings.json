@@ -131,7 +131,8 @@
       "keybinds": "Keybinds",
       "desktop": "Desktop",
       "instance": "Instance",
-      "bots": "Bots"
+      "bots": "Bots",
+      "developer": "Developer"
     },
     "logOut": "Log Out",
     "backToMenu": "Back to settings menu"
@@ -479,6 +480,13 @@
       "add": "Add",
       "added": "Added",
       "remove": "Remove"
+    }
+  },
+  "developer": {
+    "title": "Developer",
+    "mode": {
+      "label": "Developer Mode",
+      "description": "Show developer tools, such as the Bots tab, in settings. Turning it off only hides them; your bots keep running."
     }
   }
 }

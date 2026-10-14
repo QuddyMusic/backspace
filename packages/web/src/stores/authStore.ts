@@ -10,6 +10,7 @@ import { useSocialStore } from './socialStore';
 import { useVoiceStore } from './voiceStore';
 import { useInstanceStore, resolveSessionApiForHome } from './instanceStore';
 import { useActivityStore } from './activityStore';
+import { useDeveloperModeStore } from './developerModeStore';
 import { useSettingsStore } from './settingsStore';
 import { useExploreStore } from './exploreStore';
 import { useDirectoryStore } from './directoryStore';
@@ -88,6 +89,7 @@ function resetUserStores() {
   useDirectoryStore.getState().reset();
   useNotificationSettingsStore.getState().reset();
   useSettingsStore.getState().resetUpdateState();
+  useDeveloperModeStore.getState().reset();
 }
 
 const TRUE_HOME_STATUS_KEY_PREFIX = 'backspace_true_home_status';

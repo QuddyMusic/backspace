@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import type { InstanceInfoResponse, User } from '@backspace/shared';
 
 // The screen reads three stores through selectors, and the panel it opens reads
@@ -101,8 +101,10 @@ vi.mock('../modals/settingsPanels/VoicePanel', () => ({ VoicePanel: () => null }
 vi.mock('../modals/settingsPanels/PrivacyPanel', () => ({ PrivacyPanel: () => null }));
 vi.mock('../modals/settingsPanels/ConnectionsPanel', () => ({ ConnectionsPanel: () => null }));
 vi.mock('../modals/settingsPanels/KeybindsPanel', () => ({ KeybindsPanel: () => null }));
+vi.mock('../modals/settingsPanels/BotsPanel', () => ({ BotsPanel: () => <p>BotsPanel stub</p> }));
 
 import { MobileSettingsScreen } from './MobileSettingsScreen';
+import { useDeveloperModeStore } from '../../stores/developerModeStore';
 
 /** The preload bridge whose presence is what `isElectron()` reads. */
 function installDesktopHost() {
@@ -170,5 +172,42 @@ describe('MobileSettingsScreen Desktop entry', () => {
     // what tells them apart.
     expect(await screen.findByRole('button', { name: 'Change Instance' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'All releases on GitHub' })).not.toBeInTheDocument();
+  });
+});
+
+describe('MobileSettingsScreen Developer entries', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    useDeveloperModeStore.getState().reset();
+    useDeveloperModeStore.getState().setUser(mocks.auth.user.id);
+  });
+
+  afterEach(() => {
+    useDeveloperModeStore.getState().reset();
+    localStorage.clear();
+  });
+
+  it('lists Developer always and Bots only while the mode is on', () => {
+    render(<MobileSettingsScreen />);
+    expect(screen.getByRole('button', { name: 'Developer' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Bots' })).not.toBeInTheDocument();
+
+    act(() => { useDeveloperModeStore.getState().setEnabled(true); });
+    expect(screen.getByRole('button', { name: 'Bots' })).toBeInTheDocument();
+  });
+
+  it('renders the Bots panel only while the mode is on', async () => {
+    render(<MobileSettingsScreen initialPanel="bots" />);
+    expect(screen.queryByText('BotsPanel stub')).not.toBeInTheDocument();
+    cleanup();
+
+    useDeveloperModeStore.getState().setEnabled(true);
+    render(<MobileSettingsScreen initialPanel="bots" />);
+    expect(await screen.findByText('BotsPanel stub')).toBeInTheDocument();
+  });
+
+  it('opens the Developer panel with its switch', async () => {
+    render(<MobileSettingsScreen initialPanel="developer" />);
+    expect(await screen.findByRole('switch', { name: 'Developer Mode' })).toHaveAttribute('aria-checked', 'false');
   });
 });

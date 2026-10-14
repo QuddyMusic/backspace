@@ -131,7 +131,8 @@
       "keybinds": "按键绑定",
       "desktop": "桌面端",
       "instance": "实例",
-      "bots": "机器人"
+      "bots": "机器人",
+      "developer": "开发者"
     },
     "logOut": "退出登录",
     "backToMenu": "返回设置菜单"
@@ -478,6 +479,13 @@
       "add": "添加",
       "added": "已添加",
       "remove": "移除"
+    }
+  },
+  "developer": {
+    "title": "开发者",
+    "mode": {
+      "label": "开发者模式",
+      "description": "在设置中显示开发者工具，例如“机器人”标签页。关闭只会隐藏它们，你的机器人会继续运行。"
     }
   }
 }
