@@ -1239,7 +1239,7 @@ class ConnectionManager implements ReplicaSessionHost {
 
   // ─── Broadcasting ─────────────────────────────────────────────────────────
 
-  /** The voice rooms a bot is in. */
+  /** The voice rooms a bot is in through `bot_voice_join` (its `voice_join` seat is not listed). */
   getBotRoomIds(botId: string): string[] {
     return [...(this.botRooms.get(botId) ?? [])];
   }
@@ -1251,6 +1251,10 @@ class ConnectionManager implements ReplicaSessionHost {
   botJoinRoom(botId: string, roomId: string, spaceId: string): boolean {
     const rooms = this.botRooms.get(botId) ?? new Set<string>();
     if (rooms.has(roomId)) return false;
+    // A seat taken with the ordinary `voice_join` is already a seat here. Holding
+    // both would announce the join twice and leave `userToRoom` pointing at a
+    // room the bot has left.
+    if (this.userToRoom.get(botId) === roomId) return false;
     this.createRoom(roomId, 'space', { type: 'space', spaceId });
     const room = this.voiceRooms.get(roomId);
     if (!room) return false;

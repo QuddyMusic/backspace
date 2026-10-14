@@ -249,6 +249,8 @@ describe('UserSettingsModal Developer Mode', () => {
   });
 
   afterEach(() => {
+    // Unmount first: resetting the store under a mounted modal re-renders it outside act().
+    cleanup();
     mocks.ui.modalData = {};
     useDeveloperModeStore.getState().reset();
     localStorage.clear();

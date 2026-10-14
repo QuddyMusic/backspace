@@ -554,11 +554,17 @@ function handleBotVoiceJoin(event: Record<string, unknown>, userId: string): voi
     connectionManager.sendToUser(userId, { type: 'error', message: 'Only bots can join several voice channels', code: 'bot_account_required' });
     return;
   }
-  const spaceId = getChannelSpaceId(channelId);
-  if (!spaceId) {
+  const channel = getDb().select({ spaceId: schema.channels.spaceId, type: schema.channels.type })
+    .from(schema.channels).where(eq(schema.channels.id, channelId)).get();
+  if (!channel) {
     connectionManager.sendToUser(userId, { type: 'error', message: 'Channel not found' });
     return;
   }
+  if (channel.type !== 'voice') {
+    connectionManager.sendToUser(userId, { type: 'error', message: 'Target channel is not a voice channel' });
+    return;
+  }
+  const spaceId = channel.spaceId;
   if (!isMember(spaceId, userId) || !hasPermission(userId, spaceId, PermissionBits.CONNECT, channelId)) {
     connectionManager.sendToUser(userId, { type: 'error', message: 'Missing CONNECT permission' });
     return;
@@ -638,6 +644,11 @@ function handleVoiceJoin(event: Record<string, unknown>, userId: string, ws: Web
     rejectVoiceJoin(userId, channelId);
     return;
   }
+
+  // A bot that already sits in this channel through `bot_voice_join` keeps that
+  // seat; a second, person-style seat in the same room would be announced twice
+  // and outlive the first one's `bot_voice_leave`.
+  if (connectionManager.getBotRoomIds(userId).includes(channelId)) return;
 
   // ── Device switch guardrail ──
   // If this user already has a voice session on a different socket,

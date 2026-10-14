@@ -183,6 +183,8 @@ describe('MobileSettingsScreen Developer entries', () => {
   });
 
   afterEach(() => {
+    // Unmount first: resetting the store under a mounted screen re-renders it outside act().
+    cleanup();
     useDeveloperModeStore.getState().reset();
     localStorage.clear();
   });
@@ -201,7 +203,7 @@ describe('MobileSettingsScreen Developer entries', () => {
     expect(screen.queryByText('BotsPanel stub')).not.toBeInTheDocument();
     cleanup();
 
-    useDeveloperModeStore.getState().setEnabled(true);
+    act(() => { useDeveloperModeStore.getState().setEnabled(true); });
     render(<MobileSettingsScreen initialPanel="bots" />);
     expect(await screen.findByText('BotsPanel stub')).toBeInTheDocument();
   });
