@@ -20,6 +20,7 @@ import { resizeProfileImage } from '../utils/thumbnail.js';
 import { config } from '../config.js';
 import { buildFederationHeaders, getOurOrigin, normalizeOriginForCompare, canonicalizeHomeInstance } from '../utils/federationAuth.js';
 import { extractDomain } from './federation.js';
+import { hasPendingBotRevocation } from '../utils/botRevocationQueue.js';
 import path from 'path';
 
 /**
@@ -765,6 +766,12 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     }
     if (user.homeInstance && user.federationHomeOrphaned !== 1) {
       return sendError(reply, 409, 'federation_credential_home_only');
+    }
+    // A revoke of this bot is still waiting for that instance (it was away): the
+    // old account there would block a new registration, and the late revoke would
+    // take the new one down. See botRevocationQueue.ts.
+    if (user.isBot === 1 && hasPendingBotRevocation(user.id, target)) {
+      return sendError(reply, 409, 'bot_revocation_pending');
     }
 
     const now = Date.now();

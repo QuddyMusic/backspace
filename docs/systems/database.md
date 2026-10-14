@@ -724,6 +724,10 @@ Per-remote credential this user's client presents when registering or logging in
 
 Migration `0032_bots.sql` adds `users.is_bot` (INTEGER NOT NULL DEFAULT 0) and `users.bot_owner_id` (TEXT, owner's user id, NULL for humans and for a bot's federated account on another instance). A bot's `password_hash` is `'!bot'`. See [bots.md](bots.md).
 
+## Bot revocation queue (`bot_revocations`)
+
+Migration `0034_bot_revocations.sql`. A revoke of a bot's federated account that an instance has not accepted yet. Primary key `(bot_id, origin)`, no foreign keys (a bot's tombstone must not delete it). Columns: `mode` (`soft` | `full`), `attempts`, `last_error`, `created_at`, `next_attempt_at` (index `idx_bot_revocations_next_attempt_at`). Rows are deleted on success, on a final refusal and after 7 days. See [bots.md](bots.md), "Revocation retries".
+
 ## Slash command tables
 
 The same migration adds the two tables of the slash commands. `bot_commands`: `id` (PK), `bot_id` (FK to `users`, cascade), `name`, `description`, `options` (JSON array, default `'[]'`), `updated_at`; unique index on `(bot_id, name)`. `interactions`: `id` (random 32-hex string, PK), `bot_id` and `user_id` (FKs to `users`, cascade), `channel_id` / `dm_channel_id` (exactly one is set), `command`, `options` (JSON object of the parsed values), `created_at`, `expires_at`, `responses` (default 0); index on `expires_at`. A spent interaction is dropped by the first invocation that comes a day after it expired. A bot's `bot_commands` rows are deleted when the bot is tombstoned.

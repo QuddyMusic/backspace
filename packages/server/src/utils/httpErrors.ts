@@ -267,7 +267,8 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   bots_no_friends: 'Cannot send friend requests to bots',
   bot_home_not_peered: 'The bot\'s home instance is not peered with this instance',
   bot_proof_invalid: 'Bot identity proof is invalid or expired',
-  bot_profile_owner_only: 'A bot\'s profile can only be changed by its owner'
+  bot_profile_owner_only: 'A bot\'s profile can only be changed by its owner',
+  bot_revocation_pending: 'The old account of this bot on that instance is still being removed; try again later'
 };
 
 function fillPlaceholders(text: string, details: ErrorDetails | undefined): string {

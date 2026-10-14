@@ -239,6 +239,13 @@
       "when": 1791971435284,
       "tag": "0033_developer_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1792004873637,
+      "tag": "0034_bot_revocations",
+      "breakpoints": true
     }
   ]
 }

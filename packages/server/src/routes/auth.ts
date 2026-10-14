@@ -1,3 +1,4 @@
+import { hasPendingBotRevocation } from '../utils/botRevocationQueue.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { eq, or, lt } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
@@ -552,6 +553,14 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     // to mint proofs for this domain's identities.
     if (request.homeInstance) {
       return sendError(reply, 403, 'native_account_required');
+    }
+
+    // Same rule as the credential route: no new proof for a host that still has
+    // this bot's old account waiting for removal.
+    const requester = db.select({ isBot: schema.users.isBot }).from(schema.users)
+      .where(eq(schema.users.id, request.userId)).get();
+    if (requester?.isBot === 1 && hasPendingBotRevocation(request.userId, targetDomain)) {
+      return sendError(reply, 409, 'bot_revocation_pending');
     }
 
     const now = Date.now();

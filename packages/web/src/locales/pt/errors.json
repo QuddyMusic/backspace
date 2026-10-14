@@ -232,6 +232,7 @@
   "bot_home_not_peered": "A instância de origem do bot não está federada com esta instância",
   "bot_proof_invalid": "A prova de identidade do bot é inválida ou expirou",
   "bot_profile_owner_only": "O perfil de um bot só pode ser alterado pelo dono dele",
+  "bot_revocation_pending": "A conta antiga deste bot nessa instância ainda está sendo removida. Tente novamente mais tarde.",
   "bot_account_required": "Somente uma conta de bot pode fazer isso",
   "command_not_found": "Este bot não tem esse comando",
   "bot_unavailable": "O bot não está conectado no momento",

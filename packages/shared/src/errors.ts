@@ -40,6 +40,7 @@ export const ERROR_CODES = [
   'bot_home_not_peered',
   'bot_proof_invalid',
   'bot_profile_owner_only',
+  'bot_revocation_pending',
 
   // Auth and accounts
   'username_required',

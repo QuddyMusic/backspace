@@ -8,7 +8,8 @@ import { deleteUploadFile, deleteAttachmentByFilename } from '../utils/fileClean
 import { connectionManager } from '../ws/handler.js';
 import { generateSnowflake } from '../utils/snowflake.js';
 import { BOT_NAME_MAX_LENGTH, BOT_NAME_MIN_LENGTH, BOT_NAME_SUFFIX, MAX_BOTS_PER_USER } from '@backspace/shared/src/constants.js';
-import { collectBotFederationOrigins, revokeBotOnPeers } from '../utils/botFederation.js';
+import { collectBotFederationOrigins } from '../utils/botFederation.js';
+import { revokeBotWithRetry } from '../utils/botRevocationQueue.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
@@ -349,7 +350,7 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     // home token. The host account is tombstoned; the legitimate bot
     // re-registers with the new token and rejoins by invite.
     const origins = collectBotFederationOrigins(bot.id);
-    const federation = await revokeBotOnPeers(bot.id, origins, 'soft');
+    const federation = await revokeBotWithRetry(bot.id, origins, 'soft');
     getDb().delete(schema.userFederationCredentials)
       .where(eq(schema.userFederationCredentials.userId, bot.id)).run();
     // Revokes every earlier token: same mechanism as a password change.
@@ -366,7 +367,7 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     const bot = findOwnedBot(request.userId, request.params.id);
     if (!bot) return sendError(reply, 404, 'bot_not_found');
     const origins = collectBotFederationOrigins(bot.id);
-    const federation = await revokeBotOnPeers(bot.id, origins, 'full');
+    const federation = await revokeBotWithRetry(bot.id, origins, 'full');
     const files = tombstoneUser(bot.id);
     connectionManager.forceDisconnectUser(bot.id);
     for (const filename of files) await deleteUploadFile(filename);

@@ -710,7 +710,7 @@ Full reference in [bots.md](bots.md). Owner endpoints need the JWT of a native h
 GET /bots → { bots: BotSummary[] }
 POST /bots { name } → 201 { bot, token } [5 per 15 min; the _bot suffix is appended when missing; max 10 per owner]
 PATCH /bots/:id { displayName?, avatar? } → { bot } [owner; displayName must end with _bot]
-POST /bots/:id/token → { token, federation } [5 per 15 min; revokes earlier tokens, cuts the bot off on other instances]
+POST /bots/:id/token → { token, federation } [5 per 15 min; revokes earlier tokens, cuts the bot off on other instances; per origin `federation` says success, a failure that is still `pending` (retried in the background) or a final refusal; see bots.md, "Revocation retries"]
 DELETE /bots/:id → { success, federation }
 GET /bots/search?q= → { bots: BotSearchResult[] } [native discoverable bots, username substring of 2-32 chars, up to 25; each result adds ownerUsername, null when the owner is deleted or not discoverable; 60 per min]
 GET /bots/:id/spaces → { spaces: [{ id, name, icon, botIsMember }] } [owner; the caller's MANAGE_SPACE spaces plus every space the bot already sits in]

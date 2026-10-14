@@ -777,6 +777,26 @@ export const userFederationCredentials = sqliteTable('user_federation_credential
   pk: primaryKey({ columns: [table.userId, table.origin] }),
 }));
 
+/**
+ * A revoke of a bot's federated account that an instance has not accepted yet
+ * (it was away). One row per (bot, origin); the background worker retries until
+ * it lands, is refused for good, or 7 days pass, then deletes the row. No FK:
+ * a deleted bot's tombstone must not take the row away.
+ */
+export const botRevocations = sqliteTable('bot_revocations', {
+  botId: text('bot_id').notNull(),
+  origin: text('origin').notNull(),
+  /** 'soft' (token regenerated) or 'full' (bot deleted). */
+  mode: text('mode').notNull(),
+  attempts: integer('attempts').notNull().default(0),
+  lastError: text('last_error'),
+  createdAt: integer('created_at').notNull(),
+  nextAttemptAt: integer('next_attempt_at').notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.botId, table.origin] }),
+  dueIdx: index('idx_bot_revocations_next_attempt_at').on(table.nextAttemptAt),
+}));
+
 export const inviteLinks = sqliteTable('invite_links', {
   id: text('id').primaryKey(),
   token: text('token').notNull().unique(),

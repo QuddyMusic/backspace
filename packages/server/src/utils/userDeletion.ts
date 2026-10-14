@@ -307,9 +307,9 @@ export function tombstoneUser(uid: string, options?: TombstoneOptions): string[]
     if (botOrigins.length > 0) {
       // Dynamic import: the federation utils import this module (cycle).
       const mode = options?.purgeContent === false ? 'soft' : 'full';
-      void import('./botFederation.js')
-        .then(({ revokeBotOnPeers }) => revokeBotOnPeers(bot.id, botOrigins, mode))
-        .catch(() => { /* best effort: owner is gone, nobody to report to */ });
+      void import('./botRevocationQueue.js')
+        .then(({ revokeBotWithRetry }) => revokeBotWithRetry(bot.id, botOrigins, mode))
+        .catch(() => { /* a failed round is queued by revokeBotWithRetry; nobody to report to */ });
     }
     // Lazy import: ws/handler imports the DB layer, a static import would be a cycle.
     void import('../ws/handler.js').then(({ connectionManager }) => {
