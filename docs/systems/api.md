@@ -86,7 +86,7 @@ type CheckInviteResponse =
 GET    /users/@me                                        → { user }
 PATCH  /users/@me             { displayName?, avatar?, banner?, accentColor?, avatarColor?,
                                 bio?, customStatus?, status?, replicatedInstances?, homeUserId?,
-                                profileUpdatedAt?, discoverable?, showActivity? } → { user }
+                                profileUpdatedAt?, discoverable?, showActivity?, developerMode? } → the updated user (self view; `developerMode` is in the self view only, and a change is pushed as `user_updated` to the account's own sockets only)
 POST   /users/@me/verify-password  { password }          → { valid }
 POST   /users/@me/change-password  { currentPassword?, newPassword } → { token }
 DELETE /users/@me             { password, username }      → { success }

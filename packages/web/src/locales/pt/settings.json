@@ -487,7 +487,8 @@
     "title": "Desenvolvedor",
     "mode": {
       "label": "Modo de desenvolvedor",
-      "description": "Mostra ferramentas de desenvolvedor, como a aba Bots, nas configurações. Desativar apenas as oculta; seus bots continuam funcionando."
+      "description": "Mostra ferramentas de desenvolvedor, como a aba Bots, nas configurações. Desativar apenas as oculta; seus bots continuam funcionando.",
+      "saveFailed": "Não foi possível salvar a configuração. Tente novamente."
     }
   }
 }

@@ -24,7 +24,7 @@ export function sanitizeUser(row: typeof schema.users.$inferSelect, isSelf = fal
       homeInstance: null,
       homeUserId: null,
       replicatedInstances: [],
-      ...(isSelf ? { showActivity: false } : {}),
+      ...(isSelf ? { showActivity: false, developerMode: false } : {}),
     };
   }
 
@@ -59,6 +59,7 @@ export function sanitizeUser(row: typeof schema.users.$inferSelect, isSelf = fal
     ...(isSelf
       ? {
           showActivity: row.showActivity !== 0,
+          developerMode: row.developerMode === 1,
           federationHomeOrphaned: row.federationHomeOrphaned === 1,
           detachedHomeInstance: row.detachedHomeInstance ?? null,
         }

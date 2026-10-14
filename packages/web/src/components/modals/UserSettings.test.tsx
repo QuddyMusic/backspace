@@ -44,6 +44,7 @@ const mocks = vi.hoisted(() => {
       modalData: {} as Record<string, unknown>,
       isMobile: false,
       closeModal: vi.fn(),
+      addToast: vi.fn(),
     },
     auth: { user, logout: vi.fn() },
     // useInstanceUpdateBadge reads these three; no update is pending, so no dot.
@@ -96,7 +97,11 @@ vi.mock('../../stores/updateStore', () => ({
 }));
 
 vi.mock('../../api/client', () => ({
-  api: { instance: { info: () => Promise.resolve(mocks.instanceInfo) } },
+  api: {
+    instance: { info: () => Promise.resolve(mocks.instanceInfo) },
+    // The server answers with the stored value, which the switch then shows.
+    users: { update: (data: { developerMode?: boolean }) => Promise.resolve({ developerMode: data.developerMode }) },
+  },
 }));
 
 // Every sibling panel is stubbed, so this test renders only the modal chrome and
@@ -243,9 +248,7 @@ describe('UserSettingsModal deep links (#330)', () => {
 
 describe('UserSettingsModal Developer Mode', () => {
   beforeEach(() => {
-    localStorage.clear();
     useDeveloperModeStore.getState().reset();
-    useDeveloperModeStore.getState().setUser(mocks.auth.user.id);
   });
 
   afterEach(() => {
@@ -253,7 +256,6 @@ describe('UserSettingsModal Developer Mode', () => {
     cleanup();
     mocks.ui.modalData = {};
     useDeveloperModeStore.getState().reset();
-    localStorage.clear();
   });
 
   it('lists Developer for everyone and hides Bots while the mode is off', async () => {

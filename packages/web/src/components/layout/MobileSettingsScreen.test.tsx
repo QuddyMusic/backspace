@@ -37,7 +37,7 @@ const mocks = vi.hoisted(() => {
   };
 
   return {
-    ui: { pushMobileScreen: vi.fn(), popMobileScreen: vi.fn() },
+    ui: { pushMobileScreen: vi.fn(), popMobileScreen: vi.fn(), addToast: vi.fn() },
     auth: { user },
     // useInstanceUpdateBadge reads these three; no update is pending, so no dot.
     settings: {
@@ -89,7 +89,11 @@ vi.mock('../../stores/updateStore', () => ({
 }));
 
 vi.mock('../../api/client', () => ({
-  api: { instance: { info: () => Promise.resolve(mocks.instanceInfo) } },
+  api: {
+    instance: { info: () => Promise.resolve(mocks.instanceInfo) },
+    // The server answers with the stored value, which the switch then shows.
+    users: { update: (data: { developerMode?: boolean }) => Promise.resolve({ developerMode: data.developerMode }) },
+  },
 }));
 
 // Only the two Desktop panels are exercised here, so every other panel and the
@@ -177,16 +181,13 @@ describe('MobileSettingsScreen Desktop entry', () => {
 
 describe('MobileSettingsScreen Developer entries', () => {
   beforeEach(() => {
-    localStorage.clear();
     useDeveloperModeStore.getState().reset();
-    useDeveloperModeStore.getState().setUser(mocks.auth.user.id);
   });
 
   afterEach(() => {
     // Unmount first: resetting the store under a mounted screen re-renders it outside act().
     cleanup();
     useDeveloperModeStore.getState().reset();
-    localStorage.clear();
   });
 
   it('lists Developer always and Bots only while the mode is on', () => {

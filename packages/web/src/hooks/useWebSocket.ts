@@ -286,7 +286,7 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
         // Whose acknowledgements to read: the store cannot import authStore
         // without dragging the audio pipeline into every settings test.
         useSettingsStore.getState().setUpdateAckUser(event.user.id);
-        useDeveloperModeStore.getState().setUser(event.user.id);
+        useDeveloperModeStore.getState().setEnabled(event.user.developerMode === true);
         // This is what moved the release lookup off the Updates panel: the dot
         // has to be able to appear before an admin ever navigates there. Gated
         // on the flag this event just delivered, not on store state.
@@ -737,6 +737,10 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
           break;
         }
         setUser(event.user);
+        // Another device switched Developer Mode: the account has one value.
+        if (event.user.developerMode !== undefined) {
+          useDeveloperModeStore.getState().setEnabled(event.user.developerMode);
+        }
       }
       {
         // The true home's row of a replicated session carries the choice too.

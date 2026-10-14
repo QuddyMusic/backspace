@@ -1,11 +1,32 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { api } from '../../../api/client';
 import { Toggle } from '../../ui/Toggle';
 import { useDeveloperModeStore } from '../../../stores/developerModeStore';
+import { useUIStore } from '../../../stores/uiStore';
 
 export function DeveloperPanel() {
   const { t } = useTranslation(['settings']);
   const enabled = useDeveloperModeStore((s) => s.enabled);
   const setEnabled = useDeveloperModeStore((s) => s.setEnabled);
+  const addToast = useUIStore((s) => s.addToast);
+  const [saving, setSaving] = useState(false);
+
+  // The switch moves only once the server has stored it: the value belongs to
+  // the account, and another device must see the same one.
+  const change = async (next: boolean) => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const updated = await api.users.update({ developerMode: next });
+      setEnabled(updated.developerMode === true);
+    } catch (err) {
+      console.error('Failed to update Developer Mode:', err);
+      addToast(t('settings:developer.mode.saveFailed'), 'warning', 4000);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -16,7 +37,7 @@ export function DeveloperPanel() {
             <div className="text-sm text-txt-primary">{t('settings:developer.mode.label')}</div>
             <div className="text-xs text-txt-tertiary mt-0.5">{t('settings:developer.mode.description')}</div>
           </div>
-          <Toggle enabled={enabled} onChange={setEnabled} ariaLabel={t('settings:developer.mode.label')} />
+          <Toggle enabled={enabled} onChange={change} disabled={saving} ariaLabel={t('settings:developer.mode.label')} />
         </div>
       </div>
     </div>

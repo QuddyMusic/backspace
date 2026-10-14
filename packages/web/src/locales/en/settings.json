@@ -486,7 +486,8 @@
     "title": "Developer",
     "mode": {
       "label": "Developer Mode",
-      "description": "Show developer tools, such as the Bots tab, in settings. Turning it off only hides them; your bots keep running."
+      "description": "Show developer tools, such as the Bots tab, in settings. Turning it off only hides them; your bots keep running.",
+      "saveFailed": "Could not save the setting. Try again."
     }
   }
 }

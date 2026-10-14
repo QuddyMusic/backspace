@@ -31,6 +31,8 @@ export interface User {
   homeUserId: string | null;
   replicatedInstances: ReplicatedInstance[];
   showActivity?: boolean;
+  /** Self-view only: Developer Mode is on, which shows the Bots tab in settings. Stored with the account, so every device agrees. */
+  developerMode?: boolean;
   /** Self-view only: this federated account's home instance was reset/lost — it now operates as a sovereign local account (detach spec). */
   federationHomeOrphaned?: boolean;
   /**
@@ -916,6 +918,7 @@ export interface UpdateUserRequest {
   profileUpdatedAt?: number;
   discoverable?: boolean;
   showActivity?: boolean;
+  developerMode?: boolean;
 }
 
 export interface UpdateMemberRequest {

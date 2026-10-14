@@ -31,6 +31,8 @@ export const users = sqliteTable('users', {
   profileUpdatedAt: integer('profile_updated_at'),
   passwordChangedAt: integer('password_changed_at'),
   showActivity: integer('show_activity').notNull().default(1),
+  /** 1 = the account turned Developer Mode on: shows the Bots tab in its settings. Self-view only, never relayed. */
+  developerMode: integer('developer_mode').notNull().default(0),
   federationRegistryUpdatedAt: integer('federation_registry_updated_at').default(0),
   federationHealPending: integer('federation_heal_pending').default(0),
   federationHomeOrphaned: integer('federation_home_orphaned').default(0),

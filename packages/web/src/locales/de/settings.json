@@ -486,7 +486,8 @@
     "title": "Entwickler",
     "mode": {
       "label": "Entwicklermodus",
-      "description": "Zeigt Entwicklerwerkzeuge, etwa den Tab „Bots“, in den Einstellungen an. Beim Ausschalten werden sie nur ausgeblendet; deine Bots laufen weiter."
+      "description": "Zeigt Entwicklerwerkzeuge, etwa den Tab „Bots“, in den Einstellungen an. Beim Ausschalten werden sie nur ausgeblendet; deine Bots laufen weiter.",
+      "saveFailed": "Die Einstellung konnte nicht gespeichert werden. Versuche es erneut."
     }
   }
 }

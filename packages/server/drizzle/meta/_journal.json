@@ -232,6 +232,13 @@
       "when": 1791864640234,
       "tag": "0032_bots",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1791971435284,
+      "tag": "0033_developer_mode",
+      "breakpoints": true
     }
   ]
 }

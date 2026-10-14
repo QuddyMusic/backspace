@@ -10,7 +10,7 @@ Source files:
 - `packages/server/src/utils/auth.ts` -- `tokenFromAuthHeader` (`Bearer` / `Bot`)
 - `packages/server/src/routes/auth.ts` -- `POST /api/auth/register` with `botProof`
 - `packages/server/src/routes/federation/handlers/attach.ts` -- `verify-attach-proof` answers `isBot`
-- `packages/web/src/components/modals/settingsPanels/BotsPanel.tsx` -- Settings > Bots, shown only while Settings > Developer > Developer Mode is on (`stores/developerModeStore.ts`, a per-account, per-browser UI switch; it does not restrict the API)
+- `packages/web/src/components/modals/settingsPanels/BotsPanel.tsx` -- Settings > Bots, shown only while Settings > Developer > Developer Mode is on (`stores/developerModeStore.ts` mirrors `users.developer_mode`, stored with the account so every device agrees and written through `PATCH /api/users/@me { developerMode }`; it only shows or hides the tab and does not restrict the API)
 - `packages/server/src/routes/botCommands.ts`, `routes/interactions.ts`, `utils/botAuth.ts` -- slash commands
 - `packages/server/src/ws/handler.ts`, `ws/events.ts` -- bot voice seats (`botJoinRoom`, `bot_voice_join`)
 - `packages/web/src/components/chat/CommandPopover.tsx` -- the command lists in the message box

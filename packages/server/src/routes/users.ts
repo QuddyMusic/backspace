@@ -218,7 +218,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.patch<{ Body: UpdateUserRequest }>('/api/users/@me', { preHandler: authenticate }, async (request, reply) => {
-    const { displayName, avatar, banner, accentColor, avatarColor, bio, customStatus, status, replicatedInstances, homeUserId, profileUpdatedAt, discoverable, showActivity } = request.body;
+    const { displayName, avatar, banner, accentColor, avatarColor, bio, customStatus, status, replicatedInstances, homeUserId, profileUpdatedAt, discoverable, showActivity, developerMode } = request.body;
     const db = getDb();
 
     const updateData: Record<string, string | null | undefined> = {};
@@ -470,6 +470,13 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
       (updateData as Record<string, unknown>).showActivity = showActivity ? 1 : 0;
     }
 
+    if (developerMode !== undefined) {
+      if (typeof developerMode !== 'boolean') {
+        return sendError(reply, 400, 'validation_failed', { field: 'developerMode', reason: 'must be a boolean' });
+      }
+      (updateData as Record<string, unknown>).developerMode = developerMode ? 1 : 0;
+    }
+
     if (Object.keys(updateData).length === 0 && chosenStatus === undefined) {
       return sendError(reply, 400, 'no_fields_to_update');
     }
@@ -545,6 +552,12 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     }
 
     const sanitized = sanitizeUser(updatedUser, true);
+
+    // Developer Mode is private to the account: only its own sockets hear of it,
+    // so another device switches the Bots tab without a reload. Never relayed.
+    if (developerMode !== undefined && !hasProfileChange) {
+      connectionManager.sendToUser(sanitized.id, { type: 'user_updated' as const, user: sanitized });
+    }
 
     // Broadcast user_updated for profile field changes
     if (hasProfileChange) {
