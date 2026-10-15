@@ -43,7 +43,7 @@ Authorization: Bot <token>
 |--------|------|------|--------|
 | GET | `/api/bots` | -- | `{ bots: BotSummary[] }` |
 | POST | `/api/bots` | `{ name }` | 201 `{ bot, token }` (5 per 15 min); the token is the bot's first `bsb_` token |
-| PATCH | `/api/bots/:id` | `{ displayName?, avatar? }` | `{ bot }` |
+| PATCH | `/api/bots/:id` | `{ displayName?, avatar? }` | `{ bot }` (`avatar`: a bare filename of the owner's own upload that no message holds, or the current avatar, or `null`; anything else is `avatar_url_invalid`) |
 | POST | `/api/bots/:id/token` | -- | `{ token, federation }` (5 per 15 min): revokes all tokens, cuts the bot off on other instances, issues one new token |
 | GET | `/api/bots/:id/tokens` | -- | `{ tokens: BotTokenSummary[], legacy }` (30 per 15 min; no secrets; `legacy` is true while the bot still runs on its old JWT and holds no token) |
 | POST | `/api/bots/:id/tokens` | `{ name? }` | 201 `{ id, name, createdAt, lastUsedAt, token }` (5 per 15 min; 400 `bot_token_name_invalid` / `bot_token_limit_reached`) |

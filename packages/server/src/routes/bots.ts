@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { sendError } from '../utils/httpErrors.js';
@@ -45,6 +45,17 @@ const BOT_SEARCH_MIN_QUERY = 2;
 const BOT_SEARCH_MAX_QUERY = 32;
 /** A bare upload filename: starts alphanumeric, so `..` and dotfiles cannot pass. */
 const AVATAR_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/;
+
+/** Whether `filename` is an upload of `userId` that no channel or DM message holds yet. */
+function isOwnLooseUpload(filename: string, userId: string): boolean {
+  const row = getDb().select({ id: schema.attachments.id }).from(schema.attachments).where(and(
+    eq(schema.attachments.filename, filename),
+    eq(schema.attachments.uploaderId, userId),
+    isNull(schema.attachments.messageId),
+    isNull(schema.attachments.dmMessageId),
+  )).get();
+  return row !== undefined;
+}
 /** Same palette as registration (routes/auth.ts). */
 const AVATAR_COLORS = ['mint', 'sky', 'lavender', 'coral', 'rose', 'teal', 'amber'] as const;
 
@@ -234,6 +245,12 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
         if (!AVATAR_FILE_RE.test(bare) || !fs.existsSync(path.join(config.uploadDir, bare))) {
           return sendError(reply, 400, 'avatar_url_invalid');
         }
+        // The file must be the owner's own upload that no message holds (or the
+        // bot's current avatar): any other file on disk belongs to someone else,
+        // and taking it would let a later change of avatar delete it.
+        if (bare !== bot.avatar && !isOwnLooseUpload(bare, request.userId)) {
+          return sendError(reply, 400, 'avatar_url_invalid');
+        }
         newAvatar = bare;
       } else {
         return sendError(reply, 400, 'avatar_url_invalid');
@@ -253,10 +270,10 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
       await deleteUploadFile(bot.avatar);
       deleteAttachmentByFilename(bot.avatar);
     }
-    if (typeof newAvatar === 'string') {
-      // The upload's attachment record is redundant once users.avatar holds it
-      // (same handling as PATCH /users/@me).
-      if (typeof avatar === 'string' && avatar.includes('/api/uploads/')) deleteAttachmentByFilename(avatar);
+    if (typeof newAvatar === 'string' && newAvatar !== bot.avatar) {
+      // The upload's attachment record is redundant once users.avatar holds it,
+      // and must go: a message could otherwise still claim the file.
+      deleteAttachmentByFilename(newAvatar);
       await resizeProfileImage(path.join(config.uploadDir, newAvatar), 'avatar');
     }
 
