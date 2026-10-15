@@ -184,6 +184,8 @@ POST /api/livekit/token   { channelId }   → { token, url }
 
 The call works for a bot exactly as for a person (a role without SPEAK or STREAM limits what the token may publish). One LiveKit connection per room, publishing one audio track each, is how a bot plays different audio in different channels; the track is produced by the bot's own code with a LiveKit client library, which the server neither provides nor needs. Which channel a command belongs to is the bot's decision as well: the interaction names the invoker, and `voice_state_update` and the `ready` payload say in which voice channel that person sits (`examples/bots/voice.mjs`).
 
+**SPEAK and mute.** Whether a bot may speak is judged per channel (a role or channel override without SPEAK). A seat in such a channel is shown as muted there and only there: the bot's seats in other channels, also of the same space, keep their own state. `voice_permission_muted` carries the `channelId` of the seat. The track the bot publishes is limited by its LiveKit token as for a person. A moderator's server mute / deafen (`voice_space_mute`) targets the one room a person is in and does not reach bot seats; it is not built.
+
 ### When a seat ends
 
 The bot leaves a seat with `bot_voice_leave`. All its seats end 5 seconds after its last socket closes, and at once when its token is regenerated or revoked or the account deleted, and the seats of one space end when the bot is removed from that space, kicked or banned.

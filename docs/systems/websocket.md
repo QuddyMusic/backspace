@@ -387,7 +387,7 @@ takes the client out of it (`teardownDmCall`).
 | `space_voice_state` | spaceId, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates | the joining user, or a member whose access changed. Scoped per-space voice-presence snapshot pushed when a user joins a space mid-session, after `space_access_changed` (see below), and to each member who can see a voice channel after an override on it or its category changed or it moved to another category (spaces.md, "Channel/Category Permission Overrides"). |
 | `voice_space_muted` | userId, channelId, spaceId, muted | space |
 | `voice_space_deafened` | userId, channelId, spaceId, deafened | space |
-| `voice_permission_muted` | userId, spaceId, muted | space |
+| `voice_permission_muted` | userId, spaceId, channelId?, muted | space (`channelId` only for a bot seat: the mute is that channel's alone) |
 | `voice_moved` | userId, oldChannelId, newChannelId | user (target) |
 | `voice_disconnected` | userId, channelId, reason? | user (target) |
 reason: `'displaced'` (new tab) | `'session_closed'`

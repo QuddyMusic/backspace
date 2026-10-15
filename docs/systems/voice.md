@@ -336,6 +336,7 @@ Three independent muting mechanisms:
 - `checkVoicePermissions(spaceId)` re-evaluates all users in space voice
 - NOT persisted — derived from role permissions on demand
 - Broadcasts `voice_permission_muted`
+- **A bot seat (`bot_voice_join`) is judged per channel.** A bot sits in several channels of a space at once and SPEAK is computed per channel, so its flag is kept per seat (`botSeatPermissionMuted`, key `roomId:botId`), not per space. The event then carries `channelId`; `space_voice_state` / `ready` list it as `spaceVoiceStates["spaceId:botId:channelId"]`. A bot muted in one channel is not muted in its others; leaving the muted seat sends `muted: false` for that channel, and the space-wide flags of the bot are cleared only when its last seat in the space ends. The web client checks both keys through `isPermissionMutedIn` (`utils/permissionMute.ts`). Server mute and deafen by a moderator are not available for bot seats (see bots.md, 5c).
 
 **Effective state:** `effectiveMuted = isMuted || spaceMuted || permissionMuted`
 

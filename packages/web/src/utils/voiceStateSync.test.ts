@@ -13,6 +13,7 @@ vi.mock('../audio/AudioManager', () => ({
 
 import { useVoiceStore } from '../stores/voiceStore';
 import { applySpaceVoiceState } from './voiceStateSync';
+import { isPermissionMutedIn } from './permissionMute';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -65,5 +66,34 @@ describe('applySpaceVoiceState', () => {
     expect(s.spaceMutedUserIds.has('sp-other:uX')).toBe(true);  // untouched
     expect(s.spaceMutedUserIds.has('sp1:uStale')).toBe(false);  // cleared (authoritative re-sync)
     expect(s.spaceMutedUserIds.has('sp1:uNew')).toBe(true);
+  });
+});
+
+describe('permission mute of a bot seat', () => {
+  it('keeps the per-channel key apart from the per-space key and re-syncs it', () => {
+    const snap = (keys: string[]) => ({
+      spaceId: 'sp1',
+      voiceStates: { chA: ['bot'], chB: ['bot'] },
+      voiceChannelElapsedSeconds: {},
+      voiceUserStates: {},
+      spaceVoiceStates: Object.fromEntries(keys.map((k) => [k, { spaceMuted: false, spaceDeafened: false, permissionMuted: true }])),
+    });
+    applySpaceVoiceState(snap(['sp1:bot:chA']));
+    const muted = useVoiceStore.getState().permissionMutedUserIds;
+    expect(isPermissionMutedIn(muted, 'sp1', 'bot', 'chA')).toBe(true);
+    expect(isPermissionMutedIn(muted, 'sp1', 'bot', 'chB')).toBe(false);
+
+    applySpaceVoiceState(snap([]));
+    expect(useVoiceStore.getState().permissionMutedUserIds.size).toBe(0);
+  });
+
+  it('voice_permission_muted with a channel mutes that channel only, and lifts it the same way', () => {
+    const { setPermissionMutedUser } = useVoiceStore.getState();
+    setPermissionMutedUser('sp1', 'bot', true, 'chA');
+    let muted = useVoiceStore.getState().permissionMutedUserIds;
+    expect([...muted]).toEqual(['sp1:bot:chA']);
+    setPermissionMutedUser('sp1', 'bot', false, 'chA');
+    muted = useVoiceStore.getState().permissionMutedUserIds;
+    expect(muted.size).toBe(0);
   });
 });

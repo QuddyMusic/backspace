@@ -168,6 +168,13 @@ class ConnectionManager implements ReplicaSessionHost {
   private spaceDeafenedUsers: Set<string> = new Set(); // Stores spaceId:userId
   // Permission-muted users (SPEAK permission revoked while in voice)
   private permissionMutedUsers: Set<string> = new Set(); // Stores spaceId:userId
+  /**
+   * Permission mute of a bot SEAT (`bot_voice_join`), keyed `roomId:botId`. A bot
+   * sits in several channels at once and SPEAK is computed per channel, so the
+   * per-space flag above cannot hold it: muted in one channel must not mean
+   * muted in the others. A person (one room at a time) keeps the per-space flag.
+   */
+  private botSeatPermissionMuted: Set<string> = new Set();
   // The specific WebSocket that initiated voice_join / DM call for this user.
   // When THIS socket closes, voice cleanup enters the reconnect grace period.
   private voiceWs: Map<string, WebSocket> = new Map();
@@ -603,6 +610,14 @@ class ConnectionManager implements ReplicaSessionHost {
       const meta = room.metadata as SpaceRoomMeta;
       if (meta.spaceId !== spaceId) continue;
       for (const participantId of room.participants) {
+        if (this.isBotSeat(participantId, room.roomId)) {
+          // A bot seat is muted per channel: key `spaceId:botId:channelId`.
+          if (this.isBotSeatPermissionMuted(room.roomId, participantId)) {
+            const seatKey = `${spaceId}:${participantId}:${room.roomId}`;
+            spaceVoiceStates[seatKey] = { spaceMuted: false, spaceDeafened: false, permissionMuted: true };
+          }
+          continue;
+        }
         if (this.isPermissionMuted(spaceId, participantId)) {
           const key = `${spaceId}:${participantId}`;
           const existing = spaceVoiceStates[key] ?? { spaceMuted: false, spaceDeafened: false, permissionMuted: false };
@@ -1234,6 +1249,21 @@ class ConnectionManager implements ReplicaSessionHost {
     return this.permissionMutedUsers.has(`${spaceId}:${userId}`);
   }
 
+  /** Whether the bot holds a `bot_voice_join` seat in this room. */
+  isBotSeat(botId: string, roomId: string): boolean {
+    return this.botRooms.get(botId)?.has(roomId) ?? false;
+  }
+
+  setBotSeatPermissionMuted(roomId: string, botId: string, muted: boolean): void {
+    const key = `${roomId}:${botId}`;
+    if (muted) this.botSeatPermissionMuted.add(key);
+    else this.botSeatPermissionMuted.delete(key);
+  }
+
+  isBotSeatPermissionMuted(roomId: string, botId: string): boolean {
+    return this.botSeatPermissionMuted.has(`${roomId}:${botId}`);
+  }
+
   getAllVoiceUserStates(): Map<string, { isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }> {
     return this.voiceUserStates;
   }
@@ -1265,6 +1295,14 @@ class ConnectionManager implements ReplicaSessionHost {
     return true;
   }
 
+  private botHasSeatInSpace(botId: string, spaceId: string): boolean {
+    for (const roomId of this.botRooms.get(botId) ?? []) {
+      const meta = this.voiceRooms.get(roomId)?.metadata as SpaceRoomMeta | undefined;
+      if (meta?.spaceId === spaceId) return true;
+    }
+    return false;
+  }
+
   /** Takes a bot out of one voice room. Returns the room, or null when it was not in it. */
   botLeaveRoom(botId: string, roomId: string): VoiceRoom | null {
     const rooms = this.botRooms.get(botId);
@@ -1274,7 +1312,12 @@ class ConnectionManager implements ReplicaSessionHost {
     if (!room) return null;
     room.participants.delete(botId);
     if (room.roomType === 'space') {
-      this.clearSpaceVoiceState((room.metadata as SpaceRoomMeta).spaceId, botId);
+      const spaceId = (room.metadata as SpaceRoomMeta).spaceId;
+      if (this.botSeatPermissionMuted.delete(`${roomId}:${botId}`)) {
+        this.sendToSpace(spaceId, { type: 'voice_permission_muted', userId: botId, spaceId, channelId: roomId, muted: false });
+      }
+      // Space-wide flags belong to the bot's other seats in this space too.
+      if (!this.botHasSeatInSpace(botId, spaceId)) this.clearSpaceVoiceState(spaceId, botId);
     }
     // Lazy-created space rooms disappear with their last participant.
     if (room.participants.size === 0 && room.roomType === 'space') this.voiceRooms.delete(roomId);

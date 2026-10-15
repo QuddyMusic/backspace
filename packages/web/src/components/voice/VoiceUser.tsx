@@ -8,6 +8,7 @@ import { useSpaceStore } from '../../stores/spaceStore';
 import { useVoiceParticipantMeta } from '../../hooks/useVoiceParticipantMeta';
 import { getActiveRoom, setCameraSubscription } from '../../hooks/useLiveKit';
 import type { UserTile } from '../../hooks/useLiveKit';
+import { isPermissionMutedIn } from '../../utils/permissionMute';
 
 interface VoiceUserProps {
   tile: UserTile;
@@ -195,7 +196,7 @@ export function VoiceUser({ tile, large }: VoiceUserProps) {
             {(() => {
               const isSpaceMutedUser = spaceId ? spaceMutedUserIds.has(`${spaceId}:${participant.userId}`) : false;
               const isSpaceDeafenedUser = spaceId ? spaceDeafenedUserIds.has(`${spaceId}:${participant.userId}`) : false;
-              const isPermissionMutedUser = spaceId ? permissionMutedUserIds.has(`${spaceId}:${participant.userId}`) : false;
+              const isPermissionMutedUser = isPermissionMutedIn(permissionMutedUserIds, spaceId, participant.userId, currentVoiceChannelId);
               const effectivelyMuted = participant.isMuted || isSpaceMutedUser || isSpaceDeafenedUser || isPermissionMutedUser;
               const effectivelyDeafened = (isLocal ? isDeafened : participant.isDeafened) || isSpaceDeafenedUser;
               return (

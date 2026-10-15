@@ -793,7 +793,7 @@ export type ServerEvent =
   | { type: 'join_request_declined'; request: JoinRequest }
   | { type: 'voice_space_muted'; userId: string; channelId: string; spaceId: string; muted: boolean }
   | { type: 'voice_space_deafened'; userId: string; channelId: string; spaceId: string; deafened: boolean }
-  | { type: 'voice_permission_muted'; userId: string; spaceId: string; muted: boolean }
+  | { type: 'voice_permission_muted'; userId: string; spaceId: string; /** Set for a bot seat: the mute is that channel's only. */ channelId?: string; muted: boolean }
   | { type: 'voice_moved'; userId: string; oldChannelId: string; newChannelId: string }
   | { type: 'voice_disconnected'; userId: string; channelId: string; reason?: 'displaced' | 'session_closed' | 'rejected' }
   | { type: 'user_updated'; user: User }

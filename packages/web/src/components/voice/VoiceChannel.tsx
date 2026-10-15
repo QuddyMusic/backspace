@@ -8,6 +8,7 @@ import { VoiceUserRow } from './VoiceUserRow';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '../../i18n/formatters';
 import { useSharedSecondBeat } from '../../hooks/useSharedSecondBeat';
+import { isPermissionMutedIn } from '../../utils/permissionMute';
 
 const EMPTY_VOICE_USERS: string[] = [];
 
@@ -223,7 +224,7 @@ export function VoiceChannel({ channelId, channelName, onClick, locked, canManag
             const spaceId = channelToSpaceMap.get(channelId);
             const isSpaceMuted = spaceMutedUserIds.has(`${spaceId}:${userId}`);
             const isSpaceDeafened = spaceDeafenedUserIds.has(`${spaceId}:${userId}`);
-            const isPermissionMuted = permissionMutedUserIds.has(`${spaceId}:${userId}`);
+            const isPermissionMuted = isPermissionMutedIn(permissionMutedUserIds, spaceId, userId, channelId);
             const participantConnectionQuality = participant?.isLocal
               ? localConnectionQuality
               : participant

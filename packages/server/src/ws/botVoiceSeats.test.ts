@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { and, eq } from 'drizzle-orm';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -128,5 +129,97 @@ describe('voice_join after bot_voice_join', () => {
     expect(cm.getUserRoom(BOT)).toBeNull();
     expect(cm.getBotRoomIds(BOT)).toEqual([VOICE_A]);
     expect(sendToRoom).not.toHaveBeenCalled();
+  });
+});
+
+/** SPEAK is computed per channel, so a bot's mute is a property of one seat. */
+describe('permission mute of a bot seat', () => {
+  const denySpeak = (channelId: string, userId: string = BOT) =>
+    testDb.insert(schema.channelOverrides).values({
+      channelId, targetType: 'member', targetId: userId, allow: '0', deny: PermissionBits.SPEAK.toString(),
+    }).run();
+  const allowSpeak = (channelId: string, userId: string = BOT) =>
+    testDb.delete(schema.channelOverrides).where(and(eq(schema.channelOverrides.channelId, channelId), eq(schema.channelOverrides.targetId, userId))).run();
+  const muteEvents = (spy: { mock: { calls: unknown[][] } }) =>
+    spy.mock.calls.map((c) => c[1] as { type: string; channelId?: string; muted?: boolean }).filter((e) => e.type === 'voice_permission_muted');
+
+  it('muted without SPEAK in one channel stays unmuted in the other', async () => {
+    denySpeak(VOICE_A);
+    const { cm, handleClientEvent } = await load();
+    const sendToSpace = vi.spyOn(cm, 'sendToSpace');
+    handleClientEvent({ type: 'bot_voice_join', channelId: VOICE_A }, BOT, 'bot', ws, false);
+    handleClientEvent({ type: 'bot_voice_join', channelId: VOICE_B }, BOT, 'bot', ws, false);
+
+    expect(cm.isBotSeatPermissionMuted(VOICE_A, BOT)).toBe(true);
+    expect(cm.isBotSeatPermissionMuted(VOICE_B, BOT)).toBe(false);
+    expect(cm.isPermissionMuted(SPACE, BOT)).toBe(false);
+    expect(muteEvents(sendToSpace)).toEqual([{ type: 'voice_permission_muted', userId: BOT, spaceId: SPACE, channelId: VOICE_A, muted: true }]);
+
+    const snap = cm.buildSpaceVoiceState(SPACE, 'owner').spaceVoiceStates;
+    expect(snap[`${SPACE}:${BOT}:${VOICE_A}`]).toMatchObject({ permissionMuted: true });
+    expect(snap[`${SPACE}:${BOT}:${VOICE_B}`]).toBeUndefined();
+    expect(snap[`${SPACE}:${BOT}`]).toBeUndefined();
+  });
+
+  it('leaving the other channel keeps the mute; leaving the muted one lifts it for that channel', async () => {
+    denySpeak(VOICE_A);
+    const { cm, handleClientEvent } = await load();
+    handleClientEvent({ type: 'bot_voice_join', channelId: VOICE_A }, BOT, 'bot', ws, false);
+    handleClientEvent({ type: 'bot_voice_join', channelId: VOICE_B }, BOT, 'bot', ws, false);
+
+    handleClientEvent({ type: 'bot_voice_leave', channelId: VOICE_B }, BOT, 'bot', ws, false);
+    expect(cm.isBotSeatPermissionMuted(VOICE_A, BOT)).toBe(true);
+
+    const sendToSpace = vi.spyOn(cm, 'sendToSpace');
+    handleClientEvent({ type: 'bot_voice_leave', channelId: VOICE_A }, BOT, 'bot', ws, false);
+    expect(cm.isBotSeatPermissionMuted(VOICE_A, BOT)).toBe(false);
+    expect(muteEvents(sendToSpace)).toEqual([{ type: 'voice_permission_muted', userId: BOT, spaceId: SPACE, channelId: VOICE_A, muted: false }]);
+  });
+
+  it('a role change re-judges every seat on its own channel', async () => {
+    const { cm, handleClientEvent } = await load();
+    const { checkVoicePermissions } = await import('./events.js');
+    handleClientEvent({ type: 'bot_voice_join', channelId: VOICE_A }, BOT, 'bot', ws, false);
+    handleClientEvent({ type: 'bot_voice_join', channelId: VOICE_B }, BOT, 'bot', ws, false);
+    expect(muteEvents(vi.spyOn(cm, 'sendToSpace'))).toEqual([]);
+
+    denySpeak(VOICE_B);
+    const sendToSpace = vi.spyOn(cm, 'sendToSpace');
+    checkVoicePermissions(SPACE);
+    expect(cm.isBotSeatPermissionMuted(VOICE_B, BOT)).toBe(true);
+    expect(cm.isBotSeatPermissionMuted(VOICE_A, BOT)).toBe(false);
+    expect(muteEvents(sendToSpace)).toEqual([{ type: 'voice_permission_muted', userId: BOT, spaceId: SPACE, channelId: VOICE_B, muted: true }]);
+
+    allowSpeak(VOICE_B);
+    sendToSpace.mockClear();
+    checkVoicePermissions(SPACE);
+    expect(cm.isBotSeatPermissionMuted(VOICE_B, BOT)).toBe(false);
+    expect(muteEvents(sendToSpace)).toEqual([{ type: 'voice_permission_muted', userId: BOT, spaceId: SPACE, channelId: VOICE_B, muted: false }]);
+  });
+
+  it('leaving one seat keeps the space-wide flags while another seat of the space remains', async () => {
+    const { cm, handleClientEvent } = await load();
+    handleClientEvent({ type: 'bot_voice_join', channelId: VOICE_A }, BOT, 'bot', ws, false);
+    handleClientEvent({ type: 'bot_voice_join', channelId: VOICE_B }, BOT, 'bot', ws, false);
+    cm.setSpaceMuted(SPACE, BOT, true);
+
+    handleClientEvent({ type: 'bot_voice_leave', channelId: VOICE_A }, BOT, 'bot', ws, false);
+    expect(cm.isSpaceMuted(SPACE, BOT)).toBe(true);
+
+    handleClientEvent({ type: 'bot_voice_leave', channelId: VOICE_B }, BOT, 'bot', ws, false);
+    expect(cm.isSpaceMuted(SPACE, BOT)).toBe(false);
+  });
+
+  it('a person keeps the per-space flag and an event without a channel', async () => {
+    const now = Date.now();
+    testDb.insert(schema.users).values({ id: 'p1', username: 'p1', passwordHash: 'x', homeUserId: 'p1', homeInstance: null, createdAt: now }).run();
+    testDb.insert(schema.spaceMembers).values({ spaceId: SPACE, userId: 'p1', joinedAt: now }).run();
+    denySpeak(VOICE_A, 'p1');
+    const { cm, handleClientEvent } = await load();
+    const sendToSpace = vi.spyOn(cm, 'sendToSpace');
+    handleClientEvent({ type: 'voice_join', channelId: VOICE_A }, 'p1', 'p1', ws, false);
+
+    expect(cm.isPermissionMuted(SPACE, 'p1')).toBe(true);
+    expect(muteEvents(sendToSpace)).toEqual([{ type: 'voice_permission_muted', userId: 'p1', spaceId: SPACE, muted: true }]);
   });
 });

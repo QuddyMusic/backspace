@@ -45,8 +45,25 @@ export function checkVoicePermissions(spaceId: string): void {
     for (const userId of room.participants) {
       const perms = computePermissions(userId, spaceId, roomId);
       const canSpeak = (perms & PermissionBits.SPEAK) !== 0n || (perms & PermissionBits.ADMINISTRATOR) !== 0n;
-      const wasMuted = connectionManager.isPermissionMuted(spaceId, userId);
       const shouldMute = !canSpeak;
+
+      // A bot seat is judged per channel: another seat of the same bot, in a
+      // channel where it may speak, must not change this one.
+      if (connectionManager.isBotSeat(userId, roomId)) {
+        if (shouldMute !== connectionManager.isBotSeatPermissionMuted(roomId, userId)) {
+          connectionManager.setBotSeatPermissionMuted(roomId, userId, shouldMute);
+          connectionManager.sendToSpace(spaceId, {
+            type: 'voice_permission_muted',
+            userId,
+            spaceId,
+            channelId: roomId,
+            muted: shouldMute,
+          });
+        }
+        continue;
+      }
+
+      const wasMuted = connectionManager.isPermissionMuted(spaceId, userId);
 
       if (shouldMute !== wasMuted) {
         connectionManager.setPermissionMuted(spaceId, userId, shouldMute);
@@ -588,9 +605,10 @@ function handleBotVoiceJoin(event: Record<string, unknown>, userId: string): voi
   // A bot has no SPEAK-less listener mode of its own: a role without SPEAK mutes it like anyone.
   const perms = computePermissions(userId, spaceId, channelId);
   const canSpeak = (perms & PermissionBits.SPEAK) !== 0n || (perms & PermissionBits.ADMINISTRATOR) !== 0n;
-  connectionManager.setPermissionMuted(spaceId, userId, !canSpeak);
+  // Kept per seat: muted here says nothing about the bot's other channels.
+  connectionManager.setBotSeatPermissionMuted(channelId, userId, !canSpeak);
   if (!canSpeak) {
-    connectionManager.sendToSpace(spaceId, { type: 'voice_permission_muted', userId, spaceId, muted: true });
+    connectionManager.sendToSpace(spaceId, { type: 'voice_permission_muted', userId, spaceId, channelId, muted: true });
   }
 }
 

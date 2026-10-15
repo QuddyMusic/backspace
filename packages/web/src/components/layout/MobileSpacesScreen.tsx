@@ -27,6 +27,7 @@ import { getSpaceChannelLocation } from '../../hooks/useNotificationSettings';
 import { ChannelMutedIndicator } from '../notifications/ChannelMutedIndicator';
 import { NotificationSettingsModal, type NotificationSettingsModalTarget } from '../notifications/NotificationSettingsModal';
 import { describeCodedError } from '../../i18n/errors';
+import { isPermissionMutedIn } from '../../utils/permissionMute';
 
 export function MobileSpacesScreen() {
   const { t } = useTranslation(['spaces', 'common']);
@@ -640,7 +641,7 @@ export function MobileSpacesScreen() {
               const isScreenSharing = wsStatus?.isScreenSharing ?? false;
               const isSpaceMuted = spaceMutedUserIds.has(`${spaceId}:${userId}`);
               const isSpaceDeafened = spaceDeafenedUserIds.has(`${spaceId}:${userId}`);
-              const isPermissionMuted = permissionMutedUserIds.has(`${spaceId}:${userId}`);
+              const isPermissionMuted = isPermissionMutedIn(permissionMutedUserIds, spaceId, userId, channel.id);
 
               return (
                 <div

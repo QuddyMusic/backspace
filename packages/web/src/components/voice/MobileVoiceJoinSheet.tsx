@@ -6,6 +6,7 @@ import { useVoiceStore } from '../../stores/voiceStore';
 import { useSpaceStore } from '../../stores/spaceStore';
 import { useDragToClose } from '../../hooks/useDragToClose';
 import { VoiceUserRow } from './VoiceUserRow';
+import { isPermissionMutedIn } from '../../utils/permissionMute';
 
 /**
  * Permission state for the in-sheet camera preview. Mirrors the smaller
@@ -552,7 +553,7 @@ export function MobileVoiceJoinSheet({
                 const isScreenSharing = wsStatus?.isScreenSharing ?? false;
                 const isSpaceMuted = spaceMutedUserIds.has(`${spaceId}:${userId}`);
                 const isSpaceDeafened = spaceDeafenedUserIds.has(`${spaceId}:${userId}`);
-                const isPermMuted = permissionMutedUserIds.has(`${spaceId}:${userId}`);
+                const isPermMuted = isPermissionMutedIn(permissionMutedUserIds, spaceId, userId, channelId);
 
                 return (
                   <div key={userId} className="py-1.5 rounded-lg">

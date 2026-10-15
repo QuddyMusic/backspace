@@ -795,7 +795,7 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
 
     case 'voice_permission_muted': {
       const { setPermissionMutedUser } = useVoiceStore.getState();
-      setPermissionMutedUser(event.spaceId, event.userId, event.muted);
+      setPermissionMutedUser(event.spaceId, event.userId, event.muted, event.channelId);
       const myPermMuteId = isHome ? useAuthStore.getState().user?.id : getMyUserIdForOrigin(origin);
       if (event.userId === myPermMuteId) broadcastVoiceStatus();
       break;

@@ -221,7 +221,8 @@ export interface VoiceState {
   clearSpaceVoiceStates: () => void;
   // Permission mute state (SPEAK permission revoked while in voice)
   permissionMutedUserIds: Set<string>; // Stores "spaceId:userId"
-  setPermissionMutedUser: (spaceId: string, userId: string, muted: boolean) => void;
+  /** `channelId` is set for a bot seat: the mute then belongs to that channel only. */
+  setPermissionMutedUser: (spaceId: string, userId: string, muted: boolean, channelId?: string) => void;
   getVoiceUsers: (channelId: string) => string[];
   clearAllVoiceUsers: () => void;
   resetSession: () => void;
@@ -660,10 +661,10 @@ export const useVoiceStore = create<VoiceState>()(
       clearSpaceVoiceStates: () => set({ spaceMutedUserIds: new Set(), spaceDeafenedUserIds: new Set(), permissionMutedUserIds: new Set() }),
 
       permissionMutedUserIds: new Set(),
-      setPermissionMutedUser: (spaceId, userId, muted) => {
+      setPermissionMutedUser: (spaceId, userId, muted, channelId) => {
         set((state) => {
           const newSet = new Set(state.permissionMutedUserIds);
-          const key = `${spaceId}:${userId}`;
+          const key = channelId ? `${spaceId}:${userId}:${channelId}` : `${spaceId}:${userId}`;
           if (muted) newSet.add(key); else newSet.delete(key);
           return { permissionMutedUserIds: newSet };
         });
