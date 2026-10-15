@@ -14,9 +14,8 @@ import type { CallRelayResult, CallFanoutFailure } from '../utils/federationOutb
 import { mapCallReasonToEventReason } from '../utils/federationOutbox.js';
 import { callRelayActor, fanOutCallEvent, relayCallEvent, userRelayIdentity, type CallRelayEventType } from '../utils/callFanout.js';
 import { sanitizeUser } from '../utils/sanitize.js';
-import { collectProfileBroadcastTargetIds } from '../utils/userDeletion.js';
-import { applyChosenStatus } from './presence.js';
-import { presenceUpdateFor, validateActivities } from './presenceEvent.js';
+import { applyChosenStatus, publishActivities } from './presence.js';
+import { validateActivities } from './presenceEvent.js';
 import { deleteAttachmentFiles } from '../utils/fileCleanup.js';
 import { resolveEmbeds, reResolveEmbeds, embedRowToEmbed } from '../utils/embedResolver.js';
 import { appendMutationLog, dmMessageFederationRef, dmMessageMutationTarget, queueOutboxEvent, queueDmRelay, queueDmMessageDeleteRelay, getGroupDmTargetOrigins, sendCallRelay, sendTypingRelay, queueReadStateRelay } from '../utils/federationOutbox.js';
@@ -514,18 +513,7 @@ function handleActivityUpdate(event: Record<string, unknown>, userId: string): v
     return;
   }
 
-  connectionManager.setUserActivities(userId, activities);
-  const status = connectionManager.getUserStatus(userId);
-
-  const payload = presenceUpdateFor(userId, status, activities);
-  const targets = collectProfileBroadcastTargetIds(userId);
-  for (const uid of targets) connectionManager.sendToUser(uid, payload);
-  connectionManager.sendToUser(userId, payload);
-
-  // S2S: broadcast to peers (activities + current status); see queueOutboxEvent.
-  void import('../utils/federationPresence.js').then(({ queuePresenceRelay }) => {
-    try { queuePresenceRelay(userId, status as 'online' | 'idle' | 'dnd' | 'offline', activities); } catch (e) { console.warn('[ws] queuePresenceRelay(activity) failed', e); }
-  });
+  publishActivities(userId, activities);
 }
 
 // ─── Voice Handlers (Unified Room API) ─────────────────────────────────────

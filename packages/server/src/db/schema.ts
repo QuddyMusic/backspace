@@ -41,6 +41,13 @@ export const users = sqliteTable('users', {
   /** users.id of the human who created the bot. No FK: tombstoneUser keeps the row. */
   botOwnerId: text('bot_owner_id'),
   /**
+   * A bot's stored status, JSON `{ type, name }` (`BotActivity`), or null. Set
+   * by the owner on the bot's home; a host's federated account of the bot
+   * holds the home's copy (`profile_update`, by-home-id answers). Applied as
+   * the bot's live activity when it connects (ws/botActivity.ts).
+   */
+  botActivity: text('bot_activity'),
+  /**
    * The identity a detached account (`federation_home_orphaned = 1`) had before
    * it was detached: its former home instance and its id there. Detaching
    * moves `home_instance`/`home_user_id` here and clears them, so the row is

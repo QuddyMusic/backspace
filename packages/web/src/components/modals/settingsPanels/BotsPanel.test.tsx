@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   createToken: vi.fn(),
   revokeToken: vi.fn(),
   regenerateToken: vi.fn(),
+  update: vi.fn(),
 }));
 
 vi.mock('react-i18next', () => ({
@@ -21,6 +22,7 @@ vi.mock('../../../api/client', () => ({
       createToken: mocks.createToken,
       revokeToken: mocks.revokeToken,
       regenerateToken: mocks.regenerateToken,
+      update: mocks.update,
     },
     uploads: { url: (p: string) => p },
   },
@@ -42,6 +44,8 @@ const bot: BotSummary = {
   displayName: 'Echo_bot',
   avatar: null,
   avatarColor: '#123456',
+  bio: null,
+  activity: null,
   createdAt: 1_700_000_000_000,
 };
 
@@ -153,5 +157,58 @@ describe('BotsPanel layout', () => {
     fireEvent.click(within(card).getByText('settings:bots.actions.delete'));
     expect(within(card).getByText('settings:bots.actions.confirmDelete')).toBeTruthy();
     expect(within(card).queryByText('settings:bots.actions.delete')).toBeNull();
+  });
+});
+
+describe('BotsPanel about and status', () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset());
+    mocks.list.mockResolvedValue({ bots: [bot] });
+  });
+  afterEach(() => cleanup());
+
+  const openEditor = async () => {
+    render(<BotsPanel />);
+    const card = await screen.findByRole('listitem', { name: 'Echo_bot' });
+    fireEvent.click(within(card).getByText('settings:bots.actions.edit'));
+    return card;
+  };
+
+  it('saves the about text and a status with the name', async () => {
+    const saved = { ...bot, bio: 'Echoes what you say', activity: { type: 'listening' as const, name: 'you' } };
+    mocks.update.mockResolvedValue({ bot: saved });
+    const card = await openEditor();
+
+    fireEvent.change(within(card).getByLabelText('settings:bots.edit.bioLabel'), { target: { value: '  Echoes what you say ' } });
+    fireEvent.change(within(card).getByLabelText('settings:bots.status.label'), { target: { value: 'listening' } });
+    fireEvent.change(within(card).getByLabelText('settings:bots.status.textLabel'), { target: { value: ' you ' } });
+    fireEvent.click(within(card).getByText('settings:bots.actions.save'));
+
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('b1', {
+      displayName: 'Echo_bot',
+      bio: 'Echoes what you say',
+      activity: { type: 'listening', name: 'you' },
+    }));
+    expect(await within(card).findByText('settings:bots.status.display.listening')).toBeTruthy();
+  });
+
+  it('does not save a status type without its text', async () => {
+    const card = await openEditor();
+    fireEvent.change(within(card).getByLabelText('settings:bots.status.label'), { target: { value: 'playing' } });
+    expect(within(card).getByText('settings:bots.actions.save')).toBeDisabled();
+    fireEvent.keyDown(within(card).getByLabelText('settings:bots.edit.nameLabel'), { key: 'Enter' });
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
+  it('clears the status when "No status" is chosen', async () => {
+    mocks.list.mockResolvedValue({ bots: [{ ...bot, activity: { type: 'playing', name: 'chess' } }] });
+    mocks.update.mockResolvedValue({ bot });
+    const card = await openEditor();
+    expect((within(card).getByLabelText('settings:bots.status.textLabel') as HTMLInputElement).value).toBe('chess');
+
+    fireEvent.change(within(card).getByLabelText('settings:bots.status.label'), { target: { value: 'none' } });
+    fireEvent.click(within(card).getByText('settings:bots.actions.save'));
+
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('b1', expect.objectContaining({ activity: null, bio: null })));
   });
 });

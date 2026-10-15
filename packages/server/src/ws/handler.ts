@@ -40,6 +40,7 @@ import { memberRolesView, rolesForViewer } from '../utils/permissionDataView.js'
 import { canCountUnread, readyUnreadCounts, unreadCountFollowUp } from './channelUnreadCounts.js';
 import { userWrittenMessages } from '../db/userWrittenMessages.js';
 import { isBotTokenString, isRetiredLegacyBotJwt, verifyBotToken } from '../utils/botTokens.js';
+import { botActivityAsLive, parseStoredBotActivity } from '../utils/botActivity.js';
 
 // ─── Heartbeat State ──────────────────────────────────────────────────────────
 const wsIsAlive: WeakMap<WebSocket, boolean> = new WeakMap();
@@ -1701,6 +1702,28 @@ class WsRateLimiter {
   }
 }
 
+/**
+ * When a bot account's socket authenticates: if the account shows activities
+ * and has no live ones yet (no other session of it reported any), its stored
+ * status (`users.bot_activity`, the home's copy on a host) becomes its live
+ * activity. Returns the seeded list, or null when nothing was seeded. Does not
+ * broadcast: the connect path announces the presence with these activities.
+ * A bot's own `activity_update` replaces the seed until its next connection.
+ */
+export function seedStoredBotActivity(row: {
+  id: string;
+  isBot: number;
+  showActivity: number;
+  botActivity: string | null;
+}): Activity[] | null {
+  if (row.isBot !== 1 || row.showActivity === 0) return null;
+  if (connectionManager.getUserActivities(row.id).length > 0) return null;
+  const live = botActivityAsLive(parseStoredBotActivity(row.botActivity));
+  if (live.length === 0) return null;
+  connectionManager.setUserActivities(row.id, live);
+  return live;
+}
+
 /** The `ready` payload for `userId`: everything a client needs to start, sent once per connection. */
 export function buildReadyPayload(userId: string): {
   user: User;
@@ -2307,6 +2330,10 @@ export async function registerWebSocket(app: FastifyInstance): Promise<void> {
           // Add connection
           connectionManager.addConnection(userId, ws);
 
+          // A bot shows its stored status while connected, unless another of its
+          // sessions already reported an activity (its code may have set one).
+          const seededActivities = seedStoredBotActivity(userRow);
+
           // Captured for the pong closure: `userId` is a mutable outer binding, so
           // its narrowing to a string does not survive into the callback.
           const activeUserId = userId;
@@ -2329,7 +2356,7 @@ export async function registerWebSocket(app: FastifyInstance): Promise<void> {
           }));
 
           // Broadcast the connect status to friends + DM co-members + space co-members.
-          const connectPayload = presenceUpdateFor(userId, connectStatus);
+          const connectPayload = presenceUpdateFor(userId, connectStatus, seededActivities ?? undefined);
           const connectTargets = collectProfileBroadcastTargetIds(userId);
           for (const uid of connectTargets) connectionManager.sendToUser(uid, connectPayload);
 

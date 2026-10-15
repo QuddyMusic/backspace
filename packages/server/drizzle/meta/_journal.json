@@ -267,6 +267,13 @@
       "when": 1792180050224,
       "tag": "0037_blocked_bots",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1792266450224,
+      "tag": "0038_bot_activity",
+      "breakpoints": true
     }
   ]
 }

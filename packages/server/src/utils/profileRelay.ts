@@ -2,6 +2,7 @@ import type { FederationProfileUpdatePayload } from '@backspace/shared';
 import type { schema } from '../db/index.js';
 import { getOurOrigin } from './federationAuth.js';
 import { appendMutationLog, isFederationRelayEnabled, queueOutboxEvent } from './federationOutbox.js';
+import { parseStoredBotActivity } from './botActivity.js';
 
 type UserRow = typeof schema.users.$inferSelect;
 
@@ -31,6 +32,9 @@ export function queueProfileUpdateRelay(user: UserRow): void {
     accentColor: user.accentColor,
     avatarColor: user.avatarColor,
     bio: user.bio,
+    // A bot's stored status is part of its profile, so a host's federated
+    // account of the bot shows it too. Null when cleared; absent for people.
+    ...(user.isBot === 1 ? { botActivity: parseStoredBotActivity(user.botActivity) } : {}),
   };
   const body = JSON.stringify({ profileUpdate: payload });
   appendMutationLog(user.id, user.id, 'profile_update', body, 'profile');

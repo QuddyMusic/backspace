@@ -45,6 +45,11 @@ vi.mock('../../ws/handler.js', () => ({
   },
 }));
 
+const applyStoredBotActivity = vi.fn();
+vi.mock('../../ws/presence.js', () => ({
+  applyStoredBotActivity: (...args: unknown[]) => applyStoredBotActivity(...args),
+}));
+
 const lookupCalls: string[] = [];
 const answers = new Map<string, LookupResult>();
 vi.mock('../../utils/federationLookup.js', async (importActual) => {
@@ -135,6 +140,7 @@ beforeEach(async () => {
   lookupCalls.length = 0;
   answers.clear();
   sendToUser.mockReset();
+  applyStoredBotActivity.mockReset();
   assetGate = null;
   serveImages = false;
   assetFetches.length = 0;
@@ -407,5 +413,69 @@ describe('the bot flag of a user homed elsewhere', () => {
     const { buildProfileSnapshot } = await import('../social.js');
     expect(buildProfileSnapshot(row('native-bot')).isBot).toBe(true);
     expect(buildProfileSnapshot(row('r-far')).isBot).toBeUndefined();
+  });
+});
+
+describe('the stored status of a bot homed elsewhere', () => {
+  const plain = { profileUpdatedAt: 5000, username: 'radio_bot', displayName: null, avatar: null, banner: null, avatarColor: null, bio: null };
+  const listening = { type: 'listening' as const, name: 'lofi radio' };
+
+  it('a newer profile stores it and shows it at once', async () => {
+    insertReplica({ id: 'r-bot', username: `radio_bot@${HOME}`, homeUserId: '7101', isBot: 1, profileUpdatedAt: 1000 });
+    const { applyHomeProfile } = await import('./profile.js');
+
+    await applyHomeProfile(row('r-bot'), { ...plain, botActivity: listening }, HOME_ORIGIN, testDb);
+
+    expect(JSON.parse(row('r-bot').botActivity ?? 'null')).toEqual(listening);
+    expect(applyStoredBotActivity).toHaveBeenCalledWith('r-bot', listening);
+  });
+
+  it('an older profile, an unsaid status or a malformed one keeps the stored status', async () => {
+    const stored = JSON.stringify(listening);
+    insertReplica({ id: 'r-bot', username: `radio_bot@${HOME}`, homeUserId: '7102', isBot: 1, profileUpdatedAt: 9000, botActivity: stored });
+    const { applyHomeProfile } = await import('./profile.js');
+
+    await applyHomeProfile(row('r-bot'), { ...plain, botActivity: null }, HOME_ORIGIN, testDb);
+    expect(row('r-bot').botActivity).toBe(stored);
+
+    await applyHomeProfile(row('r-bot'), { ...plain, profileUpdatedAt: 9500 }, HOME_ORIGIN, testDb);
+    expect(row('r-bot').botActivity).toBe(stored);
+    expect(row('r-bot').profileUpdatedAt).toBe(9500);
+
+    await applyHomeProfile(row('r-bot'), {
+      ...plain,
+      profileUpdatedAt: 9600,
+      botActivity: { type: 'streaming', name: 'x' } as unknown as typeof listening,
+    }, HOME_ORIGIN, testDb);
+    expect(row('r-bot').botActivity).toBe(stored);
+    expect(applyStoredBotActivity).not.toHaveBeenCalled();
+  });
+
+  it('a cleared status is cleared here too', async () => {
+    insertReplica({ id: 'r-bot', username: `radio_bot@${HOME}`, homeUserId: '7103', isBot: 1, profileUpdatedAt: 1000, botActivity: JSON.stringify(listening) });
+    const { applyHomeProfile } = await import('./profile.js');
+
+    await applyHomeProfile(row('r-bot'), { ...plain, botActivity: null }, HOME_ORIGIN, testDb);
+
+    expect(row('r-bot').botActivity).toBeNull();
+    expect(applyStoredBotActivity).toHaveBeenCalledWith('r-bot', null);
+  });
+
+  it('a person takes no status', async () => {
+    insertReplica({ id: 'r-ann', username: `ann@${HOME}`, homeUserId: '7104', profileUpdatedAt: 1000 });
+    const { applyHomeProfile } = await import('./profile.js');
+
+    await applyHomeProfile(row('r-ann'), { ...plain, username: 'ann', botActivity: listening }, HOME_ORIGIN, testDb);
+
+    expect(row('r-ann').botActivity).toBeNull();
+    expect(applyStoredBotActivity).not.toHaveBeenCalled();
+  });
+
+  it('a by-home-id answer carries it only when the home said it', async () => {
+    const { homeProfileFromAnswer } = await import('./profile.js');
+    const base = { displayName: null, avatar: null, avatarColor: null, banner: null, bio: null };
+    expect(homeProfileFromAnswer({ username: 'radio_bot', profile: { ...base, isBot: true, botActivity: listening } }).botActivity).toEqual(listening);
+    expect(homeProfileFromAnswer({ username: 'radio_bot', profile: { ...base, isBot: true, botActivity: null } }).botActivity).toBeNull();
+    expect('botActivity' in homeProfileFromAnswer({ username: 'ann', profile: base })).toBe(false);
   });
 });

@@ -277,6 +277,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   bot_blocked: 'This instance does not accept this bot',
   bot_block_not_federated: 'Only a bot from another instance can be blocked',
   blocked_bot_not_found: 'This bot is not blocked',
+  bot_activity_invalid: 'A bot status needs a type (custom, playing, listening or watching) and a text of 1 to {{max}} characters',
 };
 
 function fillPlaceholders(text: string, details: ErrorDetails | undefined): string {

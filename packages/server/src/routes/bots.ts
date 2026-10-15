@@ -7,7 +7,7 @@ import { tombstoneUser, collectProfileBroadcastTargetIds } from '../utils/userDe
 import { deleteUploadFile, deleteAttachmentByFilename } from '../utils/fileCleanup.js';
 import { connectionManager } from '../ws/handler.js';
 import { generateSnowflake } from '../utils/snowflake.js';
-import { BOT_NAME_MAX_LENGTH, BOT_NAME_MIN_LENGTH, BOT_NAME_SUFFIX, MAX_BOTS_PER_USER } from '@backspace/shared/src/constants.js';
+import { BOT_NAME_MAX_LENGTH, BOT_NAME_MIN_LENGTH, BOT_NAME_SUFFIX, MAX_BOTS_PER_USER, PROFILE_BIO_MAX_LENGTH } from '@backspace/shared/src/constants.js';
 import { collectBotFederationOrigins } from '../utils/botFederation.js';
 import { revokeBotWithRetry } from '../utils/botRevocationQueue.js';
 import {
@@ -25,6 +25,8 @@ import { config } from '../config.js';
 import { resizeProfileImage } from '../utils/thumbnail.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { queueProfileUpdateRelay } from '../utils/profileRelay.js';
+import { BOT_ACTIVITY_NAME_MAX_LENGTH, normalizeBotActivity, parseStoredBotActivity, serializeBotActivity } from '../utils/botActivity.js';
+import { applyStoredBotActivity } from '../ws/presence.js';
 import type {
   BotSearchResult,
   BotSummary,
@@ -66,6 +68,8 @@ function toSummary(row: typeof schema.users.$inferSelect): BotSummary {
     displayName: row.displayName,
     avatarColor: row.avatarColor,
     avatar: row.avatar,
+    bio: row.bio,
+    activity: parseStoredBotActivity(row.botActivity),
     createdAt: row.createdAt,
   };
 }
@@ -218,8 +222,8 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     const bot = findOwnedBot(request.userId, request.params.id);
     if (!bot) return sendError(reply, 404, 'bot_not_found');
 
-    const { displayName, avatar } = request.body ?? {};
-    const update: { displayName?: string; avatar?: string | null } = {};
+    const { displayName, avatar, bio, activity } = request.body ?? {};
+    const update: { displayName?: string; avatar?: string | null; bio?: string | null; botActivity?: string | null } = {};
 
     // The login (username) is deliberately not editable: it is the federation
     // identity peers and host accounts (`name@home`) are keyed on.
@@ -258,6 +262,29 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
       update.avatar = newAvatar;
     }
 
+    if (bio !== undefined) {
+      // As a person's bio (PATCH /api/users/@me): anything but text clears it.
+      const trimmed = typeof bio === 'string' ? bio.trim() : '';
+      if (trimmed.length > PROFILE_BIO_MAX_LENGTH) {
+        return sendError(reply, 400, 'bio_too_long', { max: PROFILE_BIO_MAX_LENGTH });
+      }
+      update.bio = trimmed.length > 0 ? trimmed : null;
+    }
+
+    // The stored status. It is part of the profile (relayed with it), so a
+    // host's federated account of the bot shows the same status there.
+    let newActivity: string | null | undefined;
+    if (activity !== undefined) {
+      if (activity === null) {
+        newActivity = null;
+      } else {
+        const normalized = normalizeBotActivity(activity);
+        if (!normalized) return sendError(reply, 400, 'bot_activity_invalid', { max: BOT_ACTIVITY_NAME_MAX_LENGTH });
+        newActivity = serializeBotActivity(normalized);
+      }
+      update.botActivity = newActivity;
+    }
+
     if (Object.keys(update).length === 0) {
       return sendError(reply, 400, 'no_fields_to_update');
     }
@@ -286,6 +313,11 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
       connectionManager.sendToUser(uid, { type: 'user_updated' as const, user: sanitizeUser(updated, uid === bot.id) });
     }
     queueProfileUpdateRelay(updated);
+    // Only a change of the status itself touches the live activity: saving the
+    // name or the "About" must not wipe a status the bot code set.
+    if (newActivity !== undefined && newActivity !== bot.botActivity) {
+      applyStoredBotActivity(bot.id, parseStoredBotActivity(newActivity));
+    }
 
     const response: UpdateBotResponse = { bot: toSummary(updated) };
     return reply.send(response);

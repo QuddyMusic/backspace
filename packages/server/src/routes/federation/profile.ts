@@ -9,10 +9,12 @@ import { collectProfileBroadcastTargetIds } from '../../utils/userDeletion.js';
 import { safeFetch } from '../../utils/ssrf.js';
 import { normalizeOriginForCompare } from '../../utils/federationAuth.js';
 import { connectionManager } from '../../ws/handler.js';
+import { applyStoredBotActivity } from '../../ws/presence.js';
+import { normalizeBotActivity, serializeBotActivity } from '../../utils/botActivity.js';
 import { and, eq, isNull, lt, or, sql, type SQL } from 'drizzle-orm';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import type { FederationRelayEvent, FederationRelayProfileSnapshot, FederationUserLookupProfile } from '@backspace/shared';
+import type { BotActivity, FederationRelayEvent, FederationRelayProfileSnapshot, FederationUserLookupProfile } from '@backspace/shared';
 import { extractDomain, resolveRelayActor } from './identity.js';
 import { announceUserUpdated, applyPlaceholderRename, handleFromHint } from './stubName.js';
 
@@ -251,6 +253,11 @@ export interface HomeProfile {
   bio: string | null;
   /** The home says the user is one of its bot accounts (`applyHomeBotFlag`). */
   isBot?: boolean | null;
+  /**
+   * A bot's stored status as its home holds it (null = none). Undefined means
+   * the home did not say (a person, or an older home): the stored value is kept.
+   */
+  botActivity?: BotActivity | null;
 }
 
 /** A `/users/by-home-id` answer's profile as a `HomeProfile`. */
@@ -266,6 +273,7 @@ export function homeProfileFromAnswer(answer: { username: string; profile: Feder
     avatarColor: profile.avatarColor,
     bio: profile.bio,
     ...(profile.isBot === true ? { isBot: true } : {}),
+    ...(profile.botActivity !== undefined ? { botActivity: profile.botActivity } : {}),
   };
 }
 
@@ -295,6 +303,17 @@ export function applyHomeBotFlag(
   if (!stored) return row;
   announceUserUpdated(stored);
   return stored;
+}
+
+/**
+ * A bot status as a home sent it: undefined when the home did not say or sent
+ * one that does not validate (the stored status is kept), null when it cleared
+ * it, else the validated status.
+ */
+function homeBotActivity(raw: BotActivity | null | undefined): BotActivity | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  return normalizeBotActivity(raw) ?? undefined;
 }
 
 /**
@@ -361,6 +380,10 @@ export async function applyHomeProfile(
     profileUpdatedAt: profile.profileUpdatedAt,
   };
   if (profile.accentColor !== undefined) updates.accentColor = profile.accentColor;
+  // Only a bot row takes a status, and only one that validates; a malformed
+  // one is treated as unsaid, so the stored status stays.
+  const botActivity = row.isBot === 1 ? homeBotActivity(profile.botActivity) : undefined;
+  if (botActivity !== undefined) updates.botActivity = serializeBotActivity(botActivity);
 
   // The version is checked again in the write: another apply for this row may
   // have written a newer one while the images downloaded.
@@ -384,6 +407,9 @@ export async function applyHomeProfile(
 
   const updated = db.select().from(schema.users).where(eq(schema.users.id, row.id)).get();
   if (!updated) return row;
+  if (botActivity !== undefined && updated.botActivity !== row.botActivity) {
+    applyStoredBotActivity(updated.id, botActivity);
+  }
   const userUpdatedEvent = { type: 'user_updated' as const, user: sanitizeUser(updated, false) };
   const targetUserIds = collectProfileBroadcastTargetIds(updated.id);
   targetUserIds.add(updated.id); // the row's own sessions (a federated account's other tabs)
@@ -448,6 +474,7 @@ export async function processProfileUpdateEvent(
     accentColor: payload.accentColor,
     avatarColor: payload.avatarColor,
     bio: payload.bio,
+    ...(payload.botActivity !== undefined ? { botActivity: payload.botActivity } : {}),
   }, sourceInstance, db);
 
   accepted.push(event.messageId);

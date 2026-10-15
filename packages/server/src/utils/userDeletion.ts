@@ -287,6 +287,7 @@ export function tombstoneUser(uid: string, options?: TombstoneOptions): string[]
       avatar: null,
       banner: null,
       bio: null,
+      botActivity: null,
       customStatus: null,
       accentColor: null,
       avatarColor: null,

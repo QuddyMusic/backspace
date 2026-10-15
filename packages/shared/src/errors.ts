@@ -49,6 +49,7 @@ export const ERROR_CODES = [
   'bot_blocked',
   'bot_block_not_federated',
   'blocked_bot_not_found',
+  'bot_activity_invalid',
 
   // Auth and accounts
   'username_required',

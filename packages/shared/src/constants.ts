@@ -100,8 +100,16 @@ export const BOT_TOKEN_IN_USE_CLOSE_CODE = 4409;
 export const BOT_NAME_SUFFIX = '_bot';
 export const BOT_NAME_MIN_LENGTH = 5;
 export const BOT_NAME_MAX_LENGTH = 32;
+/**
+ * The kinds of status an owner can set for a bot in Settings > Bots. A subset of
+ * `ActivityType`: `streaming` needs a live URL, which a stored status has not.
+ */
+export const BOT_ACTIVITY_TYPES = ['custom', 'playing', 'listening', 'watching'] as const;
 
 // ─── Account Constants ───────────────────────────────────────────────────────
+
+/** Longest profile bio ("About me", a bot's "About"), in characters after trim. */
+export const PROFILE_BIO_MAX_LENGTH = 190;
 
 /**
  * The fewest characters a password may have. The server refuses a shorter one

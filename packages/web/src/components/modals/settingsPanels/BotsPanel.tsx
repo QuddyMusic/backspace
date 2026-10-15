@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { BotSpaceOption, BotSummary, BotTokenSummary } from '@backspace/shared';
+import type { BotActivity, BotActivityType, BotSpaceOption, BotSummary, BotTokenSummary } from '@backspace/shared';
 import {
+  BOT_ACTIVITY_TYPES,
   BOT_NAME_MAX_LENGTH,
   BOT_NAME_SUFFIX,
   BOT_TOKEN_NAME_MAX_LENGTH,
   MAX_BOT_TOKENS_PER_BOT,
   MAX_BOTS_PER_USER,
+  PROFILE_BIO_MAX_LENGTH,
 } from '@backspace/shared/src/constants';
+import { ACTIVITY_LIMITS } from '@backspace/shared/src/activities.js';
 import { api } from '../../../api/client';
 import { describeError } from '../../../i18n/errors';
 import { useFormatters } from '../../../i18n/formatters';
@@ -28,6 +31,29 @@ const quietButtonClass =
 const dangerButtonClass =
   'px-3 py-1.5 rounded-md text-sm text-txt-danger hover:bg-accent-rose/10 transition-colors disabled:opacity-50';
 
+/** The status select: a stored type, or no status. */
+type StatusChoice = BotActivityType | 'none';
+
+const STATUS_TYPE_LABEL_KEYS = {
+  custom: 'settings:bots.status.types.custom',
+  playing: 'settings:bots.status.types.playing',
+  listening: 'settings:bots.status.types.listening',
+  watching: 'settings:bots.status.types.watching',
+} as const satisfies Record<BotActivityType, string>;
+
+const STATUS_DISPLAY_KEYS = {
+  custom: 'settings:bots.status.display.custom',
+  playing: 'settings:bots.status.display.playing',
+  listening: 'settings:bots.status.display.listening',
+  watching: 'settings:bots.status.display.watching',
+} as const satisfies Record<BotActivityType, string>;
+
+/** The status the editor describes, or null for none (no type, or no text). */
+function statusFromEditor(type: StatusChoice, text: string): BotActivity | null {
+  const name = text.trim();
+  return type === 'none' || name.length === 0 ? null : { type, name };
+}
+
 /** The editable part of a bot name: everything before the fixed `_bot` suffix. */
 function stemOf(value: string): string {
   const trimmed = value.trim();
@@ -47,6 +73,9 @@ export function BotsPanel() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [editBio, setEditBio] = useState('');
+  const [editStatusType, setEditStatusType] = useState<StatusChoice>('none');
+  const [editStatusText, setEditStatusText] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [avatarBotId, setAvatarBotId] = useState<string | null>(null);
   const [cropSrc, setCropSrc] = useState<string | null>(null);
@@ -122,9 +151,15 @@ export function BotsPanel() {
     }
   };
 
+  // A chosen status type needs its text; saving it empty would clear the status unasked.
+  const editValid = stemOf(editName).length > 0 && (editStatusType === 'none' || editStatusText.trim().length > 0);
+
   const startEdit = (bot: BotSummary) => {
     setEditingId(bot.id);
     setEditName(stemOf(bot.displayName || bot.username));
+    setEditBio(bot.bio ?? '');
+    setEditStatusType(bot.activity?.type ?? 'none');
+    setEditStatusText(bot.activity?.name ?? '');
     setConfirmDeleteId(null);
     setError(null);
   };
@@ -133,7 +168,12 @@ export function BotsPanel() {
     setBusy(true);
     setError(null);
     try {
-      const res = await api.bots.update(bot.id, { displayName: stemOf(editName) + BOT_NAME_SUFFIX });
+      const bio = editBio.trim();
+      const res = await api.bots.update(bot.id, {
+        displayName: stemOf(editName) + BOT_NAME_SUFFIX,
+        bio: bio.length > 0 ? bio : null,
+        activity: statusFromEditor(editStatusType, editStatusText),
+      });
       setBots((prev) => prev.map((b) => (b.id === bot.id ? res.bot : b)));
       setEditingId(null);
     } catch (err) {
@@ -431,7 +471,7 @@ export function BotsPanel() {
                             autoComplete="off"
                             onChange={(e) => setEditName(e.target.value)}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter' && stemOf(editName).length > 0 && !busy) void handleSaveEdit(bot);
+                              if (e.key === 'Enter' && editValid && !busy) void handleSaveEdit(bot);
                               if (e.key === 'Escape') setEditingId(null);
                             }}
                           />
@@ -447,17 +487,75 @@ export function BotsPanel() {
                         <div className="text-xs text-txt-tertiary truncate">
                           @{bot.username} · {t('settings:bots.list.createdOn', { date: formatMediumDate(bot.createdAt) })}
                         </div>
+                        {bot.activity && (
+                          <div className="text-xs text-txt-secondary truncate">
+                            {t(STATUS_DISPLAY_KEYS[bot.activity.type], { name: bot.activity.name })}
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
                 </div>
+
+                {editing && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs text-txt-secondary mb-1.5" htmlFor={`bot-bio-${bot.id}`}>
+                        {t('settings:bots.edit.bioLabel')}
+                      </label>
+                      <div className="relative">
+                        <textarea
+                          id={`bot-bio-${bot.id}`}
+                          className="input-standard w-full resize-none"
+                          rows={3}
+                          value={editBio}
+                          maxLength={PROFILE_BIO_MAX_LENGTH}
+                          placeholder={t('settings:bots.edit.bioPlaceholder')}
+                          onChange={(e) => setEditBio(e.target.value.slice(0, PROFILE_BIO_MAX_LENGTH))}
+                        />
+                        <span className="absolute bottom-2 right-2 text-[10px] text-txt-tertiary">
+                          {t('settings:bots.edit.bioCounter', { used: editBio.length, max: PROFILE_BIO_MAX_LENGTH })}
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-txt-secondary mb-1.5" htmlFor={`bot-status-type-${bot.id}`}>
+                        {t('settings:bots.status.label')}
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        <select
+                          id={`bot-status-type-${bot.id}`}
+                          className="input-standard appearance-none w-full sm:w-44"
+                          value={editStatusType}
+                          onChange={(e) => setEditStatusType(e.target.value as StatusChoice)}
+                        >
+                          <option value="none">{t('settings:bots.status.none')}</option>
+                          {BOT_ACTIVITY_TYPES.map((type) => (
+                            <option key={type} value={type}>{t(STATUS_TYPE_LABEL_KEYS[type])}</option>
+                          ))}
+                        </select>
+                        <input
+                          className="input-standard flex-1 min-w-0"
+                          aria-label={t('settings:bots.status.textLabel')}
+                          value={editStatusText}
+                          maxLength={ACTIVITY_LIMITS.MAX_NAME_LENGTH}
+                          disabled={editStatusType === 'none'}
+                          placeholder={t('settings:bots.status.placeholder')}
+                          autoComplete="off"
+                          onChange={(e) => setEditStatusText(e.target.value)}
+                        />
+                      </div>
+                      <div className="text-xs text-txt-tertiary mt-1">{t('settings:bots.status.hint')}</div>
+                    </div>
+                  </div>
+                )}
 
                 {editing ? (
                   <div className="flex flex-wrap items-center gap-1">
                     <button
                       type="button"
                       className={buttonClass}
-                      disabled={busy || stemOf(editName).length === 0}
+                      disabled={busy || !editValid}
                       onClick={() => void handleSaveEdit(bot)}
                     >
                       {t('settings:bots.actions.save')}

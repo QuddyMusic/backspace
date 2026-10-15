@@ -7,7 +7,7 @@ import { authenticate, verifyPassword, hashPassword, signJwt } from '../utils/au
 import { connectionManager } from '../ws/handler.js';
 import type { UpdateUserRequest, VerifyPasswordRequest, VerifyPasswordResponse, ChangePasswordRequest, ChangePasswordResponse, DeleteAccountRequest, FederationCredentialRequest, FederationCredentialResponse, ReplicatedInstance, SpaceLayoutItem, SpaceFolder, FederationIdentityDeleteRequest, FederationIdentityDeleteResponse, FederationIdentityDeleteResult, FederationProfileUpdatePayload } from '@backspace/shared';
 import { AVATAR_COLORS, isChosenUserStatus, type ChosenUserStatus } from '@backspace/shared';
-import { PASSWORD_MIN_LENGTH } from '@backspace/shared/src/constants.js';
+import { PASSWORD_MIN_LENGTH, PROFILE_BIO_MAX_LENGTH } from '@backspace/shared/src/constants.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { applyChosenStatus } from '../ws/presence.js';
 import { presenceUpdateFor } from '../ws/presenceEvent.js';
@@ -328,8 +328,8 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     if (bio !== undefined) {
       if (bio && typeof bio === 'string') {
         const trimmed = bio.trim();
-        if (trimmed.length > 190) {
-          return sendError(reply, 400, 'bio_too_long', { max: 190 });
+        if (trimmed.length > PROFILE_BIO_MAX_LENGTH) {
+          return sendError(reply, 400, 'bio_too_long', { max: PROFILE_BIO_MAX_LENGTH });
         }
         updateData.bio = trimmed || null;
       } else {

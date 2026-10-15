@@ -251,5 +251,6 @@
   "sticker_name_invalid": "Sticker names can be 1 to {{max}} characters on one line, with at least one visible character and no control characters.",
   "bot_blocked": "This instance does not accept this bot.",
   "bot_block_not_federated": "Only a bot from another instance can be blocked.",
-  "blocked_bot_not_found": "This bot is not blocked."
+  "blocked_bot_not_found": "This bot is not blocked.",
+  "bot_activity_invalid": "A bot status needs a type and a text of 1 to {{max}} characters."
 }

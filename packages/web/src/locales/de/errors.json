@@ -251,5 +251,6 @@
   "sticker_name_invalid": "Stickernamen dürfen 1 bis {{max}} Zeichen in einer Zeile haben, mindestens ein sichtbares Zeichen und keine Steuerzeichen.",
   "bot_blocked": "Diese Instanz akzeptiert diesen Bot nicht.",
   "bot_block_not_federated": "Nur ein Bot einer anderen Instanz kann gesperrt werden.",
-  "blocked_bot_not_found": "Dieser Bot ist nicht gesperrt."
+  "blocked_bot_not_found": "Dieser Bot ist nicht gesperrt.",
+  "bot_activity_invalid": "Ein Bot-Status braucht einen Typ und einen Text mit 1 bis {{max}} Zeichen."
 }

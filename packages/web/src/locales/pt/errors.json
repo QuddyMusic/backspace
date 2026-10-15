@@ -251,5 +251,6 @@
   "sticker_name_invalid": "O nome da figurinha pode ter de 1 a {{max}} caracteres em uma linha, com pelo menos um caractere visível e sem caracteres de controle.",
   "bot_blocked": "Esta instância não aceita este bot.",
   "bot_block_not_federated": "Somente um bot de outra instância pode ser bloqueado.",
-  "blocked_bot_not_found": "Este bot não está bloqueado."
+  "blocked_bot_not_found": "Este bot não está bloqueado.",
+  "bot_activity_invalid": "O status de um bot precisa de um tipo e de um texto de 1 a {{max}} caracteres."
 }

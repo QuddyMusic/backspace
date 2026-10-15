@@ -43,7 +43,7 @@ Authorization: Bot <token>
 |--------|------|------|--------|
 | GET | `/api/bots` | -- | `{ bots: BotSummary[] }` |
 | POST | `/api/bots` | `{ name }` | 201 `{ bot, token }` (5 per 15 min); the token is the bot's first `bsb_` token |
-| PATCH | `/api/bots/:id` | `{ displayName?, avatar? }` | `{ bot }` (`avatar`: a bare filename of the owner's own upload that no message holds, or the current avatar, or `null`; anything else is `avatar_url_invalid`) |
+| PATCH | `/api/bots/:id` | `{ displayName?, avatar?, bio?, activity? }` | `{ bot }` (`avatar`: a bare filename of the owner's own upload that no message holds, or the current avatar, or `null`; anything else is `avatar_url_invalid`. `bio`, `activity`: see "About and status" below) |
 | POST | `/api/bots/:id/token` | -- | `{ token, federation }` (5 per 15 min): revokes all tokens, cuts the bot off on other instances, issues one new token |
 | GET | `/api/bots/:id/tokens` | -- | `{ tokens: BotTokenSummary[], legacy }` (30 per 15 min; no secrets; `legacy` is true while the bot still runs on its old JWT and holds no token) |
 | POST | `/api/bots/:id/tokens` | `{ name? }` | 201 `{ id, name, createdAt, lastUsedAt, token }` (5 per 15 min; 400 `bot_token_name_invalid` / `bot_token_limit_reached`) |
@@ -54,11 +54,24 @@ Authorization: Bot <token>
 | POST | `/api/bots/:id/spaces` | `{ spaceId }` | `{ success }` (any native bot of this instance; MANAGE_SPACE in the space) |
 | DELETE | `/api/bots/:id/spaces/:spaceId` | -- | `{ success }` (the bot's owner, or MANAGE_SPACE in the space; the bot gets `member_left` and no further events of that space; its role assignments and per-member channel overrides in that space are deleted too, whichever path removed it: this route, a kick or a ban) |
 
-`BotSummary` is `{ id, username, displayName, avatarColor, avatar, createdAt }`. `avatar` is a bare upload filename (upload through tus first) or `null`. Errors use the project format `{ error, code, statusCode, details? }`; the codes specific to bots are `bot_not_found`, `bot_limit_reached`, `bot_name_invalid`, `bot_name_suffix_required`, `bots_native_only`, `bot_profile_owner_only`, `bot_home_not_peered`, `bot_proof_invalid`, `bot_account_required`, `bots_no_friends`, `bot_token_limit_reached`, `bot_token_not_found`, `bot_token_name_invalid`.
+`BotSummary` is `{ id, username, displayName, avatarColor, avatar, bio, activity, createdAt }`. `avatar` is a bare upload filename (upload through tus first) or `null`. Errors use the project format `{ error, code, statusCode, details? }`; the codes specific to bots are `bot_not_found`, `bot_limit_reached`, `bot_name_invalid`, `bot_name_suffix_required`, `bots_native_only`, `bot_profile_owner_only`, `bot_home_not_peered`, `bot_proof_invalid`, `bot_account_required`, `bots_no_friends`, `bot_token_limit_reached`, `bot_token_not_found`, `bot_token_name_invalid`, `bot_activity_invalid`.
 
 `BotTokenSummary` is `{ id, name, createdAt, lastUsedAt }`; `lastUsedAt` is `null` while the token was never used. Revoking one token (or adding the first one to a legacy bot) closes the bot's sockets, so a connection that authenticated with the revoked token ends at once; the other tokens reconnect. A single revoke does not touch the bot's accounts on other instances: those hold their own credentials, and only `POST /api/bots/:id/token` and deleting the bot cut them off.
 
 A name change or an avatar change is broadcast (`user_updated`) and relayed to peers as a `profile_update`, so the bot's accounts on other instances follow.
+
+### About and status
+
+The owner edits both in the bot's card in Settings > Bots.
+
+- **About** is the bot's ordinary profile `bio`: up to `PROFILE_BIO_MAX_LENGTH` (190) characters after trim, blank or `null` clears it, longer is `400 bio_too_long`. It shows wherever a person's bio shows and travels with the profile.
+- **Status** is `activity: BotActivity | null`, where `BotActivity` is `{ type, name }`, `type` one of `BOT_ACTIVITY_TYPES` (`custom`, `playing`, `listening`, `watching`; `streaming` needs a live URL, so it is the bot code's to set) and `name` 1-128 characters after trim; anything else is `400 bot_activity_invalid`. `null` clears it. It is stored in `users.bot_activity` and is part of the profile: the `profile_update` and the `/users/by-home-id` answer about a bot carry it as `botActivity`, so the bot's federated accounts on other instances hold the same status.
+
+The status is shown as the bot's live activity, so it reaches everyone through the ordinary `presence_update` (member list, profile, activity panel) and is not shown while the bot is offline:
+
+- When a bot socket authenticates (on the home or on a host) and the bot shows activities (`show_activity`) and has no live activity yet, the stored status becomes its live activity (`seedStoredBotActivity`, ws/handler.ts), and the connect presence carries it. A second session of the same bot keeps whatever the first one shows.
+- Saving a different status (or the home's copy of it reaching a host) while the bot is connected replaces its live activity at once, also one the bot code set (`applyStoredBotActivity`, ws/presence.ts). Saving the name, avatar or About leaves the live activity alone.
+- The bot code may still send `activity_update` (for example "Listening to" the current track). That replaces the stored status until the bot's next connection, when the stored status applies again.
 
 `federation` (token regeneration and deletion) lists, per instance the bot registered on, whether the account there was cut off (see 7).
 
@@ -248,6 +261,8 @@ Before migration 0035 a bot's token was a JWT valid for 3650 days. Such a bot ke
 ## 9. Database
 
 Migration `0032_bots.sql` adds to `users`: `is_bot` (INTEGER NOT NULL DEFAULT 0) and `bot_owner_id` (TEXT, the owner's user id) and an index `idx_users_bot_owner_id` on it. Nothing else is stored per bot; the avatar and display name are the ordinary `users` columns. The cascade and revocation rules are in 1 and 7.
+
+Migration `0038_bot_activity.sql` adds `users.bot_activity` (TEXT, JSON `{ type, name }`, nullable): the stored status (3, "About and status"). On a bot's federated account on another instance it holds the home's copy; tombstoning clears it.
 
 Migration `0035_bot_tokens.sql` adds `bot_tokens`: `id` (16 hex, PK, the public part of the token), `bot_id` (FK to `users`, cascade), `token_hash` (SHA-256 of the secret, hex), `name` (nullable), `created_at`, `last_used_at` (nullable); index `idx_bot_tokens_bot_id`. A bot's rows are deleted when the bot is tombstoned.
 

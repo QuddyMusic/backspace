@@ -481,7 +481,29 @@
     },
     "edit": {
       "nameLabel": "Display name",
-      "hint": "The username @{{username}} cannot be changed. Up to {{max}} characters."
+      "hint": "The username @{{username}} cannot be changed. Up to {{max}} characters.",
+      "bioLabel": "About",
+      "bioPlaceholder": "What the bot does, its commands, where to get help",
+      "bioCounter": "{{used}}/{{max}}"
+    },
+    "status": {
+      "label": "Status",
+      "none": "No status",
+      "textLabel": "Status text",
+      "placeholder": "What the bot shows next to its name",
+      "hint": "Shown while the bot is connected. The bot's code can replace it until it next connects.",
+      "types": {
+        "custom": "Custom",
+        "playing": "Playing",
+        "listening": "Listening to",
+        "watching": "Watching"
+      },
+      "display": {
+        "custom": "{{name}}",
+        "playing": "Playing {{name}}",
+        "listening": "Listening to {{name}}",
+        "watching": "Watching {{name}}"
+      }
     },
     "avatar": {
       "change": "Change avatar",

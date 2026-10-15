@@ -1627,6 +1627,11 @@ export interface FederationProfileUpdatePayload {
   accentColor: string | null;
   avatarColor: string | null;
   bio: string | null;
+  /**
+   * A bot's stored status (bots only, from homes that know it; null = none).
+   * Absent means the home did not say, and the receiver keeps what it stores.
+   */
+  botActivity?: BotActivity | null;
 }
 
 /**
@@ -1838,6 +1843,8 @@ export interface FederationUserLookupProfile {
   accentColor?: string | null;
   /** A bot account of the answering home (sent only when true, by homes that know bots). */
   isBot?: boolean | null;
+  /** A bot's stored status, as `FederationProfileUpdatePayload.botActivity`. */
+  botActivity?: BotActivity | null;
 }
 
 export type FederationUserLookupResponse =
@@ -2122,12 +2129,29 @@ export interface TelemetryStatus {
   askDue: boolean;
 }
 
+/** A bot status kind the owner can store (`BOT_ACTIVITY_TYPES`). */
+export type BotActivityType = 'custom' | 'playing' | 'listening' | 'watching';
+
+/**
+ * The status an owner stores for a bot. Shown as the bot's live activity while
+ * it is connected; the bot's own `activity_update` replaces it until the bot's
+ * next connection. `name` is 1–128 characters after trim.
+ */
+export interface BotActivity {
+  type: BotActivityType;
+  name: string;
+}
+
 export interface BotSummary {
   id: string;
   username: string;
   displayName: string | null;
   avatarColor: string | null;
   avatar: string | null;
+  /** "About": the bot's profile bio. */
+  bio: string | null;
+  /** The stored status, or null for none. */
+  activity: BotActivity | null;
   createdAt: number;
 }
 
@@ -2168,6 +2192,10 @@ export interface UpdateBotRequest {
   displayName?: string;
   /** Bare filename from an upload, or null to clear. */
   avatar?: string | null;
+  /** Up to `PROFILE_BIO_MAX_LENGTH` characters after trim; null or blank clears. */
+  bio?: string | null;
+  /** The stored status; null clears. Takes effect at once while the bot is connected. */
+  activity?: BotActivity | null;
 }
 
 export interface UpdateBotResponse {
