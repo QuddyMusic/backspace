@@ -1018,6 +1018,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
             selectedIndex={commandState.selectedIndex}
             onSelect={selectCommand}
             anchorRef={inputContainerRef}
+            origin={getChannelOrigin(channelId)}
           />
         )}
 
