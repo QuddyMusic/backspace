@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BotCommandListing, BotCommandOption } from '@backspace/shared';
-import { parseCommandArgs, remainingOptions, suggestOptions } from './commandArgs';
+import { parseCommandArgs, remainingOptions, suggestOptions, suggestValue, type CommandArgContext } from './commandArgs';
 
 function option(name: string, type: BotCommandOption['type'], required = false): BotCommandOption {
   return { name, description: name, type, required };
@@ -110,5 +110,62 @@ describe('suggestOptions', () => {
 
   it('prefers the command that was picked from the list', () => {
     expect(suggestOptions('/play ', [], play)).toMatchObject({ query: '', startIndex: 6 });
+  });
+});
+
+describe('typed values', () => {
+  const kick = listing('kick', [
+    option('who', 'user', true),
+    { ...option('where', 'channel'), channelTypes: ['voice'] },
+    option('group', 'role'),
+    option('reason', 'string'),
+  ]);
+  const context: CommandArgContext = {
+    users: [{ id: 'u1', username: 'bob' }, { id: 'u2', username: 'Ann' }],
+    roles: [{ id: 'r1', name: 'Mods' }, { id: 'r2', name: 'mods-old' }],
+    channels: [
+      { id: 'c1', name: 'lounge', type: 'voice' },
+      { id: 'c2', name: 'general', type: 'text' },
+      { id: 'c3', name: 'general', type: 'voice' },
+    ],
+  };
+
+  it('reads the tokens the picker writes', () => {
+    expect(parseCommandArgs(kick, 'who:<@u9> group:<@&r9> where:#lounge spamming', context)).toEqual({
+      ok: true,
+      options: { who: 'u9', group: 'r9', where: 'c1', reason: 'spamming' },
+    });
+  });
+
+  it('turns names written by hand into ids when exactly one matches', () => {
+    expect(parseCommandArgs(kick, 'who:@ann group:@mods where:general', context)).toEqual({
+      ok: true,
+      // Two channels are named general, but only one is a voice channel.
+      options: { who: 'u2', group: 'r1', where: 'c3' },
+    });
+  });
+
+  it('leaves an unknown name as written, for the server to refuse', () => {
+    expect(parseCommandArgs(kick, 'who:@nobody where:#general2', context)).toEqual({
+      ok: true,
+      options: { who: '@nobody', where: '#general2' },
+    });
+  });
+});
+
+describe('suggestValue', () => {
+  const ban = listing('ban', [option('who', 'user', true), option('silent', 'boolean'), option('reason', 'string')]);
+
+  it('opens while the value of a user, role, channel or boolean option is typed', () => {
+    expect(suggestValue('/ban who:', [ban], null)).toMatchObject({ query: '', startIndex: 9 });
+    expect(suggestValue('/ban who:@Bo', [ban], null)).toMatchObject({ query: 'bo', startIndex: 9 });
+    expect(suggestValue('/ban who:<@u1> silent:t', [ban], null)).toMatchObject({ query: 't', startIndex: 22 });
+  });
+
+  it('stays closed for a string option, a token, a quoted value and free text before', () => {
+    expect(suggestValue('/ban reason:', [ban], null)).toBeNull();
+    expect(suggestValue('/ban who:<@u1', [ban], null)).toBeNull();
+    expect(suggestValue('/ban who:"bo', [ban], null)).toBeNull();
+    expect(suggestValue('/ban hello who:', [ban], null)).toBeNull();
   });
 });

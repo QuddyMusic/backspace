@@ -6,6 +6,8 @@ import type {
   BotCommandOption,
   BotInteraction,
   BotInteractionOptionValue,
+  BotInteractionResolved,
+  ChannelType,
   ChatCommandsResponse,
   CreateInteractionRequest,
   CreateInteractionResponse,
@@ -17,11 +19,12 @@ import { requireBot } from '../utils/botAuth.js';
 import { sendError } from '../utils/httpErrors.js';
 import { getChannelSpaceId, hasPermission, isDmMember, isMember, PermissionBits } from '../utils/permissions.js';
 import { sanitizeUser } from '../utils/sanitize.js';
+import { roleView } from '../utils/permissionDataView.js';
 import { connectionManager } from '../ws/handler.js';
+import { COMMAND_STRING_OPTION_MAX } from '@backspace/shared/src/constants.js';
 
 const INTERACTION_TTL_MS = 15 * 60 * 1000;
 const MAX_RESPONSES = 5;
-const STRING_OPTION_MAX = 2000;
 /** A spent interaction is dropped by the first invocation that comes after this long. */
 const KEEP_AFTER_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
@@ -84,8 +87,63 @@ function botIdsInChat(chat: Chat): string[] {
     .all().map((r) => r.id);
 }
 
-/** The values of an invocation checked against the command's definition. */
-function checkOptions(defs: BotCommandOption[], given: unknown): Record<string, BotInteractionOptionValue> | Problem {
+interface CheckedOptions {
+  options: Record<string, BotInteractionOptionValue>;
+  resolved?: BotInteractionResolved;
+}
+
+/**
+ * The object a `user`, `channel` or `role` value names, in the chat the
+ * command is invoked in, or the reason it is refused. A user must be in the
+ * chat; a channel and a role must belong to the chat's space (a DM has none),
+ * and a channel must be one the invoker can see and of an accepted type. An id
+ * the invoker may not learn about answers like a missing one.
+ */
+function resolveTarget(
+  def: BotCommandOption,
+  id: string,
+  chat: Chat,
+  invokerId: string,
+  resolved: BotInteractionResolved,
+): string | null {
+  const db = getDb();
+  if (def.type === 'user') {
+    const row = db.select().from(schema.users)
+      .where(and(eq(schema.users.id, id), eq(schema.users.isDeleted, 0))).get();
+    const inChat = row !== undefined
+      && (chat.kind === 'channel' ? isMember(chat.spaceId, row.id) : isDmMember(chat.dmChannelId, row.id));
+    if (!row || !inChat) return 'must be a member of this chat';
+    (resolved.users ??= {})[row.id] = sanitizeUser(row);
+    return null;
+  }
+  if (chat.kind !== 'channel') return `a ${def.type} can only be chosen in a space`;
+  if (def.type === 'channel') {
+    const row = db.select().from(schema.channels)
+      .where(and(eq(schema.channels.id, id), eq(schema.channels.spaceId, chat.spaceId))).get();
+    if (!row || !hasPermission(invokerId, chat.spaceId, PermissionBits.VIEW_CHANNEL, row.id)) {
+      return 'must be a channel of this space';
+    }
+    const type = row.type as ChannelType;
+    if (def.channelTypes && !def.channelTypes.includes(type)) {
+      return `must be a channel of type ${def.channelTypes.join(' or ')}`;
+    }
+    (resolved.channels ??= {})[row.id] = { id: row.id, spaceId: row.spaceId, name: row.name, type };
+    return null;
+  }
+  const row = db.select().from(schema.roles)
+    .where(and(eq(schema.roles.id, id), eq(schema.roles.spaceId, chat.spaceId))).get();
+  if (!row) return 'must be a role of this space';
+  (resolved.roles ??= {})[row.id] = roleView(row, false);
+  return null;
+}
+
+/**
+ * The values of an invocation checked against the command's definition and
+ * coerced to what the bot receives: strings within their length, numbers
+ * within their range, ids of users, channels and roles the chat knows (with
+ * the objects in `resolved`), and one of the listed choices where there are.
+ */
+function checkOptions(defs: BotCommandOption[], given: unknown, chat: Chat, invokerId: string): CheckedOptions | Problem {
   const input = given === undefined || given === null ? {} : given;
   if (typeof input !== 'object' || Array.isArray(input)) return { field: 'options', reason: 'must be an object' };
   const record = input as Record<string, unknown>;
@@ -96,6 +154,7 @@ function checkOptions(defs: BotCommandOption[], given: unknown): Record<string, 
   }
 
   const out: Record<string, BotInteractionOptionValue> = {};
+  const resolved: BotInteractionResolved = {};
   for (const def of defs) {
     const field = `options.${def.name}`;
     const value = Object.prototype.hasOwnProperty.call(record, def.name) ? record[def.name] : undefined;
@@ -104,22 +163,31 @@ function checkOptions(defs: BotCommandOption[], given: unknown): Record<string, 
       continue;
     }
     if (def.type === 'string') {
-      if (typeof value !== 'string' || value.length === 0 || value.length > STRING_OPTION_MAX) {
-        return { field, reason: `must be a string of 1 to ${STRING_OPTION_MAX} characters` };
+      const min = def.minLength ?? 1;
+      const max = def.maxLength ?? COMMAND_STRING_OPTION_MAX;
+      if (typeof value !== 'string' || value.length < min || value.length > max) {
+        return { field, reason: `must be a string of ${min} to ${max} characters` };
       }
-    } else if (def.type === 'integer') {
-      if (typeof value !== 'number' || !Number.isSafeInteger(value)) return { field, reason: 'must be a safe integer' };
-    } else if (def.type === 'number') {
-      if (typeof value !== 'number' || !Number.isFinite(value)) return { field, reason: 'must be a finite number' };
-    } else if (typeof value !== 'boolean') {
-      return { field, reason: 'must be a boolean' };
+    } else if (def.type === 'integer' || def.type === 'number') {
+      const whole = def.type === 'integer';
+      if (typeof value !== 'number' || !(whole ? Number.isSafeInteger(value) : Number.isFinite(value))) {
+        return { field, reason: whole ? 'must be a safe integer' : 'must be a finite number' };
+      }
+      if (def.minValue !== undefined && value < def.minValue) return { field, reason: `must be at least ${def.minValue}` };
+      if (def.maxValue !== undefined && value > def.maxValue) return { field, reason: `must be at most ${def.maxValue}` };
+    } else if (def.type === 'boolean') {
+      if (typeof value !== 'boolean') return { field, reason: 'must be a boolean' };
+    } else {
+      if (typeof value !== 'string' || value.length === 0) return { field, reason: `must be the id of a ${def.type}` };
+      const refusal = resolveTarget(def, value, chat, invokerId, resolved);
+      if (refusal) return { field, reason: refusal };
     }
     if (def.choices && !def.choices.some((choice) => choice.value === value)) {
       return { field, reason: 'must be one of the listed choices' };
     }
     out[def.name] = value as BotInteractionOptionValue;
   }
-  return out;
+  return Object.keys(resolved).length > 0 ? { options: out, resolved } : { options: out };
 }
 
 /**
@@ -216,7 +284,7 @@ export async function interactionRoutes(app: FastifyInstance): Promise<void> {
     )).get();
     if (!definition) return sendError(reply, 404, 'command_not_found');
 
-    const checked = checkOptions(JSON.parse(definition.options) as BotCommandOption[], body.options);
+    const checked = checkOptions(JSON.parse(definition.options) as BotCommandOption[], body.options, chat, request.userId);
     if (isProblem(checked)) return sendError(reply, 400, 'validation_failed', { field: checked.field, reason: checked.reason });
 
     if (!connectionManager.hasLiveConnection(bot.id)) return sendError(reply, 409, 'bot_unavailable');
@@ -234,7 +302,7 @@ export async function interactionRoutes(app: FastifyInstance): Promise<void> {
       channelId: chat.kind === 'channel' ? chat.channelId : null,
       dmChannelId: chat.kind === 'dm' ? chat.dmChannelId : null,
       command: definition.name,
-      options: JSON.stringify(checked),
+      options: JSON.stringify(checked.options),
       createdAt: now,
       expiresAt,
     }).run();
@@ -242,7 +310,8 @@ export async function interactionRoutes(app: FastifyInstance): Promise<void> {
     const interaction: BotInteraction = {
       id,
       command: definition.name,
-      options: checked,
+      options: checked.options,
+      ...(checked.resolved ? { resolved: checked.resolved } : {}),
       user: sanitizeUser(caller),
       expiresAt,
       ...(chat.kind === 'channel'

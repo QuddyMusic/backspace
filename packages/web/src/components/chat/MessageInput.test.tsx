@@ -213,6 +213,35 @@ describe('MessageInput slash commands', () => {
     expect(useUIStore.getState().toasts).toEqual([expect.objectContaining({ message: 'Bot offline', type: 'warning' })]);
   });
 
+  it('offers the people of the chat for a user option and invokes with the picked id', async () => {
+    const poke = { ...play, id: 'cmd-2', name: 'poke', options: [{ name: 'who', description: 'Who', type: 'user', required: true }] };
+    vi.spyOn(api.commands, 'forChat').mockResolvedValue({ commands: [poke] } as never);
+    const invoke = vi.spyOn(api.commands, 'invoke').mockResolvedValue({ id: 'i1', expiresAt: 1 } as never);
+    render(<MessageInput channelId="dm-1" channelName="general" />);
+    const input = screen.getByRole('textbox');
+    fireEvent.change(input, { target: { value: '/', selectionStart: 1 } });
+    await waitFor(() => expect(api.commands.forChat).toHaveBeenCalled());
+    await act(async () => { await Promise.resolve(); });
+
+    // Picking the command opens the list of people at once.
+    fireEvent.change(input, { target: { value: '/po', selectionStart: 3 } });
+    fireEvent.click(await screen.findByText('/poke'));
+    expect(await screen.findByText('Alice')).toBeTruthy();
+
+    fireEvent.change(input, { target: { value: '/poke who:al', selectionStart: 12 } });
+    expect(await screen.findByText('Alice')).toBeTruthy();
+    fireEvent.keyDown(input, { key: 'Tab' });
+    await waitFor(() => expect(input).toHaveValue('/poke who:@Alice '));
+    expect(useComposerStore.getState().get('dm-1').draftText).toBe('/poke who:<@me> ');
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(expect.objectContaining({
+      command: 'poke',
+      options: { who: 'me' },
+      dmChannelId: 'dm-1',
+    })));
+  });
+
   it('asks for the command list again when a new command starts', async () => {
     const forChat = vi.spyOn(api.commands, 'forChat').mockResolvedValue({ commands: [play] } as never);
     render(<MessageInput channelId="dm-1" channelName="general" />);

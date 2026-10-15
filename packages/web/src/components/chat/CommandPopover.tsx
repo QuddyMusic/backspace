@@ -176,3 +176,66 @@ export function CommandOptionPopover({ options, selectedIndex, onSelect, anchorR
     </PopoverShell>
   );
 }
+
+/** One value the value popover offers for a typed option. */
+export interface CommandValueCandidate {
+  key: string;
+  /** What the row shows. */
+  label: string;
+  /** A second, dimmer line of the row (a handle, a channel type). */
+  detail?: string;
+  /** What picking the row writes into the draft after `name:`. */
+  insert: string;
+}
+
+interface CommandValuePopoverProps {
+  /** The option whose value is being picked: its name heads the list. */
+  optionName: string;
+  candidates: CommandValueCandidate[];
+  selectedIndex: number;
+  onSelect: (candidate: CommandValueCandidate) => void;
+  anchorRef: AnchorRef;
+}
+
+function ValueList({ optionName, candidates, selectedIndex, onSelect }: Omit<CommandValuePopoverProps, 'anchorRef'>) {
+  const mobile = useUIStore((s) => s.isMobile);
+  const selectedRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    selectedRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [selectedIndex]);
+
+  return (
+    <>
+      <div className="px-2 py-1.5 text-[11px] font-bold text-txt-tertiary uppercase tracking-wider">
+        {`${optionName}:`}
+      </div>
+      {candidates.map((candidate, i) => (
+        <div
+          key={candidate.key}
+          ref={i === selectedIndex ? selectedRef : undefined}
+          onClick={() => onSelect(candidate)}
+          className={rowClass(mobile, i === selectedIndex)}
+        >
+          <span className={`${mobile ? 'text-[15px]' : 'text-[14px]'} font-medium text-txt-primary truncate`}>
+            {candidate.label}
+          </span>
+          {candidate.detail && (
+            <span className="text-[12px] text-txt-tertiary truncate flex-1 min-w-0">{candidate.detail}</span>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** The values a typed slash command option may take: people, roles, channels or true/false. */
+export function CommandValuePopover({ optionName, candidates, selectedIndex, onSelect, anchorRef }: CommandValuePopoverProps) {
+  if (candidates.length === 0) return null;
+
+  return (
+    <PopoverShell anchorRef={anchorRef} enabled>
+      <ValueList optionName={optionName} candidates={candidates} selectedIndex={selectedIndex} onSelect={onSelect} />
+    </PopoverShell>
+  );
+}

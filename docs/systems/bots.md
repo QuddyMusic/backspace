@@ -138,13 +138,27 @@ A bot registers commands for itself. A person picks one in the message box (typi
 ### Registering
 
 ```
-PUT /api/bots/@me/commands   { commands: [ { name, description, options?: [ { name, description, type, required?, choices? } ] } ] }
+PUT /api/bots/@me/commands   { commands: [ { name, description, options?: [ { name, description, type, required?, choices?, minValue?, maxValue?, minLength?, maxLength?, channelTypes? } ] } ] }
 GET /api/bots/@me/commands   → { commands: BotCommand[] }
 ```
 
 Bot token only (`403 bot_account_required` for anyone else). `PUT` replaces the whole list in one call, so repeating it is harmless; a command that keeps its name keeps its id. 10 calls per 5 minutes.
 
-Rules: command and option names are 1 to 32 characters of `a-z 0-9 _ -` and unique; descriptions are 1 to 100 characters; at most 100 commands and 10 options per command; option types are `string`, `integer` (a safe integer), `number` and `boolean`; required options come before optional ones; a `string`, `integer` or `number` option may list up to 25 `choices` (`{ name, value }`, the value of the option's type, unique). A violation answers `400 validation_failed` and `details.field` names the field, for example `commands[0].options[1].name`.
+Rules: command and option names are 1 to 32 characters of `a-z 0-9 _ -` and unique; descriptions are 1 to 100 characters; at most 100 commands and 10 options per command; required options come before optional ones; a `string`, `integer` or `number` option may list up to 25 `choices` (`{ name, value }`, the value of the option's type, unique).
+
+### Option types
+
+| Type | Value the bot receives | Limits the bot may set |
+|------|------------------------|------------------------|
+| `string` | text, 1 to 2000 characters by default | `minLength` (0-2000), `maxLength` (1-2000) |
+| `integer` | a safe integer | `minValue`, `maxValue` (safe integers) |
+| `number` | a finite number | `minValue`, `maxValue` |
+| `boolean` | `true` or `false` | -- |
+| `user` | the id of a person or bot in the chat | -- |
+| `channel` | the id of a channel of the chat's space the invoker can see | `channelTypes`: a non-empty list of `text`, `voice` |
+| `role` | the id of a role of the chat's space | -- |
+
+A limit on the wrong type, a pair that crosses (`minValue` above `maxValue`), and limits together with `choices` are refused, as are `choices` on `boolean`, `user`, `channel` and `role` options. `channel` and `role` values exist only in a space: invoked from a DM, a value is refused. A violation answers `400 validation_failed` and `details.field` names the field, for example `commands[0].options[1].name`.
 
 Commands are stored on the instance the bot registers them on: register them on every instance where the bot has an account.
 
@@ -155,7 +169,7 @@ GET  /api/commands?channelId=<id>  |  ?dmChannelId=<id>   → { commands: [ { id
 POST /api/interactions   { botId, command, options?, channelId | dmChannelId }   → 201 { id, expiresAt }
 ```
 
-`GET` lists the commands of the bots that are in that chat; the caller must be able to see it. `POST` checks, in this order: exactly one of `channelId` and `dmChannelId`; the caller is a member and may write there (SEND_MESSAGES in a channel); the bot is in the chat (`404 bot_not_found`); the command exists (`404 command_not_found`); each option value fits its definition, including `choices` (`400 validation_failed`, `details.field` is `options.<name>`); the bot has an open WebSocket (`409 bot_unavailable`). 5 calls per 5 seconds per client address.
+`GET` lists the commands of the bots that are in that chat; the caller must be able to see it. `POST` checks, in this order: exactly one of `channelId` and `dmChannelId`; the caller is a member and may write there (SEND_MESSAGES in a channel); the bot is in the chat (`404 bot_not_found`); the command exists (`404 command_not_found`); each option value fits its definition: type, `choices`, range, length, and for `user`, `channel` and `role` an id the chat knows (a user in the chat; a channel or role of its space; a channel the caller can see, of an accepted type; anything else answers like a missing id) (`400 validation_failed`, `details.field` is `options.<name>`, `details.reason` says what is wrong); the bot has an open WebSocket (`409 bot_unavailable`). 5 calls per 5 seconds per client address.
 
 Command names are unique per bot, not per chat: two bots may both offer `/play`. Every listing entry names its bot, and an invocation names it too (`botId`), so a clash reaches exactly the bot it addresses; the message box shows the bot's `@username` under each command. A command typed out by hand, without picking a row from the list, runs the first of the clashing commands in the listing's order (name, then the bot's username).
 
@@ -163,12 +177,13 @@ Command names are unique per bot, not per chat: two bots may both offer `/play`.
 
 ```json
 { "type": "interaction_created",
-  "interaction": { "id": "...", "command": "play", "options": { "query": "song", "volume": 80 },
+  "interaction": { "id": "...", "command": "kick", "options": { "who": "123", "reason": "spam" },
+                   "resolved": { "users": { "123": { "id": "123", "username": "bob" } } },
                    "user": { "id": "...", "username": "..." },
                    "channelId": "...", "spaceId": "...", "expiresAt": 1790000000000 } }
 ```
 
-`options` holds the parsed values with the types of the definition; an optional option that was not given is absent. A call from a space channel carries `channelId` and `spaceId`, a call from a direct or group DM carries `dmChannelId`. `user` is the person who invoked the command.
+`options` holds the parsed values with the types of the definition; an optional option that was not given is absent. A `user`, `channel` or `role` value is an id; `resolved` carries the named objects by id (`users`: the user as any member sees it; `channels`: `{ id, spaceId, name, type }`; `roles`: name, colour and position, without the permission bits), and only the kinds the interaction uses. Without such options there is no `resolved`. A call from a space channel carries `channelId` and `spaceId`, a call from a direct or group DM carries `dmChannelId`. `user` is the person who invoked the command.
 
 ### Answering
 
@@ -181,6 +196,8 @@ Bot token only, and only the invoked bot. The message is posted through the same
 ### In the message box
 
 Typing `/` at the start of a message lists the commands of the bots in the chat. Choosing one writes it with its required options as `name:` ready to be filled in; after a space the optional options not used yet are offered (Tab picks one); pasting a full command works too. The form is: options first as `name:value` (several words in double quotes), then the rest of the line, which is the value of the last string option and may be any length: `/play volume:80 any long title`. The server only ever sees the parsed `options`.
+
+While the value of a `user`, `role`, `channel` or `boolean` option is being typed (`who:`, `who:@bo`), a list offers the chat's people, the space's roles, the space's channels of the accepted types, or `true`/`false`; Tab picks, as for options. A picked person or role goes in as a mention token (`<@id>`, `<@&id>`) shown by name; a channel goes in as `#name`. Names written by hand also work when exactly one matches in the chat (`who:@bob`, `group:@Mods`, `where:#lounge`); the client turns them into ids before the call, and anything it cannot match goes to the server as written and is refused.
 
 The list is fetched again at the start of every new command (the text goes from not starting with `/` to starting with it), so a bot that registered, changed or lost commands, or joined or left the chat, shows up the next time a command is typed; the old list stays visible until the answer arrives. Enter while a command is being invoked does nothing: the composer is cleared as the request leaves and gets the text back if the invocation fails.
 

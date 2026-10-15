@@ -2256,7 +2256,11 @@ export interface RegenerateBotTokenResponse {
   token: string;
 }
 
-export type BotCommandOptionType = 'string' | 'integer' | 'number' | 'boolean';
+/**
+ * The value types of a slash command option. `user`, `channel` and `role` take
+ * an id; the bot also gets the named object in `BotInteraction.resolved`.
+ */
+export type BotCommandOptionType = 'string' | 'integer' | 'number' | 'boolean' | 'user' | 'channel' | 'role';
 
 export interface BotCommandChoice {
   name: string;
@@ -2270,6 +2274,14 @@ export interface BotCommandOption {
   required: boolean;
   /** Static choices (string, integer and number options only), at most 25. */
   choices?: BotCommandChoice[];
+  /** Integer and number options without choices: the smallest and largest value accepted. */
+  minValue?: number;
+  maxValue?: number;
+  /** String options without choices: the shortest and longest value accepted (0 to 2000, default 1 to 2000). */
+  minLength?: number;
+  maxLength?: number;
+  /** Channel options: the channel types accepted; absent means every type. */
+  channelTypes?: ChannelType[];
 }
 
 /** What a bot sends when registering a command. */
@@ -2298,11 +2310,32 @@ export interface BotCommandsResponse {
 
 export type BotInteractionOptionValue = string | number | boolean;
 
+/** A channel named by a `channel` option, as the bot receives it. */
+export interface BotResolvedChannel {
+  id: string;
+  spaceId: string;
+  name: string;
+  type: ChannelType;
+}
+
+/**
+ * The objects the `user`, `channel` and `role` options of an interaction name,
+ * keyed by id; only the kinds the interaction uses are present.
+ */
+export interface BotInteractionResolved {
+  users?: Record<string, User>;
+  channels?: Record<string, BotResolvedChannel>;
+  /** Display fields only: a role's permission bits are not handed out. */
+  roles?: Record<string, Role>;
+}
+
 /** The event a bot receives when a user invokes one of its slash commands. */
 export interface BotInteraction {
   id: string;
   command: string;
   options: Record<string, BotInteractionOptionValue>;
+  /** Objects named by `user`, `channel` and `role` options; absent when there are none. */
+  resolved?: BotInteractionResolved;
   user: User;
   /** Set for a space channel. */
   channelId?: string;

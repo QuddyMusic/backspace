@@ -6,8 +6,10 @@ import type {
   BotCommandOption,
   BotCommandOptionType,
   BotCommandsResponse,
+  ChannelType,
   SetBotCommandsRequest,
 } from '@backspace/shared';
+import { COMMAND_STRING_OPTION_MAX } from '@backspace/shared/src/constants.js';
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { requireBot } from '../utils/botAuth.js';
@@ -19,7 +21,10 @@ const DESCRIPTION_MAX = 100;
 const MAX_COMMANDS = 100;
 const MAX_OPTIONS = 10;
 const MAX_CHOICES = 25;
-const OPTION_TYPES: readonly BotCommandOptionType[] = ['string', 'integer', 'number', 'boolean'];
+const OPTION_TYPES: readonly BotCommandOptionType[] = ['string', 'integer', 'number', 'boolean', 'user', 'channel', 'role'];
+const CHANNEL_TYPES: readonly ChannelType[] = ['text', 'voice'];
+/** The option types that may list choices. */
+const CHOICE_TYPES: ReadonlySet<BotCommandOptionType> = new Set(['string', 'integer', 'number']);
 
 interface Problem { field: string; reason: string }
 interface NormalizedCommand { name: string; description: string; options: BotCommandOption[] }
@@ -59,6 +64,52 @@ function validateChoice(raw: unknown, type: BotCommandOptionType, path: string):
   return { name, value: value as string | number };
 }
 
+type OptionBounds = Pick<BotCommandOption, 'minValue' | 'maxValue' | 'minLength' | 'maxLength' | 'channelTypes'>;
+
+/**
+ * The type-specific limits of an option: `minValue`/`maxValue` (integer and
+ * number), `minLength`/`maxLength` (string) and `channelTypes` (channel). Each
+ * is refused on another type; a pair must not cross.
+ */
+function validateBounds(item: Record<string, unknown>, type: BotCommandOptionType, here: string): OptionBounds | Problem {
+  const out: OptionBounds = {};
+  const numeric = type === 'integer' || type === 'number';
+  for (const key of ['minValue', 'maxValue'] as const) {
+    const value = item[key];
+    if (value === undefined) continue;
+    if (!numeric) return { field: `${here}.${key}`, reason: `not allowed for a ${type} option` };
+    const ok = typeof value === 'number' && (type === 'integer' ? Number.isSafeInteger(value) : Number.isFinite(value));
+    if (!ok) return { field: `${here}.${key}`, reason: type === 'integer' ? 'must be a safe integer' : 'must be a finite number' };
+    out[key] = value as number;
+  }
+  if (out.minValue !== undefined && out.maxValue !== undefined && out.minValue > out.maxValue) {
+    return { field: `${here}.minValue`, reason: 'must not be greater than maxValue' };
+  }
+  for (const key of ['minLength', 'maxLength'] as const) {
+    const value = item[key];
+    if (value === undefined) continue;
+    if (type !== 'string') return { field: `${here}.${key}`, reason: `not allowed for a ${type} option` };
+    const least = key === 'maxLength' ? 1 : 0;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < least || value > COMMAND_STRING_OPTION_MAX) {
+      return { field: `${here}.${key}`, reason: `must be an integer from ${least} to ${COMMAND_STRING_OPTION_MAX}` };
+    }
+    out[key] = value;
+  }
+  if (out.minLength !== undefined && out.maxLength !== undefined && out.minLength > out.maxLength) {
+    return { field: `${here}.minLength`, reason: 'must not be greater than maxLength' };
+  }
+  if (item.channelTypes !== undefined) {
+    if (type !== 'channel') return { field: `${here}.channelTypes`, reason: `not allowed for a ${type} option` };
+    const list = item.channelTypes;
+    if (!Array.isArray(list) || list.length === 0 || list.some((t) => !CHANNEL_TYPES.includes(t as ChannelType))
+      || new Set(list).size !== list.length) {
+      return { field: `${here}.channelTypes`, reason: `must be a non-empty list of distinct ${CHANNEL_TYPES.join(', ')}` };
+    }
+    out.channelTypes = list as ChannelType[];
+  }
+  return out;
+}
+
 function validateOptions(raw: unknown, path: string): BotCommandOption[] | Problem {
   if (raw === undefined) return [];
   if (!Array.isArray(raw)) return { field: path, reason: 'must be an array' };
@@ -90,8 +141,13 @@ function validateOptions(raw: unknown, path: string): BotCommandOption[] | Probl
     else if (sawOptional) return { field: `${here}.required`, reason: 'required options must come before optional ones' };
 
     const option: BotCommandOption = { name: item.name, description, type, required };
+    const bounds = validateBounds(item, type, here);
+    if (isProblem(bounds)) return bounds;
+    Object.assign(option, bounds);
     if (item.choices !== undefined) {
-      if (type === 'boolean') return { field: `${here}.choices`, reason: 'not allowed for a boolean option' };
+      if (!CHOICE_TYPES.has(type)) return { field: `${here}.choices`, reason: `not allowed for a ${type} option` };
+      const bounded = ['minValue', 'maxValue', 'minLength', 'maxLength'].find((key) => item[key] !== undefined);
+      if (bounded) return { field: `${here}.${bounded}`, reason: 'not allowed together with choices' };
       if (!Array.isArray(item.choices)) return { field: `${here}.choices`, reason: 'must be an array' };
       if (item.choices.length < 1 || item.choices.length > MAX_CHOICES) {
         return { field: `${here}.choices`, reason: `must hold 1 to ${MAX_CHOICES} choices` };

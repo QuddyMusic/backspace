@@ -105,6 +105,8 @@ export const BOT_NAME_MAX_LENGTH = 32;
  * `ActivityType`: `streaming` needs a live URL, which a stored status has not.
  */
 export const BOT_ACTIVITY_TYPES = ['custom', 'playing', 'listening', 'watching'] as const;
+/** Longest value of a string option of a slash command, and the largest `maxLength` a bot may set. */
+export const COMMAND_STRING_OPTION_MAX = 2000;
 
 // ─── Account Constants ───────────────────────────────────────────────────────
 
