@@ -732,6 +732,10 @@ Migration `0035_bot_tokens.sql`. One row per access token of a bot: `id` (16 hex
 
 Migration `0036_bot_seat_restrictions.sql`. A moderator's mute or deafen of one bot seat. Primary key `(channel_id, bot_id, restriction_type)`; `channel_id` → `channels` (cascade), `bot_id` → `users` (cascade), `moderator_id` → `users`, `created_at`; index on `bot_id`. A person's restrictions stay per space in `voice_restrictions`. Rows are deleted on unmute/undeafen, when the bot leaves the space (`removeUserFromSpace`) and with the channel. See [voice.md](voice.md), section 2.
 
+## Blocked bots (`blocked_bots`)
+
+Migration `0037_blocked_bots.sql`. Bots of other instances the admin deleted with "block": registration with their bot proof answers `403 bot_blocked`. Primary key `(home_instance, home_user_id)` (`home_instance` is the home's domain as `extractDomain(...).toLowerCase()` gives it), `username` (`name@home` at the time of the block), `blocked_by` → `users` (nullable), `created_at`. No foreign key to the deleted account: the block outlives it. Rows are deleted only by "Unblock". See [bots.md](bots.md), section 7.
+
 ## Bot revocation queue (`bot_revocations`)
 
 Migration `0034_bot_revocations.sql`. A revoke of a bot's federated account that an instance has not accepted yet. Primary key `(bot_id, origin)`, no foreign keys (a bot's tombstone must not delete it). Columns: `mode` (`soft` | `full`), `attempts`, `last_error`, `created_at`, `next_attempt_at` (index `idx_bot_revocations_next_attempt_at`). Rows are deleted on success, on a final refusal and after 7 days. See [bots.md](bots.md), "Revocation retries".

@@ -50,6 +50,7 @@ import type {
   OrphanedFile,
   CleanupResult,
   AdminUserListResponse,
+  AdminBlockedBot,
   AdminUser,
   AdminResetPasswordResponse,
   InstanceUpdateStatus,
@@ -462,7 +463,9 @@ export class BackspaceApiClient {
     listInstances: () => Promise<{ instances: string[] }>;
     setUserRole: (userId: string, isAdmin: boolean) => Promise<AdminUser>;
     resetUserPassword: (userId: string) => Promise<AdminResetPasswordResponse>;
-    deleteUser: (userId: string) => Promise<{ success: boolean }>;
+    deleteUser: (userId: string, opts?: { blockBot?: boolean }) => Promise<{ success: boolean }>;
+    listBlockedBots: () => Promise<{ bots: AdminBlockedBot[] }>;
+    unblockBot: (homeInstance: string, homeUserId: string) => Promise<{ success: boolean }>;
     updateStatus: (refresh?: boolean) => Promise<InstanceUpdateStatus>;
     telemetry: {
       get: () => Promise<TelemetryStatus>;
@@ -1031,8 +1034,11 @@ export class BackspaceApiClient {
         request<AdminUser>('PATCH', `/admin/users/${userId}/role`, { isAdmin }),
       resetUserPassword: (userId) =>
         request<AdminResetPasswordResponse>('POST', `/admin/users/${userId}/reset-password`),
-      deleteUser: (userId) =>
-        request<{ success: boolean }>('DELETE', `/admin/users/${userId}`),
+      deleteUser: (userId, opts) =>
+        request<{ success: boolean }>('DELETE', `/admin/users/${userId}${opts?.blockBot ? '?blockBot=1' : ''}`),
+      listBlockedBots: () => request<{ bots: AdminBlockedBot[] }>('GET', '/admin/blocked-bots'),
+      unblockBot: (homeInstance, homeUserId) =>
+        request<{ success: boolean }>('DELETE', `/admin/blocked-bots/${encodeURIComponent(homeInstance)}/${encodeURIComponent(homeUserId)}`),
       // `refresh` bypasses the server's six-hour cache for an explicit
       // "Check again" click. It cannot bypass BACKSPACE_UPDATE_CHECK.
       updateStatus: (refresh = false) =>

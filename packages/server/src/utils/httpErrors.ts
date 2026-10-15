@@ -273,7 +273,10 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   bot_token_not_found: 'Token not found',
   bot_token_name_invalid: 'A token name is 1 to {{max}} characters',
   bot_token_in_use: 'This bot token is already connected from another process',
-  bots_cannot_invoke_commands: 'Bots cannot invoke slash commands'
+  bots_cannot_invoke_commands: 'Bots cannot invoke slash commands',
+  bot_blocked: 'This instance does not accept this bot',
+  bot_block_not_federated: 'Only a bot from another instance can be blocked',
+  blocked_bot_not_found: 'This bot is not blocked',
 };
 
 function fillPlaceholders(text: string, details: ErrorDetails | undefined): string {

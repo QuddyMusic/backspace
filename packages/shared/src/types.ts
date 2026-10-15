@@ -1399,6 +1399,20 @@ export interface AdminUserListResponse {
   pageSize: number;
 }
 
+/**
+ * A bot of another instance this instance refuses to register again: the
+ * admin deleted its account here with "block". Keyed by the bot's home domain
+ * and its id there, which a bot proof carries.
+ */
+export interface AdminBlockedBot {
+  homeInstance: string;
+  homeUserId: string;
+  /** The bot's username here when it was blocked (`name@home`). */
+  username: string;
+  blockedBy: string | null;
+  createdAt: number;
+}
+
 export interface AdminResetPasswordResponse {
   temporaryPassword: string;
 }

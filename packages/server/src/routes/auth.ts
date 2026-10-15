@@ -1,6 +1,6 @@
 import { hasPendingBotRevocation } from '../utils/botRevocationQueue.js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { eq, or, lt } from 'drizzle-orm';
+import { and, eq, or, lt } from 'drizzle-orm';
 import { randomBytes } from 'node:crypto';
 import { getDb, schema } from '../db/index.js';
 import { hashPassword, verifyPassword, signJwt, authenticate } from '../utils/auth.js';
@@ -191,6 +191,16 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       const verified = await verifyAttachProofWithPeer(proofPeer, botProof);
       if (!verified.valid || !verified.isBot) {
         return sendError(reply, 401, 'bot_proof_invalid');
+      }
+      // The admin deleted this bot here and blocked it (admin.ts, DELETE
+      // /api/admin/users/:id?blockBot=1). Checked after the proof: only the
+      // home's answer says which bot this is.
+      const blocked = db.select({ homeUserId: schema.blockedBots.homeUserId }).from(schema.blockedBots).where(and(
+        eq(schema.blockedBots.homeInstance, proofDomain),
+        eq(schema.blockedBots.homeUserId, verified.homeUserId),
+      )).get();
+      if (blocked) {
+        return sendError(reply, 403, 'bot_blocked');
       }
       botIdentity = {
         username: `${verified.username.toLowerCase()}@${homeInstance.toLowerCase()}`,

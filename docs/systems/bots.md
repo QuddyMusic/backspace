@@ -219,6 +219,8 @@ B verifies the proof with A over the signed server-to-server channel (`POST /api
 
 **Cutting a bot off.** Regenerating the token (mode `soft`), deleting the bot (`full`) and deleting the owner send a signed `DELETE /api/federation/identity` to every instance where the bot holds a credential; the account there is tombstoned and its JWT stops working. After a regeneration the bot registers again with the new token and joins its spaces again. The origins are read before the tombstone, which deletes the credentials.
 
+**Blocking a bot of another instance.** The admin of B removes the account `x_bot@A` in Instance settings > Users (filter "Bots", Delete). A does not have to be up: the account is tombstoned, its sockets close and it leaves its spaces. Ticking "Do not let this bot register again" in that dialog (`DELETE /api/admin/users/:id?blockBot=1`, only for a bot with a `homeInstance`, otherwise `400 bot_block_not_federated`) also writes `(home domain, home id)` to `blocked_bots`; from then on `register` with a valid proof of that bot answers `403 bot_blocked`. The check comes after the proof is verified, because only A's answer says which bot it is. The list and "Unblock" are below the user list (`GET /api/admin/blocked-bots`, `DELETE /api/admin/blocked-bots/:homeInstance/:homeUserId`, unknown pair: `404 blocked_bot_not_found`). A bot that was renamed on A stays blocked: the key is its id there.
+
 ## 8. Limitations
 
 - An instance without bot support ignores `botProof`: the account there is an ordinary user (no bot flag). A person can also automate a human account without declaring it; the server cannot tell.
@@ -248,6 +250,8 @@ Before migration 0035 a bot's token was a JWT valid for 3650 days. Such a bot ke
 Migration `0032_bots.sql` adds to `users`: `is_bot` (INTEGER NOT NULL DEFAULT 0) and `bot_owner_id` (TEXT, the owner's user id) and an index `idx_users_bot_owner_id` on it. Nothing else is stored per bot; the avatar and display name are the ordinary `users` columns. The cascade and revocation rules are in 1 and 7.
 
 Migration `0035_bot_tokens.sql` adds `bot_tokens`: `id` (16 hex, PK, the public part of the token), `bot_id` (FK to `users`, cascade), `token_hash` (SHA-256 of the secret, hex), `name` (nullable), `created_at`, `last_used_at` (nullable); index `idx_bot_tokens_bot_id`. A bot's rows are deleted when the bot is tombstoned.
+
+Migration `0037_blocked_bots.sql` adds `blocked_bots`: `home_instance` (the home's domain, lower case) and `home_user_id` (primary key together), `username` (the account's name here when it was blocked), `blocked_by` (FK to `users`, nullable), `created_at`.
 
 Migration `0034_bot_revocations.sql` adds `bot_revocations`: `bot_id` and `origin` (primary key together, no foreign key), `mode` (`soft` | `full`), `attempts` (default 0), `last_error`, `created_at`, `next_attempt_at`; index on `next_attempt_at`.
 

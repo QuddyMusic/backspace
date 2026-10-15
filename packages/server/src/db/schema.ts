@@ -832,6 +832,19 @@ export const botSeatRestrictions = sqliteTable('bot_seat_restrictions', {
   botIdx: index('idx_bot_seat_restrictions_bot_id').on(table.botId),
 }));
 
+// A bot of another instance the admin deleted with "block": its bot proof is
+// refused at registration (403 bot_blocked) until the admin unblocks it.
+// home_instance is the home's domain as extractDomain(...).toLowerCase() gives it.
+export const blockedBots = sqliteTable('blocked_bots', {
+  homeInstance: text('home_instance').notNull(),
+  homeUserId: text('home_user_id').notNull(),
+  username: text('username').notNull(),
+  blockedBy: text('blocked_by').references(() => users.id),
+  createdAt: integer('created_at').notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.homeInstance, table.homeUserId] }),
+}));
+
 export const inviteLinks = sqliteTable('invite_links', {
   id: text('id').primaryKey(),
   token: text('token').notNull().unique(),

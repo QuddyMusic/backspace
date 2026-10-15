@@ -260,6 +260,13 @@
       "when": 1792093650224,
       "tag": "0036_bot_seat_restrictions",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1792180050224,
+      "tag": "0037_blocked_bots",
+      "breakpoints": true
     }
   ]
 }

@@ -422,7 +422,9 @@ GET    /admin/users  ?q=&page=&pageSize=&showDeleted=&homeInstance=&role=&joined
 GET    /admin/users/instances                              → distinct home instance domains
 PATCH  /admin/users/:id/role         { isAdmin }           → AdminUser
 POST   /admin/users/:id/reset-password                     → { temporaryPassword }
-DELETE /admin/users/:id                                    → { success }
+DELETE /admin/users/:id        ?blockBot=1                 → { success } [blockBot: a bot with a homeInstance only, else 400 bot_block_not_federated; its proof is refused at register (403 bot_blocked)]
+GET    /admin/blocked-bots                                 → { bots: AdminBlockedBot[] } (newest first)
+DELETE /admin/blocked-bots/:homeInstance/:homeUserId       → { success } (404 blocked_bot_not_found)
 ```
 
 ## Admin: Instance Updates (`routes/adminUpdates.ts`) — admin required
