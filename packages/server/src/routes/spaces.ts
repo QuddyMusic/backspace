@@ -35,6 +35,7 @@ import { canActOnMemberInSpace, canManageRoleInSpace, getHierarchyStanding } fro
 import { canActOnMember, canManageRoleAt } from '@backspace/shared/src/permissions.js';
 import { moveRoleToPosition, normalizeRolePositions, positionNextTo } from '../db/rolePositions.js';
 import { removeUserFromSpace } from '../utils/spaceMembership.js';
+import { deleteManagedBotRole } from '../utils/botRoles.js';
 import { memberRolesView, roleView, rolesForViewer, viewerReadsPermissionData } from '../utils/permissionDataView.js';
 
 function rowToSpace(row: typeof schema.spaces.$inferSelect): Space {
@@ -106,7 +107,7 @@ function membersHoldingRole(spaceId: string, roleId: string): string[] {
 
 type RoleChangeRefusal = {
   status: 400 | 403 | 404;
-  code: 'missing_permission' | 'cannot_change_own_roles' | 'space_owner_only' | 'member_not_found' | 'role_not_in_space' | 'everyone_role_not_assignable' | 'role_hierarchy' | HeldBitsRefusal;
+  code: 'missing_permission' | 'cannot_change_own_roles' | 'space_owner_only' | 'member_not_found' | 'role_not_in_space' | 'everyone_role_not_assignable' | 'role_managed_by_bot' | 'role_hierarchy' | HeldBitsRefusal;
   details?: Record<string, string>;
 };
 
@@ -116,7 +117,8 @@ type RoleChangeRefusal = {
  * role set: MANAGE_ROLES, not one's own roles, not the owner's, a member of
  * this space, a role of this space other than @everyone, a member ranked
  * below the actor, a role below the actor's top role and, when adding, a
- * role whose bits the actor holds.
+ * role whose bits the actor holds. A bot's managed role stays with its bot:
+ * it is never added to anyone else and never taken from the bot.
  */
 function checkSingleRoleChange(
   spaceId: string,
@@ -137,6 +139,9 @@ function checkSingleRoleChange(
     : undefined;
   if (!role) return { status: 400, code: 'role_not_in_space', details: { roleId: String(roleId) } };
   if (role.id === spaceId) return { status: 400, code: 'everyone_role_not_assignable' };
+  if (role.managedBotId && (change === 'remove' || role.managedBotId !== targetId)) {
+    return { status: 400, code: 'role_managed_by_bot' };
+  }
   const actor = getHierarchyStanding(spaceId, actorId);
   if (!canActOnMember(actor, getHierarchyStanding(spaceId, targetId)) || !canManageRoleAt(actor, role.position ?? 0)) {
     return { status: 403, code: 'role_hierarchy' };
@@ -1168,6 +1173,11 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 404, 'role_not_in_space', { roleId });
     }
 
+    // A bot's managed role goes when the bot leaves the space, not before.
+    if (role.managedBotId) {
+      return sendError(reply, 400, 'role_managed_by_bot');
+    }
+
     if (!canManageRoleInSpace(id, request.userId, role.position ?? 0)) {
       return sendError(reply, 403, 'role_hierarchy');
     }
@@ -1449,6 +1459,9 @@ export async function spaceRoutes(app: FastifyInstance): Promise<void> {
     // End live delivery of this space to the banned user's sockets (a bot keeps
     // one open for days and would otherwise go on receiving the space's events).
     connectionManager.removeUserSpace(targetId, id);
+
+    // A banned bot's managed role goes with it (utils/botRoles.ts).
+    if (deleteManagedBotRole(id, targetId)) announceAccessChange(id, []);
 
     return reply.code(200).send({ success: true });
   });

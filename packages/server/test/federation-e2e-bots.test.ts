@@ -467,7 +467,7 @@ describe('a manager invites a bot they do not own', () => {
     expect(res.body.code).toBe('missing_permission');
   });
 
-  it('only a native bot is inviteable: a human or a federated bot account answers 404', async () => {
+  it('a human is not a bot (404); a bot of another instance is added on the host with what its home says it asks for', async () => {
     const manager = await registerLocal(A, 'spacemanager3');
     const made = await api<{ id?: string; space?: { id: string } }>(A, 'POST', '/api/spaces', manager.token, { name: 'native-only' });
     const sid = (made.body.space ?? made.body).id as string;
@@ -475,15 +475,27 @@ describe('a manager invites a bot they do not own', () => {
     expect(human.status).toBe(404);
     expect(human.body.code).toBe('bot_not_found');
 
-    // A federated bot account on B belongs to its home instance: not inviteable there.
+    // A bot of A with an account on B: what it asks for (set on A) reaches
+    // that account with its profile, and a manager on B adds it with them.
     const homeBot = await createBot('fedtarget_bot');
     const reg = await registerOnHost(homeBot);
     expect(reg.status).toBe(201);
-    const madeB = await api<{ id?: string; space?: { id: string } }>(B, 'POST', '/api/spaces', hostHuman.token, { name: 'native-bots-only' });
+    const hostId = reg.body.user.id;
+    const asked = (1n << 10n).toString(); // SEND_MESSAGES
+    const set = await api<ErrBody>(A, 'PATCH', `/api/bots/${homeBot.id}`, owner.token, { requestedPermissions: asked });
+    expect(set.status).toBe(200);
+    const reached = await waitUntil(() => readDb(B, db =>
+      (db.prepare('SELECT bot_requested_permissions AS p FROM users WHERE id = ?').get(hostId) as { p: string | null } | undefined)?.p,
+    ) === asked, 15_000);
+    expect(reached).toBe(true);
+
+    const madeB = await api<{ id?: string; space?: { id: string } }>(B, 'POST', '/api/spaces', hostHuman.token, { name: 'host-bots' });
     const sidB = (madeB.body.space ?? madeB.body).id as string;
-    const fed = await api<ErrBody>(B, 'POST', `/api/bots/${reg.body.user.id}/spaces`, hostHuman.token, { spaceId: sidB });
-    expect(fed.status).toBe(404);
-    expect(fed.body.code).toBe('bot_not_found');
+    const fed = await api<ErrBody>(B, 'POST', `/api/bots/${hostId}/spaces`, hostHuman.token, { spaceId: sidB });
+    expect(fed.status).toBe(200);
+    const role = readDb(B, db => db.prepare('SELECT permissions FROM roles WHERE space_id = ? AND managed_bot_id = ?')
+      .get(sidB, hostId) as { permissions: string } | undefined);
+    expect(role?.permissions).toBe(asked);
   });
 
   it('inviting a bot that already sits in the space answers already_member', async () => {

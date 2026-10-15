@@ -11,6 +11,7 @@ import { normalizeOriginForCompare } from '../../utils/federationAuth.js';
 import { connectionManager } from '../../ws/handler.js';
 import { applyStoredBotActivity } from '../../ws/presence.js';
 import { normalizeBotActivity, serializeBotActivity } from '../../utils/botActivity.js';
+import { parseRequestedPermissions, renameManagedBotRoles } from '../../utils/botRoles.js';
 import { and, eq, isNull, lt, or, sql, type SQL } from 'drizzle-orm';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -258,6 +259,8 @@ export interface HomeProfile {
    * the home did not say (a person, or an older home): the stored value is kept.
    */
   botActivity?: BotActivity | null;
+  /** A bot's requested space permissions (decimal bitmask); same rules as `botActivity`. */
+  botRequestedPermissions?: string | null;
 }
 
 /** A `/users/by-home-id` answer's profile as a `HomeProfile`. */
@@ -274,6 +277,7 @@ export function homeProfileFromAnswer(answer: { username: string; profile: Feder
     bio: profile.bio,
     ...(profile.isBot === true ? { isBot: true } : {}),
     ...(profile.botActivity !== undefined ? { botActivity: profile.botActivity } : {}),
+    ...(profile.botRequestedPermissions !== undefined ? { botRequestedPermissions: profile.botRequestedPermissions } : {}),
   };
 }
 
@@ -314,6 +318,19 @@ function homeBotActivity(raw: BotActivity | null | undefined): BotActivity | nul
   if (raw === undefined) return undefined;
   if (raw === null) return null;
   return normalizeBotActivity(raw) ?? undefined;
+}
+
+/**
+ * Requested permissions as a home sent them, in the stored form: undefined
+ * when unsaid or malformed (the stored value is kept), null for none, else
+ * the canonical decimal string.
+ */
+function homeRequestedPermissions(raw: string | null | undefined): string | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  const bits = parseRequestedPermissions(raw);
+  if (bits === null) return undefined;
+  return bits === 0n ? null : bits.toString();
 }
 
 /**
@@ -384,6 +401,8 @@ export async function applyHomeProfile(
   // one is treated as unsaid, so the stored status stays.
   const botActivity = row.isBot === 1 ? homeBotActivity(profile.botActivity) : undefined;
   if (botActivity !== undefined) updates.botActivity = serializeBotActivity(botActivity);
+  const requested = row.isBot === 1 ? homeRequestedPermissions(profile.botRequestedPermissions) : undefined;
+  if (requested !== undefined) updates.botRequestedPermissions = requested;
 
   // The version is checked again in the write: another apply for this row may
   // have written a newer one while the images downloaded.
@@ -409,6 +428,10 @@ export async function applyHomeProfile(
   if (!updated) return row;
   if (botActivity !== undefined && updated.botActivity !== row.botActivity) {
     applyStoredBotActivity(updated.id, botActivity);
+  }
+  // A bot's managed roles here carry its name.
+  if (updated.isBot === 1 && updated.displayName !== row.displayName) {
+    for (const spaceId of renameManagedBotRoles(updated)) connectionManager.announceSpaceAccessChange(spaceId, []);
   }
   const userUpdatedEvent = { type: 'user_updated' as const, user: sanitizeUser(updated, false) };
   const targetUserIds = collectProfileBroadcastTargetIds(updated.id);
@@ -475,6 +498,7 @@ export async function processProfileUpdateEvent(
     avatarColor: payload.avatarColor,
     bio: payload.bio,
     ...(payload.botActivity !== undefined ? { botActivity: payload.botActivity } : {}),
+    ...(payload.botRequestedPermissions !== undefined ? { botRequestedPermissions: payload.botRequestedPermissions } : {}),
   }, sourceInstance, db);
 
   accepted.push(event.messageId);

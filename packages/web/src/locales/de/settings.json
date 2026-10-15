@@ -505,6 +505,10 @@
         "watching": "Schaut {{name}}"
       }
     },
+    "permissions": {
+      "label": "Berechtigungen, die der Bot anfordert",
+      "hint": "Wer den Bot zu einem Space hinzufügt, sieht sie angehakt und kann jede abwählen. Sie landen in einer Rolle mit dem Namen des Bots. Spätere Änderungen betreffen bereits erstellte Rollen nicht."
+    },
     "avatar": {
       "change": "Avatar ändern",
       "remove": "Avatar entfernen",

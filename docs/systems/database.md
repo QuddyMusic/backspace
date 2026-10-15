@@ -34,6 +34,7 @@ IDs: Snowflake text, permissions: bigint decimal strings
 | passwordChangedAt | integer | | Token revocation: tokens before this rejected |
 | showActivity | integer NOT NULL | 1 | Rich presence visibility |
 | developerMode | integer NOT NULL | 0 | Developer Mode (shows the Bots tab in settings); self-view only, never relayed to peers. Migration `0033_developer_mode.sql` |
+| botRequestedPermissions | text | | Bots only: requested space permissions, canonical decimal mask; on a host's federated account the home's copy. Migration `0039_bot_permissions.sql`, see [bots.md](bots.md) |
 | botActivity | text | | Bots only: the stored status, JSON `{ type, name }`; on a host's federated account the home's copy (`profile_update`). Migration `0038_bot_activity.sql`, see [bots.md](bots.md) |
 | federationRegistryUpdatedAt | integer | 0 | LWW timestamp for federation registry sync |
 | federationHealPending | integer | 0 | Instance-epoch self-healing: set when a replicated identity is flagged for re-heal after a peer reset |
@@ -275,6 +276,7 @@ PK: (userId, friendId)
 | position | integer | 0 | Hierarchy rank: @everyone 0, other roles distinct from 1 up, higher is more senior (permissions.md, "Role hierarchy") |
 | permissions | text | | Bigint decimal string |
 | createdAt | integer NOT NULL | | |
+| managedBotId | text | | Set on a bot's managed role: the bot it belongs to (no FK). Unique with spaceId (`idx_roles_managed_bot`). Migration `0039_bot_permissions.sql`, see [bots.md](bots.md), "Permissions on invite" |
 
 ### member_roles
 PK: (spaceId, userId, roleId)

@@ -48,6 +48,14 @@ export const users = sqliteTable('users', {
    */
   botActivity: text('bot_activity'),
   /**
+   * A bot's requested space permissions: a permission bitmask as a canonical
+   * decimal string, null or '0' for none. Set by the owner on the bot's home;
+   * a host's federated account of the bot holds the home's copy. A manager
+   * adding the bot to a space grants any subset of it through the bot's
+   * managed role (`roles.managed_bot_id`).
+   */
+  botRequestedPermissions: text('bot_requested_permissions'),
+  /**
    * The identity a detached account (`federation_home_orphaned = 1`) had before
    * it was detached: its former home instance and its id there. Detaching
    * moves `home_instance`/`home_user_id` here and clears them, so the row is
@@ -309,8 +317,16 @@ export const roles = sqliteTable('roles', {
   position: integer('position').default(0),
   permissions: text('permissions'), // JSON string of permission keys
   createdAt: integer('created_at').notNull(),
+  /**
+   * Set on a bot's managed role: the bot (users.id) the role was created for
+   * when it was added to the space. Only that bot holds it; it cannot be
+   * deleted or given to anyone else, and it goes when the bot leaves the
+   * space (utils/botRoles.ts). No FK: tombstoneUser keeps the user row.
+   */
+  managedBotId: text('managed_bot_id'),
 }, (table) => ({
   spaceIdx: index('idx_roles_space_id').on(table.spaceId),
+  managedBotIdx: uniqueIndex('idx_roles_managed_bot').on(table.spaceId, table.managedBotId),
 }));
 
 export const memberRoles = sqliteTable('member_roles', {

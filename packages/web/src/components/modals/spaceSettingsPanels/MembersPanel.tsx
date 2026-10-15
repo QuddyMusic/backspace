@@ -20,11 +20,12 @@ import {
 import { useFormatters } from '../../../i18n/formatters';
 import { LOCK_ICON } from '../../ui/LockNote';
 import { describeError } from '../../../i18n/errors';
+import { isBotManagedRole, isListedForMember } from '../../../utils/botRoles';
 import type { MemberWithUser, Role } from '@backspace/shared';
 
 
 /** Why a role checkbox is locked: the role ranks too high, or it carries bits the viewer lacks. */
-type RoleLock = 'rank' | 'bits';
+type RoleLock = 'managed' | 'rank' | 'bits';
 
 function MembersPanelRow({
   member,
@@ -78,15 +79,19 @@ function MembersPanelRow({
   // A role is locked when it ranks at or above the viewer (hierarchy), or when
   // giving it would hand out bits the viewer does not hold (held-bits rule).
   // Taking a role the member already has is governed by the hierarchy alone.
+  // Another bot's managed role is not listed; a bot's own one is shown, locked.
+  const rolesHere = assignableRoles.filter((role) => isListedForMember(role, member.userId));
   const roleLocks = new Map<string, RoleLock>();
-  for (const role of assignableRoles) {
-    if (!manageableRoleIds.has(role.id)) roleLocks.set(role.id, 'rank');
+  for (const role of rolesHere) {
+    if (isBotManagedRole(role)) roleLocks.set(role.id, 'managed');
+    else if (!manageableRoleIds.has(role.id)) roleLocks.set(role.id, 'rank');
     else if (!savedRoleIds.has(role.id) && !viewerHoldsEveryBit(heldPermissions, stringToPermissions(role.permissions))) {
       roleLocks.set(role.id, 'bits');
     }
   }
-  const lockKinds = (['rank', 'bits'] as const).filter((kind) => [...roleLocks.values()].includes(kind));
+  const lockKinds = (['managed', 'rank', 'bits'] as const).filter((kind) => [...roleLocks.values()].includes(kind));
   const lockReason: Record<RoleLock, string> = {
+    managed: t('spaces:settings.members.rolesManagedByBot'),
     rank: t('spaces:settings.members.rolesAboveYou'),
     bits: t('spaces:settings.members.rolesUnheld'),
   };
@@ -173,7 +178,7 @@ function MembersPanelRow({
       {/* Role checkboxes — only shown when expanded */}
       {isExpanded && expandable && (
         <div className="mt-1 mb-1 ml-10 space-y-1">
-          {assignableRoles.map((role) => {
+          {rolesHere.map((role) => {
             const lock = roleLocks.get(role.id);
             const manageable = lock === undefined;
             return (

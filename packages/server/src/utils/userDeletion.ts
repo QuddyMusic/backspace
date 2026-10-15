@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { eq, or, and, inArray, isNotNull } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
 import { forgetReplicaProjection } from '../ws/replicaPresence.js';
+import { deleteAllManagedBotRoles } from './botRoles.js';
 
 export interface DeletionBroadcastTargets {
   /** Space IDs the user is a member of (for member_left broadcasts) */
@@ -300,6 +301,17 @@ export function tombstoneUser(uid: string, options?: TombstoneOptions): string[]
   });
   // The tombstone shows 'offline' for good; a replicated row's projection goes with it.
   forgetReplicaProjection(uid);
+
+  // A bot's managed roles go with it (utils/botRoles.ts); the spaces reload their roles.
+  if (user.isBot === 1) {
+    const roleSpaces = deleteAllManagedBotRoles(uid);
+    if (roleSpaces.length > 0) {
+      // Lazy import: ws/handler imports the DB layer, a static import would be a cycle.
+      void import('../ws/handler.js').then(({ connectionManager }) => {
+        for (const spaceId of roleSpaces) connectionManager.announceSpaceAccessChange(spaceId, []);
+      }).catch(() => { /* best effort: the next load shows the roles as they are */ });
+    }
+  }
 
   // After the commit: tombstoneUser opens its own transaction, so it cannot be nested.
   for (const bot of ownedBots) {

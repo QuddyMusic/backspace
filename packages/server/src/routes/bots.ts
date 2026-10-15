@@ -28,6 +28,7 @@ import { queueProfileUpdateRelay } from '../utils/profileRelay.js';
 import { BOT_ACTIVITY_NAME_MAX_LENGTH, normalizeBotActivity, parseStoredBotActivity, serializeBotActivity } from '../utils/botActivity.js';
 import { applyStoredBotActivity } from '../ws/presence.js';
 import type {
+  AddBotToSpaceRequest,
   BotSearchResult,
   BotSummary,
   BotTokensResponse,
@@ -36,8 +37,10 @@ import type {
   UpdateBotRequest,
   UpdateBotResponse,
 } from '@backspace/shared';
-import { hasPermission, isBanned, isMember, isSpaceOwner, PermissionBits } from '../utils/permissions.js';
-import { addUserToSpace, removeUserFromSpace } from '../utils/spaceMembership.js';
+import { computePermissions, hasPermission, isBanned, isMember, isSpaceOwner, PermissionBits } from '../utils/permissions.js';
+import { addBotToSpace, announceSpaceRolesChanged, removeUserFromSpace } from '../utils/spaceMembership.js';
+import { parseRequestedPermissions, renameManagedBotRoles, storedRequestedPermissions } from '../utils/botRoles.js';
+import { permissionsToString, roleBitsChangeRefusal, type HeldBitsRefusal } from '@backspace/shared/src/permissions.js';
 
 /** Not a bcrypt hash, so password login is impossible (same idea as '!federation-replicated'). */
 const BOT_PASSWORD_MARKER = '!bot';
@@ -70,6 +73,7 @@ function toSummary(row: typeof schema.users.$inferSelect): BotSummary {
     avatar: row.avatar,
     bio: row.bio,
     activity: parseStoredBotActivity(row.botActivity),
+    requestedPermissions: permissionsToString(storedRequestedPermissions(row.botRequestedPermissions)),
     createdAt: row.createdAt,
   };
 }
@@ -83,16 +87,54 @@ function findOwnedBot(ownerId: string, botId: string) {
   )).get();
 }
 
-/** Any native bot of this instance, whatever its owner: the target a space
- * manager may invite. Federated bot accounts belong to their home instance
- * and cannot be invited here. */
-function findInviteableBot(botId: string) {
-  return getDb().select().from(schema.users).where(and(
-    eq(schema.users.id, botId),
-    eq(schema.users.isBot, 1),
-    sql`(${schema.users.homeInstance} IS NULL OR ${schema.users.homeInstance} = '')`,
-    eq(schema.users.isDeleted, 0),
-  )).get();
+/**
+ * The bots a space manager here may add to a space or take out of one: a
+ * native bot of this instance, or the account a bot of another instance
+ * registered here with its proof (bots.md, 7). A replica row of a bot that
+ * never registered here (`'!federation-replicated'`) cannot sign in, so it is
+ * not one. Whatever the owner: a manager needs no consent.
+ */
+const spaceBotCondition = and(
+  eq(schema.users.isBot, 1),
+  eq(schema.users.isDeleted, 0),
+  sql`(${schema.users.homeInstance} IS NULL OR ${schema.users.homeInstance} = '' OR ${schema.users.passwordHash} != '!federation-replicated')`,
+);
+
+function findSpaceBot(botId: string) {
+  return getDb().select().from(schema.users).where(and(eq(schema.users.id, botId), spaceBotCondition)).get();
+}
+
+/** Each bit set in `bits`, one by one. */
+function bitsOf(bits: bigint): bigint[] {
+  const out: bigint[] = [];
+  for (let rest = bits; rest !== 0n; rest &= rest - 1n) out.push(rest & -rest);
+  return out;
+}
+
+/**
+ * What a manager grants a bot added to a space, out of the bot's requested
+ * permissions (bots.md, "Permissions on invite"). Omitted: every requested
+ * bit the manager may hand out (held-bits rule). Sent: exactly those bits,
+ * which must all be requested and held. Answers the bits, or the refusal.
+ */
+function grantedBotPermissions(
+  requested: bigint,
+  held: bigint,
+  sent: unknown,
+): { bits: bigint } | { status: 400 | 403; code: 'permissions_invalid' | 'bot_permissions_not_requested' | HeldBitsRefusal } {
+  if (sent === undefined) {
+    let bits = 0n;
+    for (const bit of bitsOf(requested)) {
+      if (roleBitsChangeRefusal(held, 0n, bit) === null) bits |= bit;
+    }
+    return { bits };
+  }
+  const bits = parseRequestedPermissions(sent);
+  if (bits === null) return { status: 400, code: 'permissions_invalid' };
+  if ((bits & ~requested) !== 0n) return { status: 400, code: 'bot_permissions_not_requested' };
+  const refusal = roleBitsChangeRefusal(held, 0n, bits);
+  if (refusal) return { status: 403, code: refusal };
+  return { bits };
 }
 
 /**
@@ -141,10 +183,8 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     // A `%` or `_` typed by the person is a literal character, not a wildcard.
     const pattern = `%${q.replace(/[!%_]/g, '!$&')}%`;
     const rows = getDb().select().from(schema.users).where(and(
-      eq(schema.users.isBot, 1),
-      eq(schema.users.isDeleted, 0),
+      spaceBotCondition,
       eq(schema.users.discoverable, 1),
-      sql`(${schema.users.homeInstance} IS NULL OR ${schema.users.homeInstance} = '')`,
       sql`${schema.users.username} LIKE ${pattern} ESCAPE '!'`,
     )).orderBy(schema.users.username).limit(25).all();
     const ownerIds = [...new Set(rows.flatMap((r) => (r.botOwnerId === null ? [] : [r.botOwnerId])))];
@@ -222,8 +262,14 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     const bot = findOwnedBot(request.userId, request.params.id);
     if (!bot) return sendError(reply, 404, 'bot_not_found');
 
-    const { displayName, avatar, bio, activity } = request.body ?? {};
-    const update: { displayName?: string; avatar?: string | null; bio?: string | null; botActivity?: string | null } = {};
+    const { displayName, avatar, bio, activity, requestedPermissions } = request.body ?? {};
+    const update: {
+      displayName?: string;
+      avatar?: string | null;
+      bio?: string | null;
+      botActivity?: string | null;
+      botRequestedPermissions?: string | null;
+    } = {};
 
     // The login (username) is deliberately not editable: it is the federation
     // identity peers and host accounts (`name@home`) are keyed on.
@@ -285,6 +331,14 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
       update.botActivity = newActivity;
     }
 
+    // What the bot asks for when a manager adds it to a space. Roles already
+    // created keep their bits: a change applies to the next addition.
+    if (requestedPermissions !== undefined) {
+      const bits = parseRequestedPermissions(requestedPermissions);
+      if (bits === null) return sendError(reply, 400, 'bot_permissions_invalid');
+      update.botRequestedPermissions = bits === 0n ? null : permissionsToString(bits);
+    }
+
     if (Object.keys(update).length === 0) {
       return sendError(reply, 400, 'no_fields_to_update');
     }
@@ -317,6 +371,10 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     // name or the "About" must not wipe a status the bot code set.
     if (newActivity !== undefined && newActivity !== bot.botActivity) {
       applyStoredBotActivity(bot.id, parseStoredBotActivity(newActivity));
+    }
+    // The bot's managed roles carry its name.
+    if (update.displayName !== undefined && update.displayName !== bot.displayName) {
+      for (const spaceId of renameManagedBotRoles(updated)) announceSpaceRolesChanged(spaceId, []);
     }
 
     const response: UpdateBotResponse = { bot: toSummary(updated) };
@@ -356,13 +414,13 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
 
   // A space manager brings a bot into a space they manage. Same result as the
   // bot joining by invite, without handing out a code.
-  app.post<{ Params: { id: string }; Body: { spaceId?: unknown } }>('/api/bots/:id/spaces', {
+  app.post<{ Params: { id: string }; Body: Partial<Record<keyof AddBotToSpaceRequest, unknown>> }>('/api/bots/:id/spaces', {
     preHandler: preSpaceAction,
     config: { rateLimit: { max: 30, timeWindow: '15 minutes' } },
   }, async (request, reply) => {
-    // Any space manager may bring any native bot of this instance in; the
-    // bot's owner does not take part (no consent round-trip).
-    const bot = findInviteableBot(request.params.id);
+    // Any space manager may bring a bot in; the bot's owner does not take
+    // part (no consent round-trip).
+    const bot = findSpaceBot(request.params.id);
     if (!bot) return sendError(reply, 404, 'bot_not_found');
     const spaceId = typeof request.body?.spaceId === 'string' ? request.body.spaceId : '';
     if (!spaceId) {
@@ -376,7 +434,15 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     }
     if (isBanned(spaceId, bot.id)) return sendError(reply, 403, 'user_banned');
     if (isMember(spaceId, bot.id)) return sendError(reply, 409, 'already_member');
-    addUserToSpace(spaceId, bot.id);
+    // MANAGE_SPACE is enough to create the bot's role: what it carries is
+    // limited to what the bot asked for and what the manager holds.
+    const grant = grantedBotPermissions(
+      storedRequestedPermissions(bot.botRequestedPermissions),
+      computePermissions(request.userId, spaceId),
+      request.body?.permissions,
+    );
+    if ('code' in grant) return sendError(reply, grant.status, grant.code);
+    addBotToSpace(spaceId, bot, grant.bits);
     return reply.send({ success: true });
   });
 
@@ -387,7 +453,7 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
   }, async (request, reply) => {
     // The owner may take their bot out of any space; a space manager may
     // take any bot out of a space they manage.
-    const bot = findInviteableBot(request.params.id);
+    const bot = findSpaceBot(request.params.id);
     if (!bot) return sendError(reply, 404, 'bot_not_found');
     const { spaceId } = request.params;
     const space = getDb().select({ id: schema.spaces.id }).from(schema.spaces)

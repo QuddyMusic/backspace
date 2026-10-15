@@ -16,6 +16,8 @@ import { describeError } from '../../../i18n/errors';
 import { useFormatters } from '../../../i18n/formatters';
 import { Avatar } from '../../ui/Avatar';
 import { ImageCropModal } from '../../ui/ImageCropModal';
+import { BotPermissionChecklist } from '../../ui/BotPermissionChecklist';
+import { ALL_PERMISSIONS, permissionsToString } from '../../../utils/permissions';
 import { useTransferStore } from '../../../stores/transferStore';
 import { waitForTransferAttachment } from '../../../utils/waitForTransfer';
 
@@ -76,6 +78,7 @@ export function BotsPanel() {
   const [editBio, setEditBio] = useState('');
   const [editStatusType, setEditStatusType] = useState<StatusChoice>('none');
   const [editStatusText, setEditStatusText] = useState('');
+  const [editRequested, setEditRequested] = useState('0');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [avatarBotId, setAvatarBotId] = useState<string | null>(null);
   const [cropSrc, setCropSrc] = useState<string | null>(null);
@@ -160,6 +163,7 @@ export function BotsPanel() {
     setEditBio(bot.bio ?? '');
     setEditStatusType(bot.activity?.type ?? 'none');
     setEditStatusText(bot.activity?.name ?? '');
+    setEditRequested(bot.requestedPermissions);
     setConfirmDeleteId(null);
     setError(null);
   };
@@ -173,6 +177,7 @@ export function BotsPanel() {
         displayName: stemOf(editName) + BOT_NAME_SUFFIX,
         bio: bio.length > 0 ? bio : null,
         activity: statusFromEditor(editStatusType, editStatusText),
+        requestedPermissions: editRequested,
       });
       setBots((prev) => prev.map((b) => (b.id === bot.id ? res.bot : b)));
       setEditingId(null);
@@ -546,6 +551,18 @@ export function BotsPanel() {
                         />
                       </div>
                       <div className="text-xs text-txt-tertiary mt-1">{t('settings:bots.status.hint')}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-txt-secondary mb-1">{t('settings:bots.permissions.label')}</div>
+                      <div className="text-xs text-txt-tertiary mb-2">{t('settings:bots.permissions.hint')}</div>
+                      <div className="rounded-lg bg-white/[0.02] p-3">
+                        <BotPermissionChecklist
+                          offered={permissionsToString(ALL_PERMISSIONS)}
+                          value={editRequested}
+                          onChange={setEditRequested}
+                          disabled={busy}
+                        />
+                      </div>
                     </div>
                   </div>
                 )}

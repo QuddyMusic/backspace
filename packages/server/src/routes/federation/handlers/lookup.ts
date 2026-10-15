@@ -5,6 +5,7 @@ import { isLookupRateLimited } from '../rateLimits.js';
 import { authenticateS2SPeer } from './s2sAuth.js';
 import { relayHandleOf } from '../stubName.js';
 import { parseStoredBotActivity } from '../../../utils/botActivity.js';
+import { storedRequestedPermissions } from '../../../utils/botRoles.js';
 
 export function registerLookupRoutes(app: FastifyInstance): void {
   // ─── POST /api/federation/users/lookup ─────────────────────────────────────
@@ -148,7 +149,11 @@ export function registerLookupRoutes(app: FastifyInstance): void {
             // A bot of this instance says so, with its stored status; a row
             // homed elsewhere is not ours to name.
             ...(user.isBot === 1 && !user.homeInstance
-              ? { isBot: true, botActivity: parseStoredBotActivity(user.botActivity) }
+              ? {
+                isBot: true,
+                botActivity: parseStoredBotActivity(user.botActivity),
+                botRequestedPermissions: storedRequestedPermissions(user.botRequestedPermissions).toString(),
+              }
               : {}),
           },
         },

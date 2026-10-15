@@ -505,6 +505,10 @@
         "watching": "Watching {{name}}"
       }
     },
+    "permissions": {
+      "label": "Permissions the bot asks for",
+      "hint": "A manager adding the bot to a space sees these ticked and can untick any. They go into a role named after the bot. Changing them later does not touch roles already created."
+    },
     "avatar": {
       "change": "Change avatar",
       "remove": "Remove avatar",

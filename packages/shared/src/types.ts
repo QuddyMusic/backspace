@@ -262,6 +262,12 @@ export interface Role {
   permissions?: string; // BigInt decimal string (bitwise)
   isEveryone?: boolean; // UI hint: true when role.id === space.id
   createdAt: number;
+  /**
+   * A bot's managed role: the bot it was created for when added to the space.
+   * Only that bot holds it; it cannot be deleted or given to anyone else.
+   * Absent on every other role.
+   */
+  managedBotId?: string;
 }
 
 // ─── Folder Types ───────────────────────────────────────────────────────────
@@ -1632,6 +1638,8 @@ export interface FederationProfileUpdatePayload {
    * Absent means the home did not say, and the receiver keeps what it stores.
    */
   botActivity?: BotActivity | null;
+  /** A bot's requested space permissions (decimal bitmask; bots only, same rules as `botActivity`). */
+  botRequestedPermissions?: string | null;
 }
 
 /**
@@ -1845,6 +1853,8 @@ export interface FederationUserLookupProfile {
   isBot?: boolean | null;
   /** A bot's stored status, as `FederationProfileUpdatePayload.botActivity`. */
   botActivity?: BotActivity | null;
+  /** A bot's requested space permissions, as `FederationProfileUpdatePayload.botRequestedPermissions`. */
+  botRequestedPermissions?: string | null;
 }
 
 export type FederationUserLookupResponse =
@@ -2152,6 +2162,11 @@ export interface BotSummary {
   bio: string | null;
   /** The stored status, or null for none. */
   activity: BotActivity | null;
+  /**
+   * The space permissions the bot asks for, a permission bitmask as a decimal
+   * string ('0' for none). A manager adding the bot grants any subset of it.
+   */
+  requestedPermissions: string;
   createdAt: number;
 }
 
@@ -2196,6 +2211,19 @@ export interface UpdateBotRequest {
   bio?: string | null;
   /** The stored status; null clears. Takes effect at once while the bot is connected. */
   activity?: BotActivity | null;
+  /** Requested space permissions: a canonical decimal bitmask of defined bits; '0' for none. */
+  requestedPermissions?: string;
+}
+
+/** POST /api/bots/:id/spaces. */
+export interface AddBotToSpaceRequest {
+  spaceId: string;
+  /**
+   * The permissions the manager grants, a decimal bitmask within the bot's
+   * requested permissions and the manager's own. Omitted: every requested bit
+   * the manager holds. '0' or nothing to grant: no role is created.
+   */
+  permissions?: string;
 }
 
 export interface UpdateBotResponse {

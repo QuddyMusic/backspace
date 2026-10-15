@@ -46,6 +46,7 @@ const bot: BotSummary = {
   avatarColor: '#123456',
   bio: null,
   activity: null,
+  requestedPermissions: '0',
   createdAt: 1_700_000_000_000,
 };
 
@@ -188,6 +189,7 @@ describe('BotsPanel about and status', () => {
       displayName: 'Echo_bot',
       bio: 'Echoes what you say',
       activity: { type: 'listening', name: 'you' },
+      requestedPermissions: '0',
     }));
     expect(await within(card).findByText('settings:bots.status.display.listening')).toBeTruthy();
   });
@@ -210,5 +212,29 @@ describe('BotsPanel about and status', () => {
     fireEvent.click(within(card).getByText('settings:bots.actions.save'));
 
     await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('b1', expect.objectContaining({ activity: null, bio: null })));
+  });
+});
+
+describe('BotsPanel requested permissions', () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset());
+    mocks.list.mockResolvedValue({ bots: [{ ...bot, requestedPermissions: String(1n << 10n) }] });
+    mocks.update.mockResolvedValue({ bot });
+  });
+  afterEach(() => cleanup());
+
+  it('shows what the bot asks for ticked and saves the changed set', async () => {
+    render(<BotsPanel />);
+    const card = await screen.findByRole('listitem', { name: 'Echo_bot' });
+    fireEvent.click(within(card).getByText('settings:bots.actions.edit'));
+
+    const send = within(card).getByLabelText('spaces:permissions.names.sendMessages') as HTMLInputElement;
+    expect(send.checked).toBe(true);
+    fireEvent.click(within(card).getByLabelText('spaces:permissions.names.kickMembers'));
+    fireEvent.click(within(card).getByText('settings:bots.actions.save'));
+
+    await waitFor(() => expect(mocks.update).toHaveBeenCalledWith('b1', expect.objectContaining({
+      requestedPermissions: String((1n << 10n) | (1n << 6n)),
+    })));
   });
 });

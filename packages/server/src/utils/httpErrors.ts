@@ -278,6 +278,9 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   bot_block_not_federated: 'Only a bot from another instance can be blocked',
   blocked_bot_not_found: 'This bot is not blocked',
   bot_activity_invalid: 'A bot status needs a type (custom, playing, listening or watching) and a text of 1 to {{max}} characters',
+  bot_permissions_invalid: 'Requested permissions must be a permission bitmask',
+  bot_permissions_not_requested: 'The bot did not ask for some of these permissions',
+  role_managed_by_bot: 'This role belongs to a bot: it goes with the bot and cannot be given to anyone else or deleted',
 };
 
 function fillPlaceholders(text: string, details: ErrorDetails | undefined): string {

@@ -252,5 +252,8 @@
   "bot_blocked": "Diese Instanz akzeptiert diesen Bot nicht.",
   "bot_block_not_federated": "Nur ein Bot einer anderen Instanz kann gesperrt werden.",
   "blocked_bot_not_found": "Dieser Bot ist nicht gesperrt.",
-  "bot_activity_invalid": "Ein Bot-Status braucht einen Typ und einen Text mit 1 bis {{max}} Zeichen."
+  "bot_activity_invalid": "Ein Bot-Status braucht einen Typ und einen Text mit 1 bis {{max}} Zeichen.",
+  "bot_permissions_invalid": "Angeforderte Berechtigungen müssen eine Berechtigungsmaske sein.",
+  "bot_permissions_not_requested": "Der Bot hat einige dieser Berechtigungen nicht angefordert.",
+  "role_managed_by_bot": "Diese Rolle gehört zu einem Bot: Sie geht mit dem Bot und kann weder vergeben noch gelöscht werden."
 }

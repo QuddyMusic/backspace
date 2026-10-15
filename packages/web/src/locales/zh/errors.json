@@ -252,5 +252,8 @@
   "bot_blocked": "此实例不接受该机器人。",
   "bot_block_not_federated": "只能封禁来自其他实例的机器人。",
   "blocked_bot_not_found": "该机器人未被封禁。",
-  "bot_activity_invalid": "机器人状态需要一个类型和 1 到 {{max}} 个字符的文字。"
+  "bot_activity_invalid": "机器人状态需要一个类型和 1 到 {{max}} 个字符的文字。",
+  "bot_permissions_invalid": "请求的权限必须是权限位掩码。",
+  "bot_permissions_not_requested": "机器人没有请求其中某些权限。",
+  "role_managed_by_bot": "此角色属于机器人：它随机器人一起移除，不能分配给他人或删除。"
 }

@@ -506,6 +506,10 @@
         "watching": "Assistindo {{name}}"
       }
     },
+    "permissions": {
+      "label": "Permissões que o bot pede",
+      "hint": "Quem adiciona o bot a um espaço as vê marcadas e pode desmarcar qualquer uma. Elas vão para um cargo com o nome do bot. Mudá-las depois não altera cargos já criados."
+    },
     "avatar": {
       "change": "Alterar avatar",
       "remove": "Remover avatar",

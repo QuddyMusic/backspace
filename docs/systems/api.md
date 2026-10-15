@@ -711,15 +711,15 @@ Full reference in [bots.md](bots.md). Owner endpoints need the JWT of a native h
 ```
 GET /bots → { bots: BotSummary[] }
 POST /bots { name } → 201 { bot, token } [5 per 15 min; the _bot suffix is appended when missing; max 10 per owner]
-PATCH /bots/:id { displayName?, avatar?, bio?, activity? } → { bot } [owner; displayName must end with _bot; bio ≤ 190 (400 bio_too_long); activity { type: custom|playing|listening|watching, name 1-128 } or null (400 bot_activity_invalid); bots.md 3]
+PATCH /bots/:id { displayName?, avatar?, bio?, activity?, requestedPermissions? } → { bot } [owner; displayName must end with _bot; bio ≤ 190 (400 bio_too_long); activity { type: custom|playing|listening|watching, name 1-128 } or null (400 bot_activity_invalid); requestedPermissions: canonical decimal mask (400 bot_permissions_invalid); a new displayName renames the bot's managed roles; bots.md 3, 4]
 POST /bots/:id/token → { token, federation } [5 per 15 min; revokes earlier tokens, cuts the bot off on other instances; per origin `federation` says success, a failure that is still `pending` (retried in the background) or a final refusal; see bots.md, "Revocation retries"]
 GET /bots/:id/tokens → { tokens: BotTokenSummary[], legacy } [owner; no secrets; 30 per 15 min]
 POST /bots/:id/tokens { name? } → 201 { id, name, createdAt, lastUsedAt, token } [owner; 5 per 15 min; max 5 per bot; the secret is shown once]
 DELETE /bots/:id/tokens/:tokenId → { success } [owner; closes the bot's sockets; 30 per 15 min]
 DELETE /bots/:id → { success, federation }
-GET /bots/search?q= → { bots: BotSearchResult[] } [native discoverable bots, username substring of 2-32 chars, up to 25; each result adds ownerUsername, null when the owner is deleted or not discoverable; 60 per min]
+GET /bots/search?q= → { bots: BotSearchResult[] } [discoverable bots a manager here may add: native ones and registered accounts of bots of other instances; username substring of 2-32 chars, up to 25; each result adds ownerUsername, null when the owner is deleted or not discoverable; 60 per min]
 GET /bots/:id/spaces → { spaces: [{ id, name, icon, botIsMember }] } [owner; the caller's MANAGE_SPACE spaces plus every space the bot already sits in]
-POST /bots/:id/spaces { spaceId } → { success } [any native bot of this instance; MANAGE_SPACE in the space]
+POST /bots/:id/spaces { spaceId, permissions? } → { success } [a native bot or a registered account of another instance's bot; MANAGE_SPACE in the space; permissions ⊆ requested (400 bot_permissions_not_requested) and held (403 cannot_grant_unowned_permissions); omitted: requested ∩ held; a non-empty grant creates the bot's managed role; bots.md 4]
 DELETE /bots/:id/spaces/:spaceId → { success } [the bot's owner, or MANAGE_SPACE in the space]
 PUT /messages/:id/reactions/:emoji → { success, changed } [ADD_REACTIONS for space messages; channel or DM message, found by id]
 DELETE /messages/:id/reactions/:emoji → { success, changed } [own reaction]

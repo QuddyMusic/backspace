@@ -42,8 +42,10 @@ vi.mock('../../ws/handler.js', () => ({
     federatedCalls: new Map(),
     isUserOnline: vi.fn(),
     lateBindFederatedCall: vi.fn(),
+    announceSpaceAccessChange: (...args: unknown[]) => announceSpaceAccessChange(...args),
   },
 }));
+const announceSpaceAccessChange = vi.fn();
 
 const applyStoredBotActivity = vi.fn();
 vi.mock('../../ws/presence.js', () => ({
@@ -477,5 +479,44 @@ describe('the stored status of a bot homed elsewhere', () => {
     expect(homeProfileFromAnswer({ username: 'radio_bot', profile: { ...base, isBot: true, botActivity: listening } }).botActivity).toEqual(listening);
     expect(homeProfileFromAnswer({ username: 'radio_bot', profile: { ...base, isBot: true, botActivity: null } }).botActivity).toBeNull();
     expect('botActivity' in homeProfileFromAnswer({ username: 'ann', profile: base })).toBe(false);
+  });
+});
+
+describe('what a bot homed elsewhere asks for, and its managed roles here', () => {
+  const plain = { profileUpdatedAt: 5000, username: 'radio_bot', displayName: 'Radio_bot', avatar: null, banner: null, avatarColor: null, bio: null };
+
+  it('a newer profile stores the requested permissions; unsaid or malformed keeps them; none clears', async () => {
+    insertReplica({ id: 'r-bot', username: `radio_bot@${HOME}`, homeUserId: '7201', isBot: 1, profileUpdatedAt: 1000 });
+    const { applyHomeProfile } = await import('./profile.js');
+
+    await applyHomeProfile(row('r-bot'), { ...plain, botRequestedPermissions: '1024' }, HOME_ORIGIN, testDb);
+    expect(row('r-bot').botRequestedPermissions).toBe('1024');
+
+    await applyHomeProfile(row('r-bot'), { ...plain, profileUpdatedAt: 6000 }, HOME_ORIGIN, testDb);
+    await applyHomeProfile(row('r-bot'), { ...plain, profileUpdatedAt: 7000, botRequestedPermissions: '0x400' }, HOME_ORIGIN, testDb);
+    expect(row('r-bot').botRequestedPermissions).toBe('1024');
+
+    await applyHomeProfile(row('r-bot'), { ...plain, profileUpdatedAt: 8000, botRequestedPermissions: '0' }, HOME_ORIGIN, testDb);
+    expect(row('r-bot').botRequestedPermissions).toBeNull();
+  });
+
+  it('a person takes none', async () => {
+    insertReplica({ id: 'r-ann', username: `ann@${HOME}`, homeUserId: '7202', profileUpdatedAt: 1000 });
+    const { applyHomeProfile } = await import('./profile.js');
+    await applyHomeProfile(row('r-ann'), { ...plain, username: 'ann', botRequestedPermissions: '1024' }, HOME_ORIGIN, testDb);
+    expect(row('r-ann').botRequestedPermissions).toBeNull();
+  });
+
+  it('a new name from the home renames the bot\'s managed roles here', async () => {
+    insertReplica({ id: 'r-bot', username: `radio_bot@${HOME}`, homeUserId: '7203', isBot: 1, displayName: 'Radio_bot', profileUpdatedAt: 1000 });
+    testDb.insert(schema.users).values({ id: 'host-owner', username: 'host-owner', passwordHash: 'x', status: 'offline', isAdmin: 0, createdAt: 1 }).run();
+    testDb.insert(schema.spaces).values({ id: 's1', name: 'S', ownerId: 'host-owner', inviteCode: 'c', visibility: 'public', createdAt: 1 }).run();
+    testDb.insert(schema.roles).values({ id: 'role-bot', spaceId: 's1', name: 'Radio_bot', position: 1, permissions: '0', createdAt: 1, managedBotId: 'r-bot' }).run();
+    const { applyHomeProfile } = await import('./profile.js');
+
+    await applyHomeProfile(row('r-bot'), { ...plain, displayName: 'Jazz_bot' }, HOME_ORIGIN, testDb);
+
+    expect(testDb.select().from(schema.roles).where(eq(schema.roles.id, 'role-bot')).get()?.name).toBe('Jazz_bot');
+    expect(announceSpaceAccessChange).toHaveBeenCalledWith('s1', []);
   });
 });

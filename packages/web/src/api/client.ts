@@ -438,7 +438,8 @@ export class BackspaceApiClient {
     revokeToken: (id: string, tokenId: string) => Promise<{ success: boolean }>;
     update: (id: string, data: UpdateBotRequest) => Promise<UpdateBotResponse>;
     spaces: (id: string) => Promise<BotSpacesResponse>;
-    addToSpace: (id: string, spaceId: string) => Promise<{ success: boolean }>;
+    /** `permissions`: the grant out of the bot's requested permissions; omitted, the server grants every requested bit the caller holds. */
+    addToSpace: (id: string, spaceId: string, permissions?: string) => Promise<{ success: boolean }>;
     removeFromSpace: (id: string, spaceId: string) => Promise<{ success: boolean }>;
     delete: (id: string) => Promise<{ success: boolean }>;
   };
@@ -986,7 +987,7 @@ export class BackspaceApiClient {
       revokeToken: (id: string, tokenId: string) => request<{ success: boolean }>('DELETE', `/bots/${id}/tokens/${tokenId}`),
       update: (id: string, data: UpdateBotRequest) => request<UpdateBotResponse>('PATCH', `/bots/${id}`, data),
       spaces: (id: string) => request<BotSpacesResponse>('GET', `/bots/${id}/spaces`),
-      addToSpace: (id: string, spaceId: string) => request<{ success: boolean }>('POST', `/bots/${id}/spaces`, { spaceId }),
+      addToSpace: (id: string, spaceId: string, permissions?: string) => request<{ success: boolean }>('POST', `/bots/${id}/spaces`, permissions === undefined ? { spaceId } : { spaceId, permissions }),
       removeFromSpace: (id: string, spaceId: string) => request<{ success: boolean }>('DELETE', `/bots/${id}/spaces/${spaceId}`),
       delete: (id: string) => request<{ success: boolean }>('DELETE', `/bots/${id}`),
     };

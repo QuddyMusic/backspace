@@ -50,6 +50,9 @@ export const ERROR_CODES = [
   'bot_block_not_federated',
   'blocked_bot_not_found',
   'bot_activity_invalid',
+  'bot_permissions_invalid',
+  'bot_permissions_not_requested',
+  'role_managed_by_bot',
 
   // Auth and accounts
   'username_required',

@@ -3,6 +3,18 @@ import type { MemberWithUser } from '@backspace/shared';
 import { getDb, schema } from '../db/index.js';
 import { connectionManager } from '../ws/handler.js';
 import { sanitizeUser } from './sanitize.js';
+import { createManagedBotRole, deleteManagedBotRole } from './botRoles.js';
+
+/**
+ * A bot's managed role in `spaceId` came or went: every member's client
+ * reloads the space's roles and access (`space_access_changed`), and the
+ * affected members get their voice view again. SPEAK needs no re-check: the
+ * role is created as the bot joins and deleted as it leaves, never while it
+ * sits in a voice channel of the space.
+ */
+export function announceSpaceRolesChanged(spaceId: string, affectedUserIds: readonly string[]): void {
+  connectionManager.announceSpaceAccessChange(spaceId, affectedUserIds);
+}
 
 /**
  * Adds a user to a space: the member row, the live WS registration and the
@@ -31,11 +43,29 @@ export function addUserToSpace(spaceId: string, userId: string): void {
 }
 
 /**
+ * Adds a bot to a space as a manager does it: the membership (`addUserToSpace`)
+ * and, when `permissions` grants anything, the bot's managed role carrying
+ * them (utils/botRoles.ts), announced to the space. The caller has checked
+ * the grant against the bot's requested permissions and its own.
+ */
+export function addBotToSpace(
+  spaceId: string,
+  bot: { id: string; displayName: string | null; username: string },
+  permissions: bigint,
+): void {
+  addUserToSpace(spaceId, bot.id);
+  if (permissions === 0n) return;
+  createManagedBotRole(spaceId, bot, permissions);
+  announceSpaceRolesChanged(spaceId, [bot.id]);
+}
+
+/**
  * Takes a user out of a space: the member row, their voice restrictions and
  * read states for the space's channels, then a `member_left` broadcast and the
  * end of live delivery of that space's events to their sockets. A bot also
- * loses its role assignments and its per-member channel overrides here: a bot
- * leaves nothing behind (a person keeps their roles, as before). The broadcast
+ * loses its role assignments, its per-member channel overrides and its
+ * managed role here: a bot leaves nothing behind (a person keeps their roles,
+ * as before). The broadcast
  * goes first so the removed user's own sessions still learn they are out.
  * Callers have checked who may remove whom.
  */
@@ -62,7 +92,9 @@ export function removeUserFromSpace(spaceId: string, userId: string): void {
 
   const account = db.select({ isBot: schema.users.isBot }).from(schema.users)
     .where(eq(schema.users.id, userId)).get();
+  let managedRoleRemoved = false;
   if (account?.isBot === 1) {
+    managedRoleRemoved = deleteManagedBotRole(spaceId, userId);
     if (spaceChannelIds.length > 0) {
       db.delete(schema.botSeatRestrictions).where(and(
         eq(schema.botSeatRestrictions.botId, userId),
@@ -83,4 +115,5 @@ export function removeUserFromSpace(spaceId: string, userId: string): void {
 
   connectionManager.sendToSpace(spaceId, { type: 'member_left', spaceId, userId });
   connectionManager.removeUserSpace(userId, spaceId);
+  if (managedRoleRemoved) announceSpaceRolesChanged(spaceId, []);
 }
