@@ -165,6 +165,7 @@
     "title": "Befehle",
     "failed": "Der Befehl konnte nicht gesendet werden",
     "extraText": "Dieser Befehl nimmt keinen freien Text, aber „{{text}}“ bleibt übrig. Erst die Optionen, dann der Text",
+    "invalidOption": "Der Wert von {{option}} passt nicht zu diesem Befehl.",
     "optionsTitle": "Optionale Parameter"
   },
   "embed": {

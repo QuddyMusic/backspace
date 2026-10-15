@@ -121,7 +121,7 @@ describe('typed values', () => {
     option('reason', 'string'),
   ]);
   const context: CommandArgContext = {
-    users: [{ id: 'u1', username: 'bob' }, { id: 'u2', username: 'Ann' }],
+    users: [{ id: 'u1', names: ['bob', 'Bobby'] }, { id: 'u2', names: ['Ann'] }, { id: 'u3', names: ['quddymusic', 'Quddy'] }],
     roles: [{ id: 'r1', name: 'Mods' }, { id: 'r2', name: 'mods-old' }],
     channels: [
       { id: 'c1', name: 'lounge', type: 'voice' },
@@ -143,6 +143,15 @@ describe('typed values', () => {
       // Two channels are named general, but only one is a voice channel.
       options: { who: 'u2', group: 'r1', where: 'c3' },
     });
+  });
+
+  it('matches a person by login, display name or nickname, and a quoted channel name with a space', () => {
+    const spaced: CommandArgContext = { ...context, channels: [{ id: 'c9', name: 'Big Voice', type: 'voice' }] };
+    expect(parseCommandArgs(kick, 'who:@Quddy where:"#Big Voice"', spaced)).toEqual({
+      ok: true,
+      options: { who: 'u3', where: 'c9' },
+    });
+    expect(parseCommandArgs(kick, 'who:bobby', context)).toEqual({ ok: true, options: { who: 'u1' } });
   });
 
   it('leaves an unknown name as written, for the server to refuse', () => {

@@ -27,6 +27,7 @@ import { selfIdentityOf, spaceMemberName } from '../../utils/identity';
 import { findLastOwnEditableMessage } from './messageEditing';
 import { getApiForOrigin } from '../../utils/crossStoreResolvers';
 import { describeError } from '../../i18n/errors';
+import { HttpError } from '../../api/client';
 import {
   parseCommandArgs,
   remainingOptions,
@@ -291,10 +292,26 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     [chatSpaceId, spaceRoles],
   );
   const commandContext = useMemo<CommandArgContext>(() => ({
-    users: chatPeople.map((c) => ({ id: c.userId, username: c.user.username })),
+    users: chatPeople.map((c) => ({
+      id: c.userId,
+      names: [c.user.username, c.user.displayName ?? '', c.member?.nickname ?? ''].filter((n) => n.length > 0),
+    })),
     roles: chatRoles,
     channels: chatSpaceId === undefined ? [] : spaceChannels.filter((c) => c.spaceId === chatSpaceId),
   }), [chatPeople, chatRoles, chatSpaceId, spaceChannels]);
+
+  /**
+   * The toast for a refused invocation. A value the server refused names its
+   * option (`details.field` is `options.<name>`); the server's own reason is
+   * English, so the option name is what is shown.
+   */
+  const describeCommandError = (err: unknown): string => {
+    const field = err instanceof HttpError && err.code === 'validation_failed' ? err.details?.field : undefined;
+    if (typeof field === 'string' && field.startsWith('options.')) {
+      return t('chat:commands.invalidOption', { option: field.slice('options.'.length) });
+    }
+    return err instanceof Error ? describeError(err) : t('chat:commands.failed');
+  };
 
   // The value popover's rows.
   const valueMatches = useMemo((): CommandValueCandidate[] => {
@@ -322,7 +339,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     return commandContext.channels
       .filter((c) => (!option.channelTypes || option.channelTypes.includes(c.type)) && c.name.toLowerCase().includes(query))
       .slice(0, 25)
-      .map((c) => ({ key: c.id, label: `#${c.name}`, detail: c.type, insert: `#${c.name} ` }));
+      // A name with a space goes in quotes, or the value would end at the space.
+      .map((c) => ({ key: c.id, label: `#${c.name}`, detail: c.type, insert: /\s/.test(c.name) ? `"#${c.name}" ` : `#${c.name} ` }));
   }, [valueSuggest, draftText, chatPeople, chatRoles, commandContext]);
 
   const selectValue = useCallback(
@@ -538,7 +556,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
           } catch (err) {
             const currentDraft = useComposerStore.getState().get(channelId).draftText;
             setDraft(channelId, submittedDraft + (currentDraft ? '\n' + currentDraft : ''));
-            addToast(err instanceof Error ? describeError(err) : t('chat:commands.failed'), 'warning');
+            addToast(describeCommandError(err), 'warning');
           }
           return;
         }

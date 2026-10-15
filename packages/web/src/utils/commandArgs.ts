@@ -7,40 +7,45 @@ export type OptionValues = Record<string, string | number | boolean>;
  * roles and channels (none in a DM).
  */
 export interface CommandArgContext {
-  users: ReadonlyArray<{ id: string; username: string }>;
+  /** Each person with every name the chat shows for them: login, display name, space nickname. */
+  users: ReadonlyArray<{ id: string; names: readonly string[] }>;
   roles: ReadonlyArray<{ id: string; name: string }>;
   channels: ReadonlyArray<{ id: string; name: string; type: ChannelType }>;
 }
 
 const NO_CONTEXT: CommandArgContext = { users: [], roles: [], channels: [] };
 
-/** The one id whose name is `name` (case-insensitively), or null for none or several. */
-function idByName<T extends { id: string }>(items: readonly T[], nameOf: (item: T) => string, name: string): string | null {
+/** The one id with a name equal to `name` (case-insensitively), or null for none or several. */
+function idByName<T extends { id: string }>(
+  items: readonly T[],
+  namesOf: (item: T) => readonly string[],
+  name: string,
+): string | null {
   const wanted = name.toLowerCase();
-  const found = items.filter((item) => nameOf(item).toLowerCase() === wanted);
-  return found.length === 1 ? found[0]!.id : null;
+  const ids = new Set(items.filter((item) => namesOf(item).some((n) => n.toLowerCase() === wanted)).map((item) => item.id));
+  return ids.size === 1 ? [...ids][0]! : null;
 }
 
 /**
  * The id a typed user, role or channel value stands for: a token from the
- * picker (`<@id>`, `<@&id>`), or a name written by hand (`@username`,
- * `@Role`, `#channel`, or the bare name) that names exactly one of them in
+ * picker (`<@id>`, `<@&id>`), or a name written by hand (`@login`, `@Display
+ * name` in quotes, `@Role`, `#channel`, or the bare name) that names exactly one of them in
  * the chat; a channel must also be of an accepted type. Anything else goes
  * to the server as typed, which refuses it.
  */
 function idOf(def: BotCommandOption, raw: string, context: CommandArgContext): string {
   if (def.type === 'user') {
     return /^<@([a-zA-Z0-9_-]+)>$/.exec(raw)?.[1]
-      ?? idByName(context.users, (u) => u.username, raw.replace(/^@/, ''))
+      ?? idByName(context.users, (u) => u.names, raw.replace(/^@/, ''))
       ?? raw;
   }
   if (def.type === 'role') {
     return /^<@&([a-zA-Z0-9_-]+)>$/.exec(raw)?.[1]
-      ?? idByName(context.roles, (r) => r.name.replace(/^@/, ''), raw.replace(/^@/, ''))
+      ?? idByName(context.roles, (r) => [r.name.replace(/^@/, '')], raw.replace(/^@/, ''))
       ?? raw;
   }
   const channels = context.channels.filter((c) => !def.channelTypes || def.channelTypes.includes(c.type));
-  return idByName(channels, (c) => c.name, raw.replace(/^#/, '')) ?? raw;
+  return idByName(channels, (c) => [c.name], raw.replace(/^#/, '')) ?? raw;
 }
 
 export interface OptionSuggest {
