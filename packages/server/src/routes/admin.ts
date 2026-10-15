@@ -427,6 +427,25 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
+  // Test-only: one pass of the bot revocation retries (utils/botRevocationQueue.ts)
+  // at the clock `at` (default now), and what it did. Gated exactly like
+  // seed-peer above. The harness runs with the federation workers off, so the
+  // bot revocation e2e suite runs the pass when the test says.
+  app.post<{ Body: { at?: number } }>(
+    '/api/admin/test/bot-revocations/run',
+    async (request, reply) => {
+      if (process.env.NODE_ENV !== 'test' || process.env.ENABLE_TEST_ROUTES !== '1') {
+        return reply.code(404).send({ error: 'Not Found', statusCode: 404 });
+      }
+      const at = request.body?.at;
+      if (at !== undefined && (typeof at !== 'number' || !Number.isFinite(at))) {
+        return reply.code(400).send({ error: 'at must be a number', statusCode: 400 });
+      }
+      const { runBotRevocationRetries } = await import('../utils/botRevocationQueue.js');
+      return reply.code(200).send(await runBotRevocationRetries(at ?? Date.now()));
+    },
+  );
+
   // Test-only: run one pull from a peer now, then the retry tick, and return
   // what the pull did. Gated exactly like seed-peer above. The two-instance
   // e2e suites use it so a pull happens when the test says, not on the

@@ -237,6 +237,8 @@ B verifies the proof with A over the signed server-to-server channel (`POST /api
 
 While a row exists for a host, the home issues the bot no new credential or proof for it (`POST /api/users/@me/federation-credential` and `POST /api/auth/attach-proof` answer `409 bot_revocation_pending`): the old account there would block a new registration, and the late revoke would take a new account down. Other hosts are not affected. The bot's own credential rows are deleted at once, as before: they are not what the retry needs.
 
+Covered end to end by `test/federation-e2e-bot-revocation-retry.test.ts`: the host is stopped, the owner resets the tokens (the answer says `pending`), credential and proof for that host answer 409, a retry while it is away keeps the row, the host comes back on the same port and database, and the next retry tombstones the account there and empties the queue; the bot can then register again.
+
 ## 8b. Token migration
 
 Before migration 0035 a bot's token was a JWT valid for 3650 days. Such a bot keeps working untouched until its owner creates its first `bsb_` token (Settings > Bots > Tokens, or `POST /api/bots/:id/tokens`). From that moment the old JWT is refused (REST, uploads and WebSocket answer `Token has been revoked`) and the sockets of the bot are closed, so create the token and give it to the program in one step. The rule applies to native bots only (`isBot`, no `homeInstance`, at least one row in `bot_tokens`); a bot's federated account on another instance logs in with its own session JWT and is not affected. Revoking the last token leaves the bot without any working token until a new one is created: that revoke also sets `users.password_changed_at`, so the old JWT does not come back.

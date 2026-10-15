@@ -2242,6 +2242,8 @@ DM channel hard-delete cascades: reactions, embeds, attachments (DB rows + disk 
 
 `POST /api/admin/test/federation/resync { peerOrigin, contexts?, retryAt? }` runs one pull from that peer now (`syncPeerMutationLog(peerId, 'manual', contexts)`, all contexts by default) and then `processSyncRetryTick(retryAt ?? now)`, and answers `{ result, retried }`. Same gate as seed-peer below. The two-instance e2e suites use it so a pull happens when the test says, not on the periodic timer.
 
+`POST /api/admin/test/bot-revocations/run { at? }` runs one pass of the bot revocation retries (`runBotRevocationRetries(at ?? now)`, bots.md "Revocation retries") and answers `{ done, retried, dropped }`. Same gate as seed-peer below. `test/federation-e2e-bot-revocation-retry.test.ts` uses it with a clock past the queued row's next attempt.
+
 `POST /api/admin/test/seed-peer` directly inserts a `federation_peers` row, skipping the multi-step peer handshake. Strictly gated: `NODE_ENV='test'` AND `ENABLE_TEST_ROUTES='1'` together; returns 404 in any other configuration. Used exclusively by the two-instance integration harness in `packages/server/test/`. Validates `origin` (must be http(s) URL), `hmacSecret` (≥32 chars), and `status` (must be one of `'active'`, `'pending'`, `'awaiting_approval'`, `'rejected'`, `'revoked'`, `'needs_attention'`, `'unreachable'`, `'accepted'`).
 
 ### Retry backoff divisor (test only)
