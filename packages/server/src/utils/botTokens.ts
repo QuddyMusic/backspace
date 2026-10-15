@@ -86,6 +86,8 @@ export function isRetiredLegacyBotJwt(account: { id: string; isBot: number | nul
 }
 
 export interface BotTokenIdentity {
+  /** The token's own id (the 16 hex after `bsb_`): what one live socket is held under. */
+  tokenId: string;
   userId: string;
   username: string;
   homeInstance: string | null;
@@ -120,5 +122,5 @@ export function verifyBotToken(token: string, now: number = Date.now()): BotToke
   if (row.lastUsedAt === null || now - row.lastUsedAt >= LAST_USED_WRITE_INTERVAL_MS) {
     db.update(schema.botTokens).set({ lastUsedAt: now }).where(eq(schema.botTokens.id, id)).run();
   }
-  return { userId: bot.id, username: bot.username, homeInstance: bot.homeInstance ?? null };
+  return { tokenId: id, userId: bot.id, username: bot.username, homeInstance: bot.homeInstance ?? null };
 }

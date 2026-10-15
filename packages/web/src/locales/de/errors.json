@@ -234,6 +234,7 @@
   "bot_token_limit_reached": "Ein Bot kann höchstens {{max}} Token haben.",
   "bot_token_not_found": "Token nicht gefunden.",
   "bot_token_name_invalid": "Ein Tokenname hat 1 bis {{max}} Zeichen.",
+  "bot_token_in_use": "Dieses Bot-Token ist bereits von einem anderen Prozess verbunden.",
   "bot_account_required": "Das kann nur ein Bot-Konto",
   "command_not_found": "Dieser Bot hat diesen Befehl nicht",
   "bot_unavailable": "Der Bot ist derzeit nicht verbunden",

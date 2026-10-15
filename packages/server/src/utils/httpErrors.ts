@@ -271,7 +271,8 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   bot_revocation_pending: 'The old account of this bot on that instance is still being removed; try again later',
   bot_token_limit_reached: 'A bot can have at most {{max}} tokens',
   bot_token_not_found: 'Token not found',
-  bot_token_name_invalid: 'A token name is 1 to {{max}} characters'
+  bot_token_name_invalid: 'A token name is 1 to {{max}} characters',
+  bot_token_in_use: 'This bot token is already connected from another process'
 };
 
 function fillPlaceholders(text: string, details: ErrorDetails | undefined): string {

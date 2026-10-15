@@ -3,6 +3,9 @@
 //
 //   BACKSPACE_URL=https://chat.example.com BOT_TOKEN=... node examples/bots/echo.mjs
 
+/** Close code of a socket refused because the token is open elsewhere (shared BOT_TOKEN_IN_USE_CLOSE_CODE). */
+const BOT_TOKEN_IN_USE = 4409;
+
 export function createBot({ baseUrl, token }) {
   if (!baseUrl || !token) throw new Error('set BACKSPACE_URL and BOT_TOKEN');
   const http = baseUrl.replace(/\/+$/, '');
@@ -56,7 +59,15 @@ export function createBot({ baseUrl, token }) {
         }
         Promise.resolve(onEvent(event)).catch((err) => console.error('handler error:', err.message));
       };
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
+        // 4409: another socket holds this token. Usually a second copy of the bot
+        // is running; after a network drop it can also be this bot's own old
+        // socket, which the server drops within about a minute, so keep trying.
+        if (ev.code === BOT_TOKEN_IN_USE) {
+          console.warn('this token is already connected from another process; retrying in 30s');
+          setTimeout(connect, 30_000);
+          return;
+        }
         const wait = Math.min(30_000, 1_000 * 2 ** attempt++);
         console.log(`disconnected, reconnecting in ${wait / 1000}s`);
         setTimeout(connect, wait);

@@ -44,6 +44,7 @@ export const ERROR_CODES = [
   'bot_token_limit_reached',
   'bot_token_not_found',
   'bot_token_name_invalid',
+  'bot_token_in_use',
 
   // Auth and accounts
   'username_required',

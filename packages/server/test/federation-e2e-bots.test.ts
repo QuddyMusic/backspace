@@ -49,6 +49,28 @@ let spaceId: string;
 let channelId: string;
 const sockets: WsCapture[] = [];
 
+/**
+ * A bot credential holds one live socket (bots.md, "One process per token"):
+ * this file closes the socket it opened for a token before it opens the next,
+ * and retries while the server has not yet seen that close.
+ */
+const botSockets = new Map<string, WsCapture>();
+async function connectBotWs(origin: string, token: string): Promise<WsCapture> {
+  botSockets.get(token)?.close();
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    try {
+      const ws = await connectWs(origin, token);
+      botSockets.set(token, ws);
+      sockets.push(ws);
+      return ws;
+    } catch (err) {
+      if (!String(err).includes('bot_token_in_use') || Date.now() > deadline) throw err;
+      await new Promise(r => setTimeout(r, 100));
+    }
+  }
+}
+
 async function api<T>(
   inst: SpawnedInstance,
   method: string,
@@ -223,8 +245,7 @@ describe('a bot in a space on the host', () => {
     const channels = Array.isArray(chRes.body) ? chRes.body : chRes.body.channels;
     channelId = (channels.find(c => c.type === 'text') ?? channels[0]!).id;
 
-    const ws = await connectWs(B.origin, hostBot.token);
-    sockets.push(ws);
+    const ws = await connectBotWs(B.origin, hostBot.token);
     await ws.waitForEvent('ready');
     expect((await api<ErrBody>(B, 'POST', '/api/spaces/join', hostBot.token, { inviteCode })).status).toBe(200);
 
@@ -264,8 +285,7 @@ describe('a bot in several voice channels of a space on the host', () => {
     voiceTwo = await makeChannel('host-radio-two', 'voice');
     textChannel = await makeChannel('host-chat', 'text');
 
-    hostBotWs = await connectWs(B.origin, hostBot.token);
-    sockets.push(hostBotWs);
+    hostBotWs = await connectBotWs(B.origin, hostBot.token);
     await hostBotWs.waitForEvent('ready');
 
     hostBotWs.send({ type: 'bot_voice_join', channelId: voiceOne });
@@ -302,20 +322,27 @@ describe('a bot in several voice channels of a space on the host', () => {
     expect(seatEvent(hostBotWs, textChannel, 'join')).toBe(false);
   });
 
-  it('keeps its seats while one of its host sockets is still open', async () => {
-    // The invite test above left a socket of this bot open: closing the one that
-    // took the seats must not end them (they end 5 s after the LAST socket closes).
+  it('refuses a second socket with the same token while the first is open, and the seats stay', async () => {
+    const joinsBefore = hostBotWs.events.filter(e => e.type === 'voice_state_update' && e.channelId === voiceOne && e.userId === hostBot.id && e.action === 'join').length;
     hostBotWs.send({ type: 'bot_voice_join', channelId: voiceOne });
-    expect(await waitUntil(() => seatEvent(hostBotWs, voiceOne, 'join'), 5_000)).toBe(true);
+    expect(await waitUntil(() => hostBotWs.events.filter(e => e.type === 'voice_state_update' && e.channelId === voiceOne && e.userId === hostBot.id && e.action === 'join').length > joinsBefore, 5_000)).toBe(true);
+
+    // A second process with the same token: an error with the code, then the server closes it.
+    await expect(connectWs(B.origin, hostBot.token)).rejects.toThrow(/bot_token_in_use/);
 
     const watcher = await connectWs(B.origin, hostHuman.token);
     sockets.push(watcher);
     const ready = await watcher.waitForEvent('ready');
     expect(((ready as { voiceStates?: Record<string, string[]> }).voiceStates ?? {})[voiceOne]).toContain(hostBot.id);
-
-    hostBotWs.close();
-    await new Promise(r => setTimeout(r, 7_000));
+    // The refused socket took nothing from the first one: no seat ended.
+    await new Promise(r => setTimeout(r, 1_000));
     expect(seatEvent(watcher, voiceOne, 'leave')).toBe(false);
+  });
+
+  it('frees the token when its socket closes: the next process connects', async () => {
+    hostBotWs.close();
+    const next = await connectBotWs(B.origin, hostBot.token);
+    expect(next.events.some(e => e.type === 'ready')).toBe(true);
   });
 });
 
@@ -496,8 +523,7 @@ describe('a manager invites a bot they do not own', () => {
     const channels = Array.isArray(chRes.body) ? chRes.body : chRes.body.channels;
     const cid = (channels.find(c => c.type === 'text') ?? channels[0]!).id;
 
-    const ws = await connectWs(A.origin, live.token);
-    sockets.push(ws);
+    const ws = await connectBotWs(A.origin, live.token);
     await ws.waitForEvent('ready');
     expect((await api<ErrBody>(A, 'POST', `/api/bots/${live.id}/spaces`, owner.token, { spaceId: sid })).status).toBe(200);
 
@@ -614,8 +640,7 @@ describe('a bot in direct and group conversations on its home', () => {
       const add = db.prepare('INSERT INTO dm_members (dm_channel_id, user_id, closed) VALUES (?, ?, 0)');
       for (const uid of [owner.id, bot.id, member.id]) add.run(groupId, uid);
     });
-    botWs = await connectWs(A.origin, bot.token);
-    sockets.push(botWs);
+    botWs = await connectBotWs(A.origin, bot.token);
     await botWs.waitForEvent('ready');
 
     await api<unknown>(A, 'POST', `/api/dm/${groupId}/messages`, owner.token, { content: 'group-marker' });
@@ -753,8 +778,7 @@ describe('taking a bot out of a space', () => {
     const channels = Array.isArray(chRes.body) ? chRes.body : chRes.body.channels;
     cid = (channels.find(c => c.type === 'text') ?? channels[0]!).id;
 
-    const ws = await connectWs(A.origin, bot.token);
-    sockets.push(ws);
+    const ws = await connectBotWs(A.origin, bot.token);
     await ws.waitForEvent('ready');
     expect((await api<ErrBody>(A, 'POST', `/api/bots/${bot.id}/spaces`, owner.token, { spaceId: sid })).status).toBe(200);
 
@@ -911,8 +935,7 @@ describe('invoking a slash command', () => {
     expect((await api<ErrBody>(A, 'POST', `/api/bots/${bot.id}/spaces`, owner.token, { spaceId: sid })).status).toBe(200);
     expect((await api<unknown>(A, 'PUT', '/api/bots/@me/commands', bot.token, { commands: [play] })).status).toBe(200);
 
-    botWs = await connectWs(A.origin, bot.token);
-    sockets.push(botWs);
+    botWs = await connectBotWs(A.origin, bot.token);
     await botWs.waitForEvent('ready');
 
     const listed = await api<Listed>(A, 'GET', `/api/commands?channelId=${cid}`, owner.token);
@@ -1056,11 +1079,9 @@ describe('two bots with the same command name', () => {
     expect(plays.every(c => c.botId === (c.bot.username === first.username ? first.id : second.id))).toBe(true);
 
     // An invocation names the bot; the clash changes nothing about that.
-    const wsFirst = await connectWs(A.origin, first.token);
-    sockets.push(wsFirst);
+    const wsFirst = await connectBotWs(A.origin, first.token);
     await wsFirst.waitForEvent('ready');
-    const wsSecond = await connectWs(A.origin, second.token);
-    sockets.push(wsSecond);
+    const wsSecond = await connectBotWs(A.origin, second.token);
     await wsSecond.waitForEvent('ready');
 
     const got = (ws: WsCapture, id: string): boolean =>
@@ -1099,8 +1120,7 @@ describe('a bot in several voice channels', () => {
     voiceA = await makeVoice('radio-one');
     voiceB = await makeVoice('radio-two');
 
-    botWs = await connectWs(A.origin, bot.token);
-    sockets.push(botWs);
+    botWs = await connectBotWs(A.origin, bot.token);
     await botWs.waitForEvent('ready');
 
     botWs.send({ type: 'bot_voice_join', channelId: voiceA });
@@ -1167,7 +1187,7 @@ describe('a bot in several voice channels', () => {
     const seated = (channelId: string, action: string): boolean =>
       watcher.events.some(e => e.type === 'voice_state_update' && e.channelId === channelId && e.userId === lone.id && e.action === action);
 
-    const own = await connectWs(A.origin, lone.token);
+    const own = await connectBotWs(A.origin, lone.token);
     await own.waitForEvent('ready');
     own.send({ type: 'bot_voice_join', channelId: first });
     own.send({ type: 'bot_voice_join', channelId: second });

@@ -85,6 +85,10 @@ A mention is the token `<@userId>` in `content`. Code spans and fenced blocks do
 
 The socket has no resume. After a reconnect the `ready` payload carries the current state and anything missed is read back with the history endpoints. The server pings every 30 s and drops a dead connection after about 65 s; standard WebSocket clients answer pings themselves.
 
+### One process per token
+
+A bot runs as one process that serves all of its channels: one credential holds **one** open socket. A second `auth` with a credential whose socket is still open gets `{ "type": "error", "code": "bot_token_in_use" }` and is closed with code **4409** (`BOT_TOKEN_IN_USE_CLOSE_CODE` in `shared/constants.ts`); the first socket, its events and its voice seats are untouched. The credential is a `bsb_` token (each of the up to 5 tokens is its own credential), or for a JWT login of a bot account (a pre-`bsb_` JWT, or a bot's federated account on another instance) the account itself. A socket that is closing or closed does not hold its credential, so a restarted process connects at once; after a network drop the old socket can hold it until the heartbeat drops it (about 65 s), so a refused client retries (`examples/bots/client.mjs` waits 30 s). REST calls are not limited this way. The holder is kept in `ConnectionManager` (`claimBotSession` / `releaseBotSession`, released in `removeConnection`).
+
 ### Actions (REST)
 
 | Action | Call |
@@ -188,7 +192,7 @@ The call works for a bot exactly as for a person (a role without SPEAK or STREAM
 
 ### When a seat ends
 
-The bot leaves a seat with `bot_voice_leave`. All its seats end 5 seconds after its last socket closes, and at once when its token is regenerated or revoked or the account deleted, and the seats of one space end when the bot is removed from that space, kicked or banned.
+The bot leaves a seat with `bot_voice_leave`. All its seats end 5 seconds after its socket closes (a bot holds one socket per token, see "One process per token"), and at once when its token is regenerated or revoked or the account deleted, and the seats of one space end when the bot is removed from that space, kicked or banned.
 
 ### Limits
 

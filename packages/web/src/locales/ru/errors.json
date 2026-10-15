@@ -234,6 +234,7 @@
   "bot_token_limit_reached": "У бота может быть не больше {{max}} токенов.",
   "bot_token_not_found": "Токен не найден.",
   "bot_token_name_invalid": "Имя токена: от 1 до {{max}} символов.",
+  "bot_token_in_use": "Этот токен бота уже подключён из другого процесса.",
   "bot_account_required": "Это может сделать только аккаунт бота",
   "command_not_found": "У этого бота нет такой команды",
   "bot_unavailable": "Бот сейчас не подключён",

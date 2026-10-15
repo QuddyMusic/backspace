@@ -10,7 +10,7 @@ Source: `packages/server/src/ws/handler.ts`, `packages/server/src/ws/events.ts`
 
 1. Client connects to `/ws`
 2. Client sends `{ type: 'auth', token: '<jwt>', client?: 'web' | 'desktop' | 'mobile' }` within 10 seconds. `client` is optional; a missing or unrecognised value is read as `web`. The wire type is the `auth` variant of `ClientEvent` in `packages/shared/src/types.ts`, where the field is typed `ClientKind`
-3. Server validates token (rejects deleted users, tokens issued before `passwordChangedAt`)
+3. Server validates token (rejects deleted users, tokens issued before `passwordChangedAt`). A bot account holds one open socket per credential: a second one is answered `error` with `code: 'bot_token_in_use'` and closed with code 4409 ([bots.md](bots.md), "One process per token")
 4. Server responds with `ready` event containing full client state
 5. Server sets the user's live status to their chosen status (`users.chosen_status` for an account that owns its choice, native or detached; for a replicated user the home instance's last projection, or `online` if there is none) and carries it in the `ready` payload's `user.status`, broadcasts `presence_update` to friends + DM co-members + space co-members (via `collectProfileBroadcastTargetIds`); for native users, also queues a S2S `presence_update` relay to all active peers
 6. Heartbeat: server pings every 30s (RFC 6455 ping frames), dead connections detected after ~65s

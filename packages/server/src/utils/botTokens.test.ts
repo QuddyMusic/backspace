@@ -57,7 +57,7 @@ describe('issueBotToken / verifyBotToken', () => {
     const issued = issueBotToken('b1', 'radio', T0);
     expect(issued.token.startsWith(BOT_TOKEN_PREFIX)).toBe(true);
     expect(isBotTokenString(issued.token)).toBe(true);
-    expect(verifyBotToken(issued.token, T0)).toEqual({ userId: 'b1', username: 'b1_bot', homeInstance: null });
+    expect(verifyBotToken(issued.token, T0)).toEqual({ tokenId: issued.id, userId: 'b1', username: 'b1_bot', homeInstance: null });
 
     const secret = issued.token.split('.')[1]!;
     const row = testDb.select().from(schema.botTokens).get()!;

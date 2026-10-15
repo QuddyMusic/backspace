@@ -7,6 +7,7 @@ import { handleClientEvent } from './events.js';
 import { recordSocketAddress } from './socketAddress.js';
 import { computePermissions, PermissionBits, permissionsToString } from '../utils/permissions.js';
 import { idsHiddenFromEveryone } from '@backspace/shared/src/permissions.js';
+import { BOT_TOKEN_IN_USE_CLOSE_CODE } from '@backspace/shared/src/constants.js';
 import type {
   User,
   Space,
@@ -136,6 +137,15 @@ class ConnectionManager implements ReplicaSessionHost {
    * (the ready payload, voice_state_update) already sees them.
    */
   private botRooms: Map<string, Set<string>> = new Map();
+  /**
+   * One live socket per bot credential: a `bsb_` token is held as `token:<id>`,
+   * a JWT login of a bot account (its pre-`bsb_` token, or a bot's federated
+   * account here) as `account:<userId>`. A bot runs as one process that serves
+   * all of its channels; a second process with the same credential is refused
+   * instead of splitting the bot's events and seats between the two.
+   */
+  private botSessions: Map<string, WebSocket> = new Map();
+  private wsBotSession: Map<WebSocket, string> = new Map();
   // ws → userId (reverse lookup)
   private wsToUser: Map<WebSocket, string> = new Map();
   // Unified voice room tracking (replaces voiceStates + activeCalls)
@@ -202,7 +212,29 @@ class ConnectionManager implements ReplicaSessionHost {
     this.cancelDisconnect(userId);
   }
 
+  /**
+   * Holds the bot credential `key` for this socket. False while another socket
+   * that is still open holds it; a holder that is closing or closed is replaced.
+   */
+  claimBotSession(key: string, ws: WebSocket): boolean {
+    const held = this.botSessions.get(key);
+    if (held && held !== ws && held.readyState === 1 /* WebSocket.OPEN */) return false;
+    if (held && held !== ws) this.wsBotSession.delete(held);
+    this.botSessions.set(key, ws);
+    this.wsBotSession.set(ws, key);
+    return true;
+  }
+
+  /** Lets go of the bot credential this socket held, if any. */
+  releaseBotSession(ws: WebSocket): void {
+    const key = this.wsBotSession.get(ws);
+    if (key === undefined) return;
+    this.wsBotSession.delete(ws);
+    if (this.botSessions.get(key) === ws) this.botSessions.delete(key);
+  }
+
   removeConnection(ws: WebSocket): string | undefined {
+    this.releaseBotSession(ws);
     const userId = this.wsToUser.get(ws);
     if (!userId) return undefined;
 
@@ -2188,6 +2220,7 @@ export async function registerWebSocket(app: FastifyInstance): Promise<void> {
         try {
           // A bot token is checked against its stored hash; anything else is a JWT.
           let payload: { userId: string; username: string; iat?: number };
+          let botTokenId: string | null = null;
           if (isBotTokenString(parsed.token)) {
             const resolved = verifyBotToken(parsed.token);
             if (resolved === 'deleted') {
@@ -2197,6 +2230,7 @@ export async function registerWebSocket(app: FastifyInstance): Promise<void> {
             }
             if (resolved === 'invalid') throw new Error('Invalid bot token');
             payload = { userId: resolved.userId, username: resolved.username };
+            botTokenId = resolved.tokenId;
           } else {
             payload = verifyJwt(parsed.token);
           }
@@ -2222,6 +2256,20 @@ export async function registerWebSocket(app: FastifyInstance): Promise<void> {
             if (payload.iat < Math.floor(userRow.passwordChangedAt / 1000)) {
               ws.send(JSON.stringify({ type: 'error', message: 'Token has been revoked' }));
               ws.close();
+              return;
+            }
+          }
+
+          // One process per bot credential: a second socket is refused while the first is open.
+          if (userRow.isBot === 1) {
+            const sessionKey = botTokenId !== null ? `token:${botTokenId}` : `account:${userRow.id}`;
+            if (!connectionManager.claimBotSession(sessionKey, ws)) {
+              ws.send(JSON.stringify({
+                type: 'error',
+                message: 'This bot token is already connected from another process',
+                code: 'bot_token_in_use',
+              }));
+              ws.close(BOT_TOKEN_IN_USE_CLOSE_CODE, 'bot_token_in_use');
               return;
             }
           }

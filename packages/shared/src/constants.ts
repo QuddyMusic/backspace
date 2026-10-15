@@ -92,6 +92,11 @@ export const MAX_BOTS_PER_USER = 10;
 export const MAX_BOT_TOKENS_PER_BOT = 5;
 /** Longest owner label of a bot token. */
 export const BOT_TOKEN_NAME_MAX_LENGTH = 32;
+/**
+ * WebSocket close code for a bot socket refused because another socket with the
+ * same credential is open: a bot runs as one process for all of its channels.
+ */
+export const BOT_TOKEN_IN_USE_CLOSE_CODE = 4409;
 export const BOT_NAME_SUFFIX = '_bot';
 export const BOT_NAME_MIN_LENGTH = 5;
 export const BOT_NAME_MAX_LENGTH = 32;
