@@ -1,26 +1,32 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { connect } from 'node:net';
-import { bootTransportPeered, readDb, type PeeredHarness } from './helpers/federationE2E.js';
+import { createServer } from 'node:net';
+import { bootTransportPeered, readDb, withWritableDb, type PeeredHarness } from './helpers/federationE2E.js';
 import { registerLocal, type TestUser } from './helpers/testUsers.js';
-import { spawnInstance, type SpawnedInstance } from './helpers/twoInstanceHarness.js';
+import type { SpawnedInstance } from './helpers/twoInstanceHarness.js';
 
-// Real instances, a real stop and start of the host.
-vi.setConfig({ testTimeout: 60_000 });
+// Real instances and real signed S2S calls.
+vi.setConfig({ testTimeout: 45_000 });
 
 /**
  * ── e2e: a bot revoke that waits for the host to come back ──────────────────
  *
- * A is the bot's home, B hosts the bot's federated account. B goes away; the
- * owner resets the bot's tokens on A. The revoke cannot reach B, so A keeps it
- * in `bot_revocations` (bots.md, "Revocation retries") and refuses B a new
- * credential or proof for the bot meanwhile. A retry while B is still away
- * keeps the row; B comes back on the same port and database; the next retry
- * lands: B's account is tombstoned, the row is gone and the bot may register
- * on B again.
+ * A is the bot's home, B hosts the bot's federated account. B goes away from
+ * A's point of view; the owner resets the bot's tokens on A. The revoke cannot
+ * reach B, so A keeps it in `bot_revocations` (bots.md, "Revocation retries")
+ * and refuses B a new credential or proof for the bot meanwhile. A retry while
+ * B is still away keeps the row; B comes back; the next retry lands: B's
+ * account is tombstoned, the row is gone and the bot may register on B again.
  *
- * Federation workers are off in the harness, so the retry pass is run through
- * the test-only route `POST /api/admin/test/bot-revocations/run`, with a clock
- * past the row's next attempt.
+ * "Away" is A's peer row for B pointing at a port nobody listens on, so every
+ * call A makes to B is refused at the TCP level: the same `unreachable` path a
+ * stopped host takes, without stopping a process (a graceful stop through
+ * `pnpm exec` can wait on open connections). "Back" restores the real origin.
+ * B keeps running, so its account is removed by a real signed call.
+ *
+ * The retry worker ticks every 5 minutes, so the test runs each pass itself
+ * through the test-only route `POST /api/admin/test/bot-revocations/run`, with
+ * a clock past the row's next attempt (a tick with the real clock finds no
+ * row due).
  */
 
 interface ErrBody { code?: string; error?: string }
@@ -39,6 +45,8 @@ let owner: TestUser;
 let bot: HomeBot;
 let hostBotId: string;
 let hostBotToken: string;
+/** The origin A's peer row for B holds right now. */
+let peerOrigin: string;
 
 async function api<T>(
   inst: SpawnedInstance,
@@ -96,42 +104,32 @@ function runRetries(aheadMs: number): Promise<{ status: number; body: RunBody }>
 
 const HOUR = 60 * 60 * 1000;
 
-/** Whether anything still accepts connections on a local port. */
-function portInUse(port: number): Promise<boolean> {
-  return new Promise(resolve => {
-    const socket = connect(port, '127.0.0.1');
-    socket.once('connect', () => { socket.destroy(); resolve(true); });
-    socket.once('error', () => resolve(false));
+/** A local port nothing listens on: bound once by the kernel, then let go. */
+function deadPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address();
+      srv.close(() => (addr && typeof addr === 'object' ? resolve(addr.port) : reject(new Error('no port'))));
+    });
   });
-}
-
-/** Stops an instance and waits until its port is free (`pnpm exec` can exit before the server closes it). */
-async function stop(inst: SpawnedInstance): Promise<void> {
-  const exited = new Promise<void>(resolve => inst.proc.once('exit', () => resolve()));
-  inst.proc.kill('SIGTERM');
-  await exited;
-  const deadline = Date.now() + 15_000;
-  while (await portInUse(inst.port)) {
-    if (Date.now() > deadline) throw new Error(`${inst.domain} still listens on ${inst.port} after SIGTERM`);
-    await new Promise(r => setTimeout(r, 100));
-  }
 }
 
 /**
- * Boots a stopped instance again on the same port, database and secret, so its
- * peers still reach it and its peer rows still verify. The harness object is
- * updated in place, so the harness cleanup stops the new process.
+ * A's peer row for B points at `origin` (A reads it on every call to B). The
+ * row stays `active` with no failures counted: A's health check runs in this
+ * profile and may mark a dead origin unreachable, and a host that is back is
+ * one the health check has seen again.
  */
-async function start(inst: SpawnedInstance): Promise<void> {
-  const fresh = await spawnInstance({
-    domain: inst.domain,
-    port: inst.port,
-    dbPath: inst.dbPath,
-    storagePath: inst.storagePath,
-    jwtSecret: inst.jwtSecret,
-    logPath: inst.logPath,
+function pointPeerAt(origin: string): void {
+  withWritableDb(A, db => {
+    const changed = db.prepare(
+      "UPDATE federation_peers SET origin = ?, status = 'active', consecutive_failures = 0 WHERE origin = ?",
+    ).run(origin, peerOrigin).changes;
+    expect(changed).toBe(1);
   });
-  Object.assign(inst, fresh);
+  peerOrigin = origin;
 }
 
 beforeAll(async () => {
@@ -148,6 +146,8 @@ beforeAll(async () => {
   expect(registered.status).toBe(201);
   hostBotId = registered.body.user.id;
   hostBotToken = registered.body.token;
+  // The transport profile peers A with B under B's transport origin.
+  peerOrigin = B.origin;
 }, 120_000);
 
 afterAll(async () => {
@@ -156,7 +156,7 @@ afterAll(async () => {
 
 describe('a revoke the host misses while it is away', () => {
   it('is reported as pending and kept on the home', async () => {
-    await stop(B);
+    pointPeerAt(`http://127.0.0.1:${await deadPort()}`);
     // iat is in whole seconds: revocation compares against it.
     await new Promise(r => setTimeout(r, 1_100));
 
@@ -189,7 +189,7 @@ describe('a revoke the host misses while it is away', () => {
   });
 
   it('the host comes back: the next retry lands, the account there is gone and the row with it', async () => {
-    await start(B);
+    pointPeerAt(B.origin);
     // B kept the bot's account while it was away: its JWT still works there.
     expect(hostRow(hostBotId)?.isDeleted).toBe(0);
     expect((await api<unknown>(B, 'GET', '/api/spaces', hostBotToken)).status).toBe(200);

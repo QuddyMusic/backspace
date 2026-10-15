@@ -237,7 +237,7 @@ B verifies the proof with A over the signed server-to-server channel (`POST /api
 
 While a row exists for a host, the home issues the bot no new credential or proof for it (`POST /api/users/@me/federation-credential` and `POST /api/auth/attach-proof` answer `409 bot_revocation_pending`): the old account there would block a new registration, and the late revoke would take a new account down. Other hosts are not affected. The bot's own credential rows are deleted at once, as before: they are not what the retry needs.
 
-Covered end to end by `test/federation-e2e-bot-revocation-retry.test.ts`: the host is stopped, the owner resets the tokens (the answer says `pending`), credential and proof for that host answer 409, a retry while it is away keeps the row, the host comes back on the same port and database, and the next retry tombstones the account there and empties the queue; the bot can then register again.
+Covered end to end by `test/federation-e2e-bot-revocation-retry.test.ts`: the host goes away for the home (its peer row points at a port nobody listens on, so every call is refused as for a stopped host), the owner resets the tokens (the answer says `pending`), credential and proof for that host answer 409, a retry while it is away keeps the row, the host comes back, and the next retry tombstones the account there by a real signed call and empties the queue; the bot can then register again.
 
 ## 8b. Token migration
 

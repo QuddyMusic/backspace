@@ -429,8 +429,9 @@ export async function adminRoutes(app: FastifyInstance): Promise<void> {
 
   // Test-only: one pass of the bot revocation retries (utils/botRevocationQueue.ts)
   // at the clock `at` (default now), and what it did. Gated exactly like
-  // seed-peer above. The harness runs with the federation workers off, so the
-  // bot revocation e2e suite runs the pass when the test says.
+  // seed-peer above. The worker ticks every 5 minutes; the bot revocation e2e
+  // suite runs a pass when the test says, with a clock past the row's next
+  // attempt.
   app.post<{ Body: { at?: number } }>(
     '/api/admin/test/bot-revocations/run',
     async (request, reply) => {
