@@ -24,7 +24,7 @@ interface BotPermissionChecklistProps {
 }
 
 export function BotPermissionChecklist({ offered, value, onChange, locked = '0', disabled = false }: BotPermissionChecklistProps) {
-  const { t } = useTranslation('spaces');
+  const { t } = useTranslation(['spaces']);
   const names = usePermissionNames();
   const idPrefix = useId();
   const offeredBits = stringToPermissions(offered);
