@@ -12,16 +12,20 @@ interface Props extends TextareaHTMLAttributes<HTMLTextAreaElement> {
 }
 
 /*
- * The argument boxes are painted with backgrounds, radii and box-shadows only:
- * the mirror must lay its text out exactly as the textarea does, or the caret
- * and the painted text drift apart. The colon of `name:` stays in the text
- * (the parser reads it) but is drawn transparent inside the name's box. The
- * class strings are written out whole so Tailwind finds them.
+ * An argument is drawn as one capsule in two tones, like the glass pills of
+ * the design system: the option's name on the lighter half, its value on the
+ * darker one. Only backgrounds, radii and box-shadows are used: the mirror
+ * must lay its text out exactly as the textarea does, or the caret and the
+ * painted text drift apart. The spacing comes from the text itself: the colon
+ * of `name:` stays (the parser reads it) but is drawn transparent as the
+ * name's right padding, and the space after it is the value's left padding.
+ * The outer ends are widened by a shadow in the same colour. The class
+ * strings are written out whole so Tailwind finds them.
  */
-const NAME_BOX = 'bg-white/[0.08] text-txt-secondary rounded-l-[4px] [box-shadow:0_0_0_1px_rgba(255,255,255,0.16)]';
-const COLON_BOX = 'bg-white/[0.08] text-transparent [box-shadow:0_0_0_1px_rgba(255,255,255,0.16)]';
-const VALUE_BOX = 'bg-black/25 rounded-r-[4px] [box-shadow:0_0_0_1px_rgba(255,255,255,0.16)]';
-const EMPTY_VALUE_BOX = 'relative inline-block w-0 after:content-[""] after:absolute after:left-0 after:bottom-[-0.3em] after:h-[1.25em] after:w-[2.5ch] after:bg-black/25 after:rounded-r-[4px] after:[box-shadow:0_0_0_1px_rgba(255,255,255,0.16)]';
+const NAME_BOX = 'bg-white/[0.10] text-txt-secondary rounded-l-md [box-shadow:-4px_0_0_0_rgba(255,255,255,0.10)]';
+const COLON_BOX = 'bg-white/[0.10] text-transparent';
+const VALUE_BOX = 'bg-white/[0.04] text-txt-primary rounded-r-md [box-shadow:4px_0_0_0_rgba(255,255,255,0.04)]';
+const EMPTY_VALUE_BOX = 'relative inline-block w-0 after:content-[""] after:absolute after:left-0 after:bottom-[-0.28em] after:h-[1.2em] after:w-[3ch] after:rounded-r-md after:border after:border-dashed after:border-white/20 after:bg-white/[0.03]';
 const MENTION = 'rounded bg-accent-primary/15 text-accent-primary';
 
 type Region = 'name' | 'colon' | 'value' | null;

@@ -917,7 +917,7 @@ describe('invoking a slash command', () => {
     description: 'Play a track',
     options: [
       { name: 'query', description: 'What to play', type: 'string', required: true },
-      { name: 'volume', description: 'Volume', type: 'integer', choices: [{ name: 'low', value: 20 }, { name: 'high', value: 80 }] },
+      { name: 'volume', description: 'Volume', type: 'integer', strictChoices: true, choices: [{ name: 'low', value: 20 }, { name: 'high', value: 80 }] },
     ],
   };
 

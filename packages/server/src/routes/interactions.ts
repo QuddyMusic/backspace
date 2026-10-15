@@ -141,7 +141,8 @@ function resolveTarget(
  * The values of an invocation checked against the command's definition and
  * coerced to what the bot receives: strings within their length, numbers
  * within their range, ids of users, channels and roles the chat knows (with
- * the objects in `resolved`), and one of the listed choices where there are.
+ * the objects in `resolved`), and one of the listed choices where the bot made
+ * them strict (otherwise choices are suggestions and any fitting value goes).
  */
 function checkOptions(defs: BotCommandOption[], given: unknown, chat: Chat, invokerId: string): CheckedOptions | Problem {
   const input = given === undefined || given === null ? {} : given;
@@ -182,7 +183,7 @@ function checkOptions(defs: BotCommandOption[], given: unknown, chat: Chat, invo
       const refusal = resolveTarget(def, value, chat, invokerId, resolved);
       if (refusal) return { field, reason: refusal };
     }
-    if (def.choices && !def.choices.some((choice) => choice.value === value)) {
+    if (def.strictChoices && def.choices && !def.choices.some((choice) => choice.value === value)) {
       return { field, reason: 'must be one of the listed choices' };
     }
     out[def.name] = value as BotInteractionOptionValue;

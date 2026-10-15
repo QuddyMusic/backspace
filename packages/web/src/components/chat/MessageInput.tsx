@@ -267,7 +267,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const selectOption = useCallback(
     (option: BotCommandOption) => {
       if (!optionSuggest) return;
-      const text = draftText.slice(0, optionSuggest.startIndex) + option.name + ':';
+      // A space after the colon keeps the value's box clear of the name's.
+      const text = draftText.slice(0, optionSuggest.startIndex) + option.name + ': ';
       setDraft(channelId, text);
       setOptionSuggest(null);
       // The option's values are offered straight away when it has any to offer.
@@ -403,11 +404,11 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       // Required options go into the text straight away, ready to be filled in.
       const required = command.options.filter((o) => o.required);
       const head = `/${command.name} `;
-      const text = head + required.map((o) => `${o.name}:`).join(' ');
+      const text = head + required.map((o) => `${o.name}: `).join('');
       setDraft(channelId, text);
       setCommandState(null);
       // With required options the caret goes behind the first one; without, the optional ones are offered.
-      const caret = required.length > 0 ? head.length + required[0]!.name.length + 1 : text.length;
+      const caret = required.length > 0 ? head.length + required[0]!.name.length + 2 : text.length;
       setOptionSuggest(required.length === 0 && chatCommands ? suggestOptions(text, chatCommands, command) : null);
       // A single required option of a picked type opens its value list at once.
       setValueSuggest(caret === text.length && chatCommands ? suggestValue(text, chatCommands, command) : null);

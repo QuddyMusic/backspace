@@ -110,7 +110,11 @@ export function readNamedPairs(
     let body = remaining.slice(head[0].length).trimStart();
     let raw: string;
     const close = body.startsWith('"') ? body.indexOf('"', 1) : -1;
-    if (close > 0) {
+    const nextName = /^([a-z0-9_-]+):/i.exec(body);
+    if (nextName && defs.has(nextName[1]!.toLowerCase())) {
+      // `a: b:value`: a was left empty, b follows.
+      raw = '';
+    } else if (close > 0) {
       raw = body.slice(1, close);
       body = body.slice(close + 1);
     } else if (def.type === 'string') {
@@ -173,6 +177,8 @@ export function suggestOptions(
   const cut = Math.max(tail.lastIndexOf(' '), tail.lastIndexOf('\n')) + 1;
   const partial = tail.slice(cut);
   if (partial.includes(':')) return null;
+  // `name: ` with no value yet: its values are offered, not more options.
+  if (/(?:^|\s)[a-z0-9_-]+:\s$/i.test(tail)) return null;
   if (readNamedPairs(command, tail.slice(0, cut)).rest.length > 0) return null;
   return { command, query: partial.toLowerCase(), startIndex: head[0].length + cut, selectedIndex: 0, touched: false };
 }
@@ -200,8 +206,8 @@ export function offersValues(option: BotCommandOption): boolean {
 
 /**
  * The value popover state for a draft, or null when none applies: the text must
- * start with a known command, everything before the word being typed must be
- * options written by name, and that word must be `name:` of a user, role,
+ * start with a known command, everything before the last `name:` must be
+ * options written by name, and it must be `name:` (or `name: `) of a user, role,
  * channel or boolean option, or of an option with choices, followed by the
  * start of a value. A token or a
  * quoted value is not offered anything. (The mention picker does not open
@@ -218,19 +224,21 @@ export function suggestValue(
   const command = picked && picked.name === name ? picked : commands.find((c) => c.name === name);
   if (!command) return null;
   const tail = value.slice(head[0].length);
-  const cut = Math.max(tail.lastIndexOf(' '), tail.lastIndexOf('\n')) + 1;
-  const word = /^([a-z0-9_-]+):(.*)$/i.exec(tail.slice(cut));
+  // The option being filled is the last `name:` of the text, its value written
+  // right after the colon or after one space (`who:bo`, `who: bo`).
+  const word = /(^|\s)([a-z0-9_-]+):( ?)(\S*)$/i.exec(tail);
   if (!word) return null;
-  const option = command.options.find((o) => o.name === word[1]!.toLowerCase());
+  const option = command.options.find((o) => o.name === word[2]!.toLowerCase());
   if (!option || !offersValues(option)) return null;
-  const partial = word[2]!;
+  const partial = word[4]!;
   if (partial.startsWith('"') || partial.startsWith('<')) return null;
-  if (readNamedPairs(command, tail.slice(0, cut)).rest.length > 0) return null;
+  const before = word.index + word[1]!.length;
+  if (readNamedPairs(command, tail.slice(0, before)).rest.length > 0) return null;
   return {
     command,
     option,
     query: partial.replace(/^[#@]/, '').toLowerCase(),
-    startIndex: head[0].length + cut + word[1]!.length + 1,
+    startIndex: head[0].length + before + word[2]!.length + 1 + word[3]!.length,
     selectedIndex: 0,
     touched: false,
   };
@@ -238,10 +246,11 @@ export function suggestValue(
 
 /** One argument of a command draft as the composer frames it: its `name:` and its value. */
 export interface ArgumentFrame {
-  /** Where `name:` starts, and where its colon ends (the value's start). */
+  /** Where `name:` starts; the name's box runs to `valueStart` (the colon included). */
   nameStart: number;
+  /** Just after the colon: the value's box starts here, a space after the colon included. */
   valueStart: number;
-  /** Where the value ends: the next space outside quotes, or the end of a free-text value. */
+  /** Where the value ends; equal to `valueStart` while no value is written. */
   valueEnd: number;
 }
 
@@ -273,7 +282,10 @@ export function argumentFrames(
   }
   return starts.map((start, i) => {
     const next = starts[i + 1]?.nameStart ?? text.length;
-    const rest = text.slice(start.valueStart, next);
+    // One space right after the colon belongs to the value's box.
+    const gap = text[start.valueStart] === ' ' ? 1 : 0;
+    const from = start.valueStart + gap;
+    const rest = text.slice(from, next);
     let length: number;
     if (rest.startsWith('"')) {
       const close = rest.indexOf('"', 1);
@@ -281,10 +293,10 @@ export function argumentFrames(
     } else if (types.get(start.name) === 'string') {
       length = rest.trimEnd().length;
     } else {
-      const unit = units.find((u) => u.start === start.valueStart);
+      const unit = units.find((u) => u.start === from);
       const space = rest.search(/\s/);
       length = unit ? unit.end - unit.start : space < 0 ? rest.length : space;
     }
-    return { nameStart: start.nameStart, valueStart: start.valueStart, valueEnd: start.valueStart + length };
+    return { nameStart: start.nameStart, valueStart: start.valueStart, valueEnd: length > 0 ? from + length : start.valueStart };
   });
 }

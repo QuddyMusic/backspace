@@ -147,13 +147,29 @@ describe('registering typed options', () => {
       [{ name: 'x', description: 'X', type: 'channel', channelTypes: ['category'] }, 'options[0].channelTypes'],
       [{ name: 'x', description: 'X', type: 'user', channelTypes: ['text'] }, 'options[0].channelTypes'],
       [{ name: 'x', description: 'X', type: 'user', choices: [{ name: 'a', value: 'a' }] }, 'options[0].choices'],
-      [{ name: 'x', description: 'X', type: 'integer', minValue: 1, choices: [{ name: 'a', value: 1 }] }, 'options[0].minValue'],
+      [{ name: 'x', description: 'X', type: 'integer', minValue: 5, choices: [{ name: 'a', value: 1 }] }, 'options[0].choices[0].value'],
+      [{ name: 'x', description: 'X', type: 'string', maxLength: 2, choices: [{ name: 'a', value: 'abc' }] }, 'options[0].choices[0].value'],
+      [{ name: 'x', description: 'X', type: 'string', strictChoices: true }, 'options[0].strictChoices'],
     ];
     for (const [option, field] of cases) {
       const res = await register([option]);
       expect(res.statusCode).toBe(400);
       expect((res.json() as { details: { field: string } }).details.field).toBe(`commands[0].${field}`);
     }
+  });
+});
+
+describe('choices', () => {
+  it('are suggestions: any value of the type within the limits goes, unless the bot made them strict', async () => {
+    define([
+      { name: 'level', description: 'L', type: 'integer', required: false, minValue: 0, maxValue: 100, choices: [{ name: 'low', value: 20 }] },
+      { name: 'mode', description: 'M', type: 'string', required: false, strictChoices: true, choices: [{ name: 'Shuffle', value: 'shuffle' }] },
+    ]);
+    expect((await invoke({ level: 34 })).statusCode).toBe(201);
+    expect(lastInteraction().options).toEqual({ level: 34 });
+    expect(reasonOf(await invoke({ level: 101 }))).toBe('must be at most 100');
+    expect(reasonOf(await invoke({ mode: 'repeat' }))).toBe('must be one of the listed choices');
+    expect((await invoke({ mode: 'shuffle' })).statusCode).toBe(201);
   });
 });
 

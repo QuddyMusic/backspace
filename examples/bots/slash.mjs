@@ -12,7 +12,8 @@ const commands = [
     description: 'Pretend to play a track',
     options: [
       { name: 'query', description: 'What to play', type: 'string', required: true },
-      { name: 'volume', description: 'Volume', type: 'integer', choices: [{ name: 'low', value: 20 }, { name: 'high', value: 80 }] },
+      // Choices are suggestions: `volume:34` works too, within 0..100.
+      { name: 'volume', description: 'Volume', type: 'integer', minValue: 0, maxValue: 100, choices: [{ name: 'low', value: 20 }, { name: 'high', value: 80 }] },
     ],
   },
   { name: 'stop', description: 'Stop playing' },

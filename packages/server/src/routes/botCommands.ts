@@ -110,6 +110,18 @@ function validateBounds(item: Record<string, unknown>, type: BotCommandOptionTyp
   return out;
 }
 
+/** Why `value` breaks the option's own limits (range or length), or null when it does not. */
+function outsideLimits(option: BotCommandOption, value: string | number): string | null {
+  if (typeof value === 'number') {
+    if (option.minValue !== undefined && value < option.minValue) return `must be at least minValue (${option.minValue})`;
+    if (option.maxValue !== undefined && value > option.maxValue) return `must be at most maxValue (${option.maxValue})`;
+    return null;
+  }
+  if (option.minLength !== undefined && value.length < option.minLength) return `must be at least minLength (${option.minLength}) characters`;
+  if (option.maxLength !== undefined && value.length > option.maxLength) return `must be at most maxLength (${option.maxLength}) characters`;
+  return null;
+}
+
 function validateOptions(raw: unknown, path: string): BotCommandOption[] | Problem {
   if (raw === undefined) return [];
   if (!Array.isArray(raw)) return { field: path, reason: 'must be an array' };
@@ -144,10 +156,13 @@ function validateOptions(raw: unknown, path: string): BotCommandOption[] | Probl
     const bounds = validateBounds(item, type, here);
     if (isProblem(bounds)) return bounds;
     Object.assign(option, bounds);
+    if (item.strictChoices !== undefined) {
+      if (typeof item.strictChoices !== 'boolean') return { field: `${here}.strictChoices`, reason: 'must be a boolean' };
+      if (item.choices === undefined) return { field: `${here}.strictChoices`, reason: 'needs choices' };
+      if (item.strictChoices) option.strictChoices = true;
+    }
     if (item.choices !== undefined) {
       if (!CHOICE_TYPES.has(type)) return { field: `${here}.choices`, reason: `not allowed for a ${type} option` };
-      const bounded = ['minValue', 'maxValue', 'minLength', 'maxLength'].find((key) => item[key] !== undefined);
-      if (bounded) return { field: `${here}.${bounded}`, reason: 'not allowed together with choices' };
       if (!Array.isArray(item.choices)) return { field: `${here}.choices`, reason: 'must be an array' };
       if (item.choices.length < 1 || item.choices.length > MAX_CHOICES) {
         return { field: `${here}.choices`, reason: `must hold 1 to ${MAX_CHOICES} choices` };
@@ -157,6 +172,9 @@ function validateOptions(raw: unknown, path: string): BotCommandOption[] | Probl
       for (let c = 0; c < item.choices.length; c++) {
         const choice = validateChoice(item.choices[c], type, `${here}.choices[${c}]`);
         if (isProblem(choice)) return choice;
+        // A listed value must be one the option itself accepts.
+        const outside = outsideLimits(option, choice.value);
+        if (outside) return { field: `${here}.choices[${c}].value`, reason: outside };
         if (values.has(choice.value)) return { field: `${here}.choices[${c}].value`, reason: 'duplicate choice value' };
         values.add(choice.value);
         choices.push(choice);

@@ -223,3 +223,30 @@ describe('argumentFrames', () => {
     expect(argumentFrames('/roll sides:6', play)).toEqual([]);
   });
 });
+
+describe('a space after the colon', () => {
+  const ban = listing('ban', [option('who', 'user', true), option('silent', 'boolean'), option('reason', 'string')]);
+
+  it('is read as part of the gap: values parse as without it, and an empty value stays empty', () => {
+    expect(parseCommandArgs(ban, 'who: <@u1> silent: true')).toEqual({ ok: true, options: { who: 'u1', silent: true } });
+    expect(parseCommandArgs(ban, 'who: silent: true')).toEqual({ ok: true, options: { silent: true } });
+    expect(parseCommandArgs(ban, 'reason: spam silent:true')).toEqual({ ok: true, options: { reason: 'spam', silent: true } });
+  });
+
+  it('keeps the value list open after `name: ` and the option list closed', () => {
+    expect(suggestValue('/ban who: ', [ban], null)).toMatchObject({ query: '', startIndex: 10 });
+    expect(suggestValue('/ban who: bo', [ban], null)).toMatchObject({ query: 'bo', startIndex: 10 });
+    expect(suggestOptions('/ban who: ', [ban], null)).toBeNull();
+    expect(suggestValue('/ban who: <@u1> ', [ban], null)).toBeNull();
+    expect(suggestOptions('/ban who: <@u1> ', [ban], null)).toMatchObject({ query: '' });
+  });
+
+  it('belongs to the value\'s box; an empty value has no box', () => {
+    const text = '/ban who: <@u1> silent: ';
+    const frames = argumentFrames(text, ban);
+    expect(frames.map((f) => [text.slice(f.nameStart, f.valueStart), text.slice(f.valueStart, f.valueEnd)])).toEqual([
+      ['who:', ' <@u1>'],
+      ['silent:', ''],
+    ]);
+  });
+});

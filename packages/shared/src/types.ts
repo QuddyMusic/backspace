@@ -2272,8 +2272,14 @@ export interface BotCommandOption {
   description: string;
   type: BotCommandOptionType;
   required: boolean;
-  /** Static choices (string, integer and number options only), at most 25. */
+  /**
+   * Static choices (string, integer and number options only), at most 25. The
+   * message box offers them by name; any other value of the option's type is
+   * accepted too, unless `strictChoices` is set.
+   */
   choices?: BotCommandChoice[];
+  /** With `choices`: only a listed value is accepted. */
+  strictChoices?: boolean;
   /** Integer and number options without choices: the smallest and largest value accepted. */
   minValue?: number;
   maxValue?: number;
