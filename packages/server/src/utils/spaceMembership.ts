@@ -63,6 +63,12 @@ export function removeUserFromSpace(spaceId: string, userId: string): void {
   const account = db.select({ isBot: schema.users.isBot }).from(schema.users)
     .where(eq(schema.users.id, userId)).get();
   if (account?.isBot === 1) {
+    if (spaceChannelIds.length > 0) {
+      db.delete(schema.botSeatRestrictions).where(and(
+        eq(schema.botSeatRestrictions.botId, userId),
+        inArray(schema.botSeatRestrictions.channelId, spaceChannelIds),
+      )).run();
+    }
     db.delete(schema.memberRoles)
       .where(and(eq(schema.memberRoles.spaceId, spaceId), eq(schema.memberRoles.userId, userId)))
       .run();

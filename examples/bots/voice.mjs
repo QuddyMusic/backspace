@@ -13,7 +13,7 @@ import { createBot } from './client.mjs';
 const bot = createBot({ baseUrl: process.env.BACKSPACE_URL, token: process.env.BOT_TOKEN });
 
 const seats = new Map();    // user id -> voice channel id they sit in, kept from the voice events
-const players = new Map();  // voice channel id -> { station, url, token }, one entry per seat of the bot
+const players = new Map();  // voice channel id -> { station, url, token, muted?, deafened? }, one entry per seat of the bot
 
 const commands = [
   {
@@ -40,6 +40,25 @@ bot.run(async (event) => {
   if (event.type === 'voice_state_update') {
     if (event.action === 'join') seats.set(event.userId, event.channelId);
     else if (seats.get(event.userId) === event.channelId) seats.delete(event.userId);
+    return;
+  }
+
+  // A moderator muted (or deafened) one of the bot's seats: that channel's only
+  // (`botSeat: true`). Honour it: stop publishing (or stop listening) there.
+  if ((event.type === 'voice_space_muted' || event.type === 'voice_space_deafened')
+      && event.userId === bot.me?.id && event.botSeat) {
+    const player = players.get(event.channelId);
+    if (player) {
+      if (event.type === 'voice_space_muted') player.muted = event.muted;
+      else player.deafened = event.deafened;
+      // Mute or unpublish this channel's track here; the other seats keep playing.
+    }
+    return;
+  }
+
+  // A moderator took the bot out of one channel: drop that player only.
+  if (event.type === 'voice_disconnected' && event.userId === bot.me?.id) {
+    players.delete(event.channelId);
     return;
   }
 

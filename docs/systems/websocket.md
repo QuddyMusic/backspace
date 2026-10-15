@@ -67,10 +67,12 @@ Source: `packages/server/src/ws/handler.ts`, `packages/server/src/ws/events.ts`
 ### Voice Moderation
 | type | fields | permission |
 |------|--------|------------|
-| `voice_space_mute` | userId, muted | MUTE_MEMBERS |
-| `voice_space_deafen` | userId, deafened | DEAFEN_MEMBERS |
+| `voice_space_mute` | userId, muted, channelId? | MUTE_MEMBERS |
+| `voice_space_deafen` | userId, deafened, channelId? | DEAFEN_MEMBERS |
 | `voice_move` | userId, targetChannelId | MOVE_MEMBERS |
-| `voice_disconnect` | userId | DISCONNECT_MEMBERS |
+| `voice_disconnect` | userId, channelId? | DISCONNECT_MEMBERS |
+
+`channelId` names one seat of a bot (`bot_voice_join`): mute, deafen and disconnect then act on that channel's seat only, with the bit checked in that channel (bots.md, 5c). Without it, or for a person, they act on the target's one voice room as before.
 
 All four also need the actor to outrank the target (permissions.md, "Role hierarchy"); a refusal is an `error` with `code: 'role_hierarchy'`.
 
@@ -385,8 +387,8 @@ takes the client out of it (`teardownDmCall`).
 | `voice_state_update` | channelId, userId, action: join/leave, channelElapsedSeconds? | space |
 | `voice_status_update` | userId, channelId, isMuted, isDeafened, isCameraOn, isScreenSharing | room |
 | `space_voice_state` | spaceId, voiceStates, voiceChannelElapsedSeconds, voiceUserStates, spaceVoiceStates | the joining user, or a member whose access changed. Scoped per-space voice-presence snapshot pushed when a user joins a space mid-session, after `space_access_changed` (see below), and to each member who can see a voice channel after an override on it or its category changed or it moved to another category (spaces.md, "Channel/Category Permission Overrides"). |
-| `voice_space_muted` | userId, channelId, spaceId, muted | space |
-| `voice_space_deafened` | userId, channelId, spaceId, deafened | space |
+| `voice_space_muted` | userId, channelId, spaceId, muted, botSeat? | space (`botSeat: true`: the mute is that bot seat's only; snapshots key it `spaceId:botId:channelId`) |
+| `voice_space_deafened` | userId, channelId, spaceId, deafened, botSeat? | space (`botSeat: true`: as above) |
 | `voice_permission_muted` | userId, spaceId, channelId?, muted | space (`channelId` only for a bot seat: the mute is that channel's alone) |
 | `voice_moved` | userId, oldChannelId, newChannelId | user (target) |
 | `voice_disconnected` | userId, channelId, reason? | user (target) |

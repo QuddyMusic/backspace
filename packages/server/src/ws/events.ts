@@ -610,6 +610,80 @@ function handleBotVoiceJoin(event: Record<string, unknown>, userId: string): voi
   if (!canSpeak) {
     connectionManager.sendToSpace(spaceId, { type: 'voice_permission_muted', userId, spaceId, channelId, muted: true });
   }
+
+  // A moderator's mute or deafen of this seat outlives the seat: it is back on rejoin.
+  for (const type of botSeatRestrictionTypes(channelId, userId)) {
+    connectionManager.sendToSpace(spaceId, type === 'mute'
+      ? { type: 'voice_space_muted', userId, channelId, spaceId, muted: true, botSeat: true }
+      : { type: 'voice_space_deafened', userId, channelId, spaceId, deafened: true, botSeat: true });
+  }
+}
+
+/** The restrictions a moderator put on the bot's seat in this channel. */
+function botSeatRestrictionTypes(channelId: string, botId: string): Array<'mute' | 'deafen'> {
+  return getDb().select({ type: schema.botSeatRestrictions.restrictionType })
+    .from(schema.botSeatRestrictions)
+    .where(and(eq(schema.botSeatRestrictions.channelId, channelId), eq(schema.botSeatRestrictions.botId, botId)))
+    .all()
+    .map(r => r.type)
+    .filter((t): t is 'mute' | 'deafen' => t === 'mute' || t === 'deafen');
+}
+
+/**
+ * A moderator's mute or deafen of one bot seat. A bot sits in several voice
+ * channels at once, so the restriction is the channel's only (kept in
+ * `bot_seat_restrictions`, per channel) and is announced with `botSeat: true`;
+ * the bot's seats elsewhere keep their own state. Same checks as for a person:
+ * the bit in that channel and the role hierarchy. Like a person's, it is a
+ * flag the bot's client is told to honour, not a cut at the media server.
+ */
+function restrictBotSeat(actorId: string, botId: string, channelId: string, type: 'mute' | 'deafen', on: boolean): void {
+  const spaceId = getChannelSpaceId(channelId);
+  if (!spaceId) {
+    connectionManager.sendToUser(actorId, { type: 'error', message: 'Channel not found' });
+    return;
+  }
+  const bit = type === 'mute' ? PermissionBits.MUTE_MEMBERS : PermissionBits.DEAFEN_MEMBERS;
+  if (!hasPermission(actorId, spaceId, bit, channelId)) {
+    connectionManager.sendToUser(actorId, {
+      type: 'error',
+      message: type === 'mute' ? 'Missing MUTE_MEMBERS permission' : 'Missing DEAFEN_MEMBERS permission',
+    });
+    return;
+  }
+  if (actorId === botId) {
+    connectionManager.sendToUser(actorId, { type: 'error', message: type === 'mute' ? 'Cannot space-mute yourself' : 'Cannot space-deafen yourself' });
+    return;
+  }
+  if (refusedByRoleHierarchy(spaceId, actorId, botId)) return;
+
+  const db = getDb();
+  if (on) {
+    db.insert(schema.botSeatRestrictions).values({
+      channelId,
+      botId,
+      restrictionType: type,
+      moderatorId: actorId,
+      createdAt: Date.now(),
+    }).onConflictDoNothing().run();
+  } else {
+    db.delete(schema.botSeatRestrictions).where(and(
+      eq(schema.botSeatRestrictions.channelId, channelId),
+      eq(schema.botSeatRestrictions.botId, botId),
+      eq(schema.botSeatRestrictions.restrictionType, type),
+    )).run();
+  }
+
+  connectionManager.sendToSpace(spaceId, type === 'mute'
+    ? { type: 'voice_space_muted', userId: botId, channelId, spaceId, muted: on, botSeat: true }
+    : { type: 'voice_space_deafened', userId: botId, channelId, spaceId, deafened: on, botSeat: true });
+}
+
+/** The channel a moderation event names, when it names one: the seat of a bot there. */
+function botSeatTarget(event: Record<string, unknown>, targetUserId: string): string | null {
+  const channelId = event.channelId;
+  if (typeof channelId !== 'string' || channelId.length === 0) return null;
+  return connectionManager.isBotSeat(targetUserId, channelId) ? channelId : null;
 }
 
 function handleBotVoiceLeave(event: Record<string, unknown>, userId: string): void {
@@ -2371,6 +2445,13 @@ function handleVoiceSpaceMute(event: Record<string, unknown>, userId: string): v
     return;
   }
 
+  // A bot seat named by its channel is muted in that channel only.
+  const seatChannelId = botSeatTarget(event, targetUserId);
+  if (seatChannelId) {
+    restrictBotSeat(userId, targetUserId, seatChannelId, 'mute', muted);
+    return;
+  }
+
   // Find the target user's current room
   const targetRoom = connectionManager.getUserRoom(targetUserId);
   if (!targetRoom || targetRoom.room.roomType !== 'space') {
@@ -2430,6 +2511,13 @@ function handleVoiceSpaceDeafen(event: Record<string, unknown>, userId: string):
 
   if (!targetUserId || typeof targetUserId !== 'string') {
     connectionManager.sendToUser(userId, { type: 'error', message: 'userId is required' });
+    return;
+  }
+
+  // A bot seat named by its channel is deafened in that channel only.
+  const seatChannelId = botSeatTarget(event, targetUserId);
+  if (seatChannelId) {
+    restrictBotSeat(userId, targetUserId, seatChannelId, 'deafen', deafened);
     return;
   }
 
@@ -2582,6 +2670,26 @@ function handleVoiceMove(event: Record<string, unknown>, userId: string): void {
   }
 }
 
+/** A moderator takes a bot out of one voice channel; its other seats stay. */
+function disconnectBotSeat(actorId: string, botId: string, channelId: string): void {
+  const spaceId = getChannelSpaceId(channelId);
+  if (!spaceId) {
+    connectionManager.sendToUser(actorId, { type: 'error', message: 'Channel not found' });
+    return;
+  }
+  if (!hasPermission(actorId, spaceId, PermissionBits.DISCONNECT_MEMBERS, channelId)) {
+    connectionManager.sendToUser(actorId, { type: 'error', message: 'Missing DISCONNECT_MEMBERS permission' });
+    return;
+  }
+  if (refusedByRoleHierarchy(spaceId, actorId, botId)) return;
+
+  const room = connectionManager.botLeaveRoom(botId, channelId);
+  if (!room) return;
+  broadcastRoomLeave(channelId, room, botId);
+  if (connectionManager.getBotRoomIds(botId).length === 0) connectionManager.clearVoiceUserStatus(botId);
+  connectionManager.sendToUser(botId, { type: 'voice_disconnected', userId: botId, channelId });
+}
+
 function handleVoiceDisconnect(event: Record<string, unknown>, userId: string): void {
   const targetUserId = event.userId as string;
 
@@ -2592,6 +2700,13 @@ function handleVoiceDisconnect(event: Record<string, unknown>, userId: string): 
 
   if (targetUserId === userId) {
     connectionManager.sendToUser(userId, { type: 'error', message: 'Cannot disconnect yourself' });
+    return;
+  }
+
+  // A bot seat named by its channel: take the bot out of that channel only.
+  const seatChannelId = botSeatTarget(event, targetUserId);
+  if (seatChannelId) {
+    disconnectBotSeat(userId, targetUserId, seatChannelId);
     return;
   }
 

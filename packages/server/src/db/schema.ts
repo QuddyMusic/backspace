@@ -816,6 +816,22 @@ export const botTokens = sqliteTable('bot_tokens', {
   botIdx: index('idx_bot_tokens_bot_id').on(table.botId),
 }));
 
+/**
+ * A moderator's mute or deafen of one bot SEAT (a `bot_voice_join` seat in one
+ * voice channel). A bot sits in several channels at once, so its restrictions
+ * are kept per channel; a person's stay per space in `voice_restrictions`.
+ */
+export const botSeatRestrictions = sqliteTable('bot_seat_restrictions', {
+  channelId: text('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+  botId: text('bot_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  restrictionType: text('restriction_type').notNull(), // 'mute' | 'deafen'
+  moderatorId: text('moderator_id').references(() => users.id),
+  createdAt: integer('created_at').notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.channelId, table.botId, table.restrictionType] }),
+  botIdx: index('idx_bot_seat_restrictions_bot_id').on(table.botId),
+}));
+
 export const inviteLinks = sqliteTable('invite_links', {
   id: text('id').primaryKey(),
   token: text('token').notNull().unique(),

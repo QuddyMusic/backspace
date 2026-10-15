@@ -5,6 +5,7 @@ import { AudioManager } from '../audio/AudioManager';
 import { useSpaceStore, getChannelOrigin, getMyUserIdForOrigin } from './spaceStore';
 import { useAuthStore } from './authStore';
 import { isElectron } from '../platform/platform';
+import { voiceFlagKey } from '../utils/permissionMute';
 
 export interface ScreenShareConfig {
   height: number | 'native';
@@ -216,8 +217,10 @@ export interface VoiceState {
   // Space mute/deafen state (moderator action)
   spaceMutedUserIds: Set<string>; // Stores "spaceId:userId"
   spaceDeafenedUserIds: Set<string>; // Stores "spaceId:userId"
-  setSpaceMutedUser: (spaceId: string, userId: string, muted: boolean) => void;
-  setSpaceDeafenedUser: (spaceId: string, userId: string, deafened: boolean) => void;
+  /** `channelId` is set for a bot seat: the restriction then belongs to that channel only. */
+  setSpaceMutedUser: (spaceId: string, userId: string, muted: boolean, channelId?: string) => void;
+  /** `channelId` is set for a bot seat: the restriction then belongs to that channel only. */
+  setSpaceDeafenedUser: (spaceId: string, userId: string, deafened: boolean, channelId?: string) => void;
   clearSpaceVoiceStates: () => void;
   // Permission mute state (SPEAK permission revoked while in voice)
   permissionMutedUserIds: Set<string>; // Stores "spaceId:userId"
@@ -642,18 +645,18 @@ export const useVoiceStore = create<VoiceState>()(
 
       spaceMutedUserIds: new Set(),
       spaceDeafenedUserIds: new Set(),
-      setSpaceMutedUser: (spaceId, userId, muted) => {
+      setSpaceMutedUser: (spaceId, userId, muted, channelId) => {
         set((state) => {
           const newSet = new Set(state.spaceMutedUserIds);
-          const key = `${spaceId}:${userId}`;
+          const key = voiceFlagKey(spaceId, userId, channelId);
           if (muted) newSet.add(key); else newSet.delete(key);
           return { spaceMutedUserIds: newSet };
         });
       },
-      setSpaceDeafenedUser: (spaceId, userId, deafened) => {
+      setSpaceDeafenedUser: (spaceId, userId, deafened, channelId) => {
         set((state) => {
           const newSet = new Set(state.spaceDeafenedUserIds);
-          const key = `${spaceId}:${userId}`;
+          const key = voiceFlagKey(spaceId, userId, channelId);
           if (deafened) newSet.add(key); else newSet.delete(key);
           return { spaceDeafenedUserIds: newSet };
         });
@@ -664,7 +667,7 @@ export const useVoiceStore = create<VoiceState>()(
       setPermissionMutedUser: (spaceId, userId, muted, channelId) => {
         set((state) => {
           const newSet = new Set(state.permissionMutedUserIds);
-          const key = channelId ? `${spaceId}:${userId}:${channelId}` : `${spaceId}:${userId}`;
+          const key = voiceFlagKey(spaceId, userId, channelId);
           if (muted) newSet.add(key); else newSet.delete(key);
           return { permissionMutedUserIds: newSet };
         });

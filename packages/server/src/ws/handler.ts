@@ -635,6 +635,25 @@ class ConnectionManager implements ReplicaSessionHost {
       if (r.restrictionType === 'deafen') existing.spaceDeafened = true;
       spaceVoiceStates[key] = existing;
     }
+    // A moderator's mute / deafen of a bot seat — persisted per channel
+    // (`bot_seat_restrictions`), keyed `spaceId:botId:channelId` like the
+    // seat's permission mute below.
+    const seatRestrictions = db.select({
+      channelId: schema.botSeatRestrictions.channelId,
+      botId: schema.botSeatRestrictions.botId,
+      restrictionType: schema.botSeatRestrictions.restrictionType,
+    })
+      .from(schema.botSeatRestrictions)
+      .innerJoin(schema.channels, eq(schema.botSeatRestrictions.channelId, schema.channels.id))
+      .where(eq(schema.channels.spaceId, spaceId))
+      .all();
+    for (const r of seatRestrictions) {
+      const seatKey = `${spaceId}:${r.botId}:${r.channelId}`;
+      const existing = spaceVoiceStates[seatKey] ?? { spaceMuted: false, spaceDeafened: false, permissionMuted: false };
+      if (r.restrictionType === 'mute') existing.spaceMuted = true;
+      if (r.restrictionType === 'deafen') existing.spaceDeafened = true;
+      spaceVoiceStates[seatKey] = existing;
+    }
     // Permission-mute — ephemeral, derived from in-memory state for every
     // participant currently in this space's voice rooms (mirrors buildReadyPayload).
     for (const [, room] of this.voiceRooms) {
@@ -646,7 +665,9 @@ class ConnectionManager implements ReplicaSessionHost {
           // A bot seat is muted per channel: key `spaceId:botId:channelId`.
           if (this.isBotSeatPermissionMuted(room.roomId, participantId)) {
             const seatKey = `${spaceId}:${participantId}:${room.roomId}`;
-            spaceVoiceStates[seatKey] = { spaceMuted: false, spaceDeafened: false, permissionMuted: true };
+            const existing = spaceVoiceStates[seatKey] ?? { spaceMuted: false, spaceDeafened: false, permissionMuted: false };
+            existing.permissionMuted = true;
+            spaceVoiceStates[seatKey] = existing;
           }
           continue;
         }

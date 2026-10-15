@@ -97,3 +97,16 @@ describe('permission mute of a bot seat', () => {
     expect(muted.size).toBe(0);
   });
 });
+
+describe('moderator mute of a bot seat', () => {
+  it('voice_space_muted with botSeat keys the seat, so the other channel stays clear', () => {
+    const { setSpaceMutedUser, setSpaceDeafenedUser } = useVoiceStore.getState();
+    setSpaceMutedUser('sp1', 'bot', true, 'chA');
+    setSpaceDeafenedUser('sp1', 'bot', true, 'chA');
+    const { spaceMutedUserIds, spaceDeafenedUserIds } = useVoiceStore.getState();
+    expect([...spaceMutedUserIds]).toEqual(['sp1:bot:chA']);
+    expect(isPermissionMutedIn(spaceDeafenedUserIds, 'sp1', 'bot', 'chB')).toBe(false);
+    setSpaceMutedUser('sp1', 'bot', false, 'chA');
+    expect(useVoiceStore.getState().spaceMutedUserIds.size).toBe(0);
+  });
+});

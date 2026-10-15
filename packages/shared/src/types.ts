@@ -718,10 +718,10 @@ export type ClientEvent =
   | { type: 'dm_call_reject'; dmChannelId: string | null; federatedCallId?: string | null }
   | { type: 'dm_call_end'; dmChannelId: string | null; federatedCallId?: string | null }
   | { type: 'voice_status'; isMuted: boolean; isDeafened: boolean; isCameraOn: boolean; isScreenSharing: boolean }
-  | { type: 'voice_space_mute'; userId: string; muted: boolean }
-  | { type: 'voice_space_deafen'; userId: string; deafened: boolean }
+  | { type: 'voice_space_mute'; userId: string; muted: boolean; /** For a bot seat: the channel whose seat is meant. */ channelId?: string }
+  | { type: 'voice_space_deafen'; userId: string; deafened: boolean; /** For a bot seat: the channel whose seat is meant. */ channelId?: string }
   | { type: 'voice_move'; userId: string; targetChannelId: string }
-  | { type: 'voice_disconnect'; userId: string }
+  | { type: 'voice_disconnect'; userId: string; /** For a bot seat: the channel to take the bot out of. */ channelId?: string }
   | { type: 'activity_update'; activities: Activity[] }
   | { type: 'ping' };
 
@@ -791,8 +791,8 @@ export type ServerEvent =
   | { type: 'join_request_received'; request: JoinRequest }
   | { type: 'join_request_accepted'; request: JoinRequest; space: SpaceWithChannelsAndMembers }
   | { type: 'join_request_declined'; request: JoinRequest }
-  | { type: 'voice_space_muted'; userId: string; channelId: string; spaceId: string; muted: boolean }
-  | { type: 'voice_space_deafened'; userId: string; channelId: string; spaceId: string; deafened: boolean }
+  | { type: 'voice_space_muted'; userId: string; channelId: string; spaceId: string; muted: boolean; /** The restriction is this bot seat's (`channelId`) only. */ botSeat?: boolean }
+  | { type: 'voice_space_deafened'; userId: string; channelId: string; spaceId: string; deafened: boolean; /** The restriction is this bot seat's (`channelId`) only. */ botSeat?: boolean }
   | { type: 'voice_permission_muted'; userId: string; spaceId: string; /** Set for a bot seat: the mute is that channel's only. */ channelId?: string; muted: boolean }
   | { type: 'voice_moved'; userId: string; oldChannelId: string; newChannelId: string }
   | { type: 'voice_disconnected'; userId: string; channelId: string; reason?: 'displaced' | 'session_closed' | 'rejected' }

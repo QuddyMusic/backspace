@@ -786,7 +786,8 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
 
     case 'voice_space_muted': {
       const { setSpaceMutedUser } = useVoiceStore.getState();
-      setSpaceMutedUser(event.spaceId, event.userId, event.muted);
+      // A bot seat's mute is that channel's only.
+      setSpaceMutedUser(event.spaceId, event.userId, event.muted, event.botSeat ? event.channelId : undefined);
       // Broadcast effective state if this targets the current user
       const myMuteId = isHome ? useAuthStore.getState().user?.id : getMyUserIdForOrigin(origin);
       if (event.userId === myMuteId) broadcastVoiceStatus();
@@ -803,7 +804,8 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
 
     case 'voice_space_deafened': {
       const { setSpaceDeafenedUser } = useVoiceStore.getState();
-      setSpaceDeafenedUser(event.spaceId, event.userId, event.deafened);
+      // A bot seat's deafen is that channel's only.
+      setSpaceDeafenedUser(event.spaceId, event.userId, event.deafened, event.botSeat ? event.channelId : undefined);
       // Broadcast effective state if this targets the current user
       const myDeafenId = isHome ? useAuthStore.getState().user?.id : getMyUserIdForOrigin(origin);
       if (event.userId === myDeafenId) {

@@ -223,3 +223,81 @@ describe('permission mute of a bot seat', () => {
     expect(muteEvents(sendToSpace)).toEqual([{ type: 'voice_permission_muted', userId: 'p1', spaceId: SPACE, muted: true }]);
   });
 });
+
+/** A moderator's mute, deafen and disconnect of one bot seat (bots.md, 5c). */
+describe('moderation of a bot seat', () => {
+  type Sent = { type: string; userId?: string; channelId?: string; muted?: boolean; deafened?: boolean; botSeat?: boolean; message?: string };
+  const sentOfType = (spy: { mock: { calls: unknown[][] } }, type: string) =>
+    spy.mock.calls.map((c) => c[1] as Sent).filter((e) => e.type === type);
+  const seatRows = () => testDb.select().from(schema.botSeatRestrictions).all();
+
+  async function seated() {
+    const ctx = await load();
+    ctx.handleClientEvent({ type: 'bot_voice_join', channelId: VOICE_A }, BOT, 'bot', ws, false);
+    ctx.handleClientEvent({ type: 'bot_voice_join', channelId: VOICE_B }, BOT, 'bot', ws, false);
+    return ctx;
+  }
+
+  it('mutes the seat in the named channel only, persisted, announced with botSeat', async () => {
+    const { cm, handleClientEvent } = await seated();
+    const sendToSpace = vi.spyOn(cm, 'sendToSpace');
+
+    handleClientEvent({ type: 'voice_space_mute', userId: BOT, channelId: VOICE_A, muted: true }, 'owner', 'owner', ws, false);
+
+    expect(sentOfType(sendToSpace, 'voice_space_muted')).toEqual([
+      { type: 'voice_space_muted', userId: BOT, channelId: VOICE_A, spaceId: SPACE, muted: true, botSeat: true },
+    ]);
+    expect(seatRows()).toEqual([expect.objectContaining({ channelId: VOICE_A, botId: BOT, restrictionType: 'mute', moderatorId: 'owner' })]);
+    // The person-style per-space flag is untouched: the other seat stays unmuted.
+    expect(cm.isSpaceMuted(SPACE, BOT)).toBe(false);
+    const snap = cm.buildSpaceVoiceState(SPACE, 'owner').spaceVoiceStates;
+    expect(snap[`${SPACE}:${BOT}:${VOICE_A}`]).toMatchObject({ spaceMuted: true });
+    expect(snap[`${SPACE}:${BOT}:${VOICE_B}`]).toBeUndefined();
+  });
+
+  it('comes back when the bot takes the seat again, and an unmute lifts it', async () => {
+    const { cm, handleClientEvent } = await seated();
+    handleClientEvent({ type: 'voice_space_deafen', userId: BOT, channelId: VOICE_B, deafened: true }, 'owner', 'owner', ws, false);
+    handleClientEvent({ type: 'bot_voice_leave', channelId: VOICE_B }, BOT, 'bot', ws, false);
+
+    const sendToSpace = vi.spyOn(cm, 'sendToSpace');
+    handleClientEvent({ type: 'bot_voice_join', channelId: VOICE_B }, BOT, 'bot', ws, false);
+    expect(sentOfType(sendToSpace, 'voice_space_deafened')).toEqual([
+      { type: 'voice_space_deafened', userId: BOT, channelId: VOICE_B, spaceId: SPACE, deafened: true, botSeat: true },
+    ]);
+
+    handleClientEvent({ type: 'voice_space_deafen', userId: BOT, channelId: VOICE_B, deafened: false }, 'owner', 'owner', ws, false);
+    expect(seatRows()).toEqual([]);
+  });
+
+  it('refuses a moderator without the bit in that channel', async () => {
+    const now = Date.now();
+    testDb.insert(schema.users).values({ id: 'p1', username: 'p1', passwordHash: 'x', homeUserId: 'p1', homeInstance: null, createdAt: now }).run();
+    testDb.insert(schema.spaceMembers).values({ spaceId: SPACE, userId: 'p1', joinedAt: now }).run();
+    const { cm, handleClientEvent } = await seated();
+    const sendToUser = vi.spyOn(cm, 'sendToUser');
+
+    handleClientEvent({ type: 'voice_space_mute', userId: BOT, channelId: VOICE_A, muted: true }, 'p1', 'p1', ws, false);
+
+    expect(sendToUser).toHaveBeenCalledWith('p1', expect.objectContaining({ type: 'error', message: 'Missing MUTE_MEMBERS permission' }));
+    expect(seatRows()).toEqual([]);
+  });
+
+  it('disconnects the seat in the named channel and keeps the other', async () => {
+    const { cm, handleClientEvent } = await seated();
+    const sendToUser = vi.spyOn(cm, 'sendToUser');
+
+    handleClientEvent({ type: 'voice_disconnect', userId: BOT, channelId: VOICE_A }, 'owner', 'owner', ws, false);
+
+    expect(cm.getBotRoomIds(BOT)).toEqual([VOICE_B]);
+    expect(sendToUser).toHaveBeenCalledWith(BOT, { type: 'voice_disconnected', userId: BOT, channelId: VOICE_A });
+  });
+
+  it('a seat restriction goes when the bot is taken out of the space', async () => {
+    const { handleClientEvent } = await seated();
+    handleClientEvent({ type: 'voice_space_mute', userId: BOT, channelId: VOICE_A, muted: true }, 'owner', 'owner', ws, false);
+    const { removeUserFromSpace } = await import('../utils/spaceMembership.js');
+    removeUserFromSpace(SPACE, BOT);
+    expect(seatRows()).toEqual([]);
+  });
+});

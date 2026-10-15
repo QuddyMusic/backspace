@@ -8,7 +8,7 @@ import { VoiceUserRow } from './VoiceUserRow';
 import { useTranslation } from 'react-i18next';
 import { useFormatters } from '../../i18n/formatters';
 import { useSharedSecondBeat } from '../../hooks/useSharedSecondBeat';
-import { isPermissionMutedIn } from '../../utils/permissionMute';
+import { isPermissionMutedIn, isVoiceFlagIn } from '../../utils/permissionMute';
 import { isLocallyMutedIn, setLocalMute } from '../../utils/voiceLocalKeys';
 
 const EMPTY_VOICE_USERS: string[] = [];
@@ -223,8 +223,8 @@ export function VoiceChannel({ channelId, channelName, onClick, locked, canManag
             const hasCamera = participant?.isCameraOn ?? wsStatus?.isCameraOn ?? false;
             const isScreenSharing = participant?.isScreenSharing ?? wsStatus?.isScreenSharing ?? false;
             const spaceId = channelToSpaceMap.get(channelId);
-            const isSpaceMuted = spaceMutedUserIds.has(`${spaceId}:${userId}`);
-            const isSpaceDeafened = spaceDeafenedUserIds.has(`${spaceId}:${userId}`);
+            const isSpaceMuted = isVoiceFlagIn(spaceMutedUserIds, spaceId, userId, channelId);
+            const isSpaceDeafened = isVoiceFlagIn(spaceDeafenedUserIds, spaceId, userId, channelId);
             const isPermissionMuted = isPermissionMutedIn(permissionMutedUserIds, spaceId, userId, channelId);
             const participantConnectionQuality = participant?.isLocal
               ? localConnectionQuality
