@@ -393,220 +393,249 @@ export function BotsPanel() {
         <div className="text-[11px] font-semibold text-txt-tertiary uppercase tracking-wider mb-1.5">
           {t('settings:bots.list.sectionTitle')}
         </div>
-        <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5 space-y-3">
-          {!loading && bots.length === 0 && (
-            <div className="text-sm text-txt-tertiary">{t('settings:bots.list.empty')}</div>
-          )}
-          {bots.map((bot) => (
-            <div key={bot.id} className="space-y-2">
-              <div className="flex items-center gap-3">
-                <Avatar
-                  src={bot.avatar ? api.uploads.url(bot.avatar) : null}
-                  name={bot.displayName || bot.username}
-                  size={40}
-                  avatarColor={bot.avatarColor}
-                />
-                <div className="min-w-0 flex-1">
-                  {editingId === bot.id ? (
-                    <div className="space-y-1">
-                      <label className="sr-only" htmlFor={`bot-edit-${bot.id}`}>
-                        {t('settings:bots.edit.nameLabel')}
-                      </label>
-                      <div className="flex items-center gap-1">
-                        <input
-                          id={`bot-edit-${bot.id}`}
-                          className="input-standard flex-1 min-w-0"
-                          value={editName}
-                          maxLength={BOT_NAME_MAX_LENGTH - BOT_NAME_SUFFIX.length}
-                          autoComplete="off"
-                          onChange={(e) => setEditName(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && stemOf(editName).length > 0 && !busy) void handleSaveEdit(bot);
-                            if (e.key === 'Escape') setEditingId(null);
-                          }}
-                        />
-                        <span className="shrink-0 text-sm text-txt-tertiary select-none">{BOT_NAME_SUFFIX}</span>
+        {!loading && bots.length === 0 && (
+          <div className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5 text-sm text-txt-tertiary">
+            {t('settings:bots.list.empty')}
+          </div>
+        )}
+        <ul className="space-y-3">
+          {bots.map((bot) => {
+            const editing = editingId === bot.id;
+            const tokensOpen = tokensBotId === bot.id;
+            const spacesOpen = spacesBotId === bot.id;
+            return (
+              <li
+                key={bot.id}
+                className="rounded-lg bg-white/[0.03] border border-white/[0.04] p-3.5 space-y-3"
+                aria-label={bot.displayName || bot.username}
+              >
+                <div className="flex items-center gap-3">
+                  <Avatar
+                    src={bot.avatar ? api.uploads.url(bot.avatar) : null}
+                    name={bot.displayName || bot.username}
+                    size={40}
+                    avatarColor={bot.avatarColor}
+                  />
+                  <div className="min-w-0 flex-1">
+                    {editing ? (
+                      <div className="space-y-1">
+                        <label className="sr-only" htmlFor={`bot-edit-${bot.id}`}>
+                          {t('settings:bots.edit.nameLabel')}
+                        </label>
+                        <div className="flex items-center gap-1">
+                          <input
+                            id={`bot-edit-${bot.id}`}
+                            className="input-standard flex-1 min-w-0"
+                            value={editName}
+                            maxLength={BOT_NAME_MAX_LENGTH - BOT_NAME_SUFFIX.length}
+                            autoComplete="off"
+                            onChange={(e) => setEditName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && stemOf(editName).length > 0 && !busy) void handleSaveEdit(bot);
+                              if (e.key === 'Escape') setEditingId(null);
+                            }}
+                          />
+                          <span className="shrink-0 text-sm text-txt-tertiary select-none">{BOT_NAME_SUFFIX}</span>
+                        </div>
+                        <div className="text-xs text-txt-tertiary">
+                          {t('settings:bots.edit.hint', { username: bot.username, max: BOT_NAME_MAX_LENGTH - BOT_NAME_SUFFIX.length })}
+                        </div>
                       </div>
-                      <div className="text-xs text-txt-tertiary">
-                        {t('settings:bots.edit.hint', { username: bot.username, max: BOT_NAME_MAX_LENGTH - BOT_NAME_SUFFIX.length })}
-                      </div>
-                      <div className="flex gap-1">
-                        <button type="button" className={quietButtonClass} disabled={busy} onClick={() => pickAvatar(bot)}>
-                          {t('settings:bots.avatar.change')}
-                        </button>
-                        {bot.avatar && (
-                          <button type="button" className={quietButtonClass} disabled={busy} onClick={() => void handleRemoveAvatar(bot)}>
-                            {t('settings:bots.avatar.remove')}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="text-sm text-txt-primary truncate">{bot.displayName || bot.username}</div>
-                      <div className="text-xs text-txt-tertiary truncate">
-                        @{bot.username} · {t('settings:bots.list.createdOn', { date: formatMediumDate(bot.createdAt) })}
-                      </div>
-                    </>
-                  )}
+                    ) : (
+                      <>
+                        <div className="text-sm font-medium text-txt-primary truncate">{bot.displayName || bot.username}</div>
+                        <div className="text-xs text-txt-tertiary truncate">
+                          @{bot.username} · {t('settings:bots.list.createdOn', { date: formatMediumDate(bot.createdAt) })}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
-                <div className="flex shrink-0 gap-1">
-                  {editingId === bot.id ? (
-                    <>
-                      <button
-                        type="button"
-                        className={buttonClass}
-                        disabled={busy || stemOf(editName).length === 0}
-                        onClick={() => void handleSaveEdit(bot)}
-                      >
-                        {t('settings:bots.actions.save')}
+
+                {editing ? (
+                  <div className="flex flex-wrap items-center gap-1">
+                    <button
+                      type="button"
+                      className={buttonClass}
+                      disabled={busy || stemOf(editName).length === 0}
+                      onClick={() => void handleSaveEdit(bot)}
+                    >
+                      {t('settings:bots.actions.save')}
+                    </button>
+                    <button type="button" className={quietButtonClass} onClick={() => setEditingId(null)}>
+                      {t('settings:bots.actions.cancel')}
+                    </button>
+                    <div className="flex flex-wrap gap-1 ml-auto">
+                      <button type="button" className={quietButtonClass} disabled={busy} onClick={() => pickAvatar(bot)}>
+                        {t('settings:bots.avatar.change')}
                       </button>
-                      <button type="button" className={quietButtonClass} onClick={() => setEditingId(null)}>
-                        {t('settings:bots.actions.cancel')}
-                      </button>
-                    </>
-                  ) : (
-                    <>
+                      {bot.avatar && (
+                        <button type="button" className={quietButtonClass} disabled={busy} onClick={() => void handleRemoveAvatar(bot)}>
+                          {t('settings:bots.avatar.remove')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-1">
                       <button type="button" className={quietButtonClass} disabled={busy} onClick={() => startEdit(bot)}>
                         {t('settings:bots.actions.edit')}
                       </button>
-                      <button type="button" className={quietButtonClass} disabled={busy} onClick={() => void toggleSpaces(bot)}>
+                      <button
+                        type="button"
+                        className={spacesOpen ? buttonClass : quietButtonClass}
+                        aria-expanded={spacesOpen}
+                        disabled={busy}
+                        onClick={() => void toggleSpaces(bot)}
+                      >
                         {t('settings:bots.actions.addToServer')}
                       </button>
-                      <button type="button" className={quietButtonClass} disabled={busy} onClick={() => void toggleTokens(bot)}>
+                      <button
+                        type="button"
+                        className={tokensOpen ? buttonClass : quietButtonClass}
+                        aria-expanded={tokensOpen}
+                        disabled={busy}
+                        onClick={() => void toggleTokens(bot)}
+                      >
                         {t('settings:bots.actions.tokens')}
                       </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1 border-t border-white/[0.04] pt-2">
                       <button type="button" className={quietButtonClass} disabled={busy} onClick={() => void handleRegenerate(bot)}>
                         {t('settings:bots.actions.regenerate')}
                       </button>
-                      {confirmDeleteId === bot.id ? (
-                        <>
-                          <button type="button" className={dangerButtonClass} disabled={busy} onClick={() => void handleDelete(bot)}>
-                            {t('settings:bots.actions.confirmDelete')}
-                          </button>
-                          <button type="button" className={quietButtonClass} onClick={() => setConfirmDeleteId(null)}>
-                            {t('settings:bots.actions.cancel')}
-                          </button>
-                        </>
-                      ) : (
-                        <button type="button" className={dangerButtonClass} disabled={busy} onClick={() => setConfirmDeleteId(bot.id)}>
-                          {t('settings:bots.actions.delete')}
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-              {tokensBotId === bot.id && (
-                <div className="ml-[52px] rounded-md bg-surface-input p-2.5 space-y-1.5">
-                  <div className="text-xs font-semibold text-txt-tertiary">{t('settings:bots.tokens.title')}</div>
-                  {tokensLoading && <div className="text-xs text-txt-tertiary">{t('settings:bots.tokens.loading')}</div>}
-                  {!tokensLoading && tokensLegacy && (
-                    <div className="text-xs text-txt-tertiary">{t('settings:bots.tokens.legacy')}</div>
-                  )}
-                  {!tokensLoading && !tokensLegacy && tokenList.length === 0 && (
-                    <div className="text-xs text-txt-tertiary">{t('settings:bots.tokens.empty')}</div>
-                  )}
-                  {tokenList.map((tk) => (
-                    <div key={tk.id} className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="text-sm text-txt-primary truncate">{tk.name ?? t('settings:bots.tokens.unnamed')}</div>
-                        <div className="text-xs text-txt-tertiary truncate">
-                          {t('settings:bots.tokens.createdOn', { date: formatMediumDate(tk.createdAt) })} ·{' '}
-                          {tk.lastUsedAt === null
-                            ? t('settings:bots.tokens.neverUsed')
-                            : t('settings:bots.tokens.lastUsed', { time: formatRelativeTime(tk.lastUsedAt) })}
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 gap-1">
-                        {confirmRevokeId === tk.id ? (
+                      <div className="flex flex-wrap gap-1 ml-auto">
+                        {confirmDeleteId === bot.id ? (
                           <>
-                            <button type="button" className={dangerButtonClass} disabled={busy} onClick={() => void handleRevokeToken(bot, tk.id)}>
-                              {t('settings:bots.tokens.confirmRevoke')}
-                            </button>
-                            <button type="button" className={quietButtonClass} onClick={() => setConfirmRevokeId(null)}>
+                            <button type="button" className={quietButtonClass} onClick={() => setConfirmDeleteId(null)}>
                               {t('settings:bots.actions.cancel')}
+                            </button>
+                            <button type="button" className={dangerButtonClass} disabled={busy} onClick={() => void handleDelete(bot)}>
+                              {t('settings:bots.actions.confirmDelete')}
                             </button>
                           </>
                         ) : (
-                          <button type="button" className={dangerButtonClass} disabled={busy} onClick={() => setConfirmRevokeId(tk.id)}>
-                            {t('settings:bots.tokens.revoke')}
+                          <button type="button" className={dangerButtonClass} disabled={busy} onClick={() => setConfirmDeleteId(bot.id)}>
+                            {t('settings:bots.actions.delete')}
                           </button>
                         )}
                       </div>
                     </div>
-                  ))}
-                  {!tokensLoading && (
-                    <div className="flex gap-2 pt-1">
-                      <label className="sr-only" htmlFor={`bot-token-name-${bot.id}`}>
-                        {t('settings:bots.tokens.nameLabel')}
-                      </label>
-                      <input
-                        id={`bot-token-name-${bot.id}`}
-                        className="input-standard flex-1 min-w-0"
-                        value={tokenName}
-                        placeholder={t('settings:bots.tokens.namePlaceholder')}
-                        maxLength={BOT_TOKEN_NAME_MAX_LENGTH}
-                        autoComplete="off"
-                        onChange={(e) => setTokenName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !busy && tokenList.length < MAX_BOT_TOKENS_PER_BOT) void handleCreateToken(bot);
-                        }}
-                      />
-                      <button
-                        type="button"
-                        className={buttonClass}
-                        disabled={busy || tokenList.length >= MAX_BOT_TOKENS_PER_BOT}
-                        onClick={() => void handleCreateToken(bot)}
-                      >
-                        {t('settings:bots.tokens.create')}
-                      </button>
-                    </div>
-                  )}
-                  <div className="text-xs text-txt-tertiary">{t('settings:bots.tokens.limitHint', { max: MAX_BOT_TOKENS_PER_BOT })}</div>
-                </div>
-              )}
-              {spacesBotId === bot.id && (
-                <div className="ml-[52px] rounded-md bg-surface-input p-2.5 space-y-1.5">
-                  <div className="text-xs font-semibold text-txt-tertiary">{t('settings:bots.spaces.title')}</div>
-                  {spacesLoading && (
-                    <div className="text-xs text-txt-tertiary">{t('settings:bots.spaces.loading')}</div>
-                  )}
-                  {!spacesLoading && spaceOptions.length === 0 && (
-                    <div className="text-xs text-txt-tertiary">{t('settings:bots.spaces.empty')}</div>
-                  )}
-                  {spaceOptions.map((space) => (
-                    <div key={space.id} className="flex items-center justify-between gap-2">
-                      <span className="text-sm text-txt-primary truncate">{space.name}</span>
-                      {space.botIsMember ? (
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-xs text-txt-tertiary">{t('settings:bots.spaces.added')}</span>
-                          <button
-                            type="button"
-                            className={dangerButtonClass}
-                            disabled={busy}
-                            onClick={() => void handleRemoveFromSpace(bot, space.id)}
-                          >
-                            {t('settings:bots.spaces.remove')}
-                          </button>
+                  </div>
+                )}
+
+                {tokensOpen && (
+                  <div className="rounded-md bg-surface-input p-2.5 space-y-1.5">
+                    <div className="text-xs font-semibold text-txt-tertiary">{t('settings:bots.tokens.title')}</div>
+                    {tokensLoading && <div className="text-xs text-txt-tertiary">{t('settings:bots.tokens.loading')}</div>}
+                    {!tokensLoading && tokensLegacy && (
+                      <div className="text-xs text-txt-tertiary">{t('settings:bots.tokens.legacy')}</div>
+                    )}
+                    {!tokensLoading && !tokensLegacy && tokenList.length === 0 && (
+                      <div className="text-xs text-txt-tertiary">{t('settings:bots.tokens.empty')}</div>
+                    )}
+                    {tokenList.map((tk) => (
+                      <div key={tk.id} className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm text-txt-primary truncate">{tk.name ?? t('settings:bots.tokens.unnamed')}</div>
+                          <div className="text-xs text-txt-tertiary truncate">
+                            {t('settings:bots.tokens.createdOn', { date: formatMediumDate(tk.createdAt) })} ·{' '}
+                            {tk.lastUsedAt === null
+                              ? t('settings:bots.tokens.neverUsed')
+                              : t('settings:bots.tokens.lastUsed', { time: formatRelativeTime(tk.lastUsedAt) })}
+                          </div>
                         </div>
-                      ) : (
+                        <div className="flex flex-wrap shrink-0 gap-1">
+                          {confirmRevokeId === tk.id ? (
+                            <>
+                              <button type="button" className={quietButtonClass} onClick={() => setConfirmRevokeId(null)}>
+                                {t('settings:bots.actions.cancel')}
+                              </button>
+                              <button type="button" className={dangerButtonClass} disabled={busy} onClick={() => void handleRevokeToken(bot, tk.id)}>
+                                {t('settings:bots.tokens.confirmRevoke')}
+                              </button>
+                            </>
+                          ) : (
+                            <button type="button" className={dangerButtonClass} disabled={busy} onClick={() => setConfirmRevokeId(tk.id)}>
+                              {t('settings:bots.tokens.revoke')}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {!tokensLoading && (
+                      <div className="flex gap-2 pt-1">
+                        <label className="sr-only" htmlFor={`bot-token-name-${bot.id}`}>
+                          {t('settings:bots.tokens.nameLabel')}
+                        </label>
+                        <input
+                          id={`bot-token-name-${bot.id}`}
+                          className="input-standard flex-1 min-w-0"
+                          value={tokenName}
+                          placeholder={t('settings:bots.tokens.namePlaceholder')}
+                          maxLength={BOT_TOKEN_NAME_MAX_LENGTH}
+                          autoComplete="off"
+                          onChange={(e) => setTokenName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !busy && tokenList.length < MAX_BOT_TOKENS_PER_BOT) void handleCreateToken(bot);
+                          }}
+                        />
                         <button
                           type="button"
-                          className={buttonClass}
-                          disabled={busy}
-                          onClick={() => void handleAddToSpace(bot, space.id)}
+                          className={`${buttonClass} shrink-0`}
+                          disabled={busy || tokenList.length >= MAX_BOT_TOKENS_PER_BOT}
+                          onClick={() => void handleCreateToken(bot)}
                         >
-                          {t('settings:bots.spaces.add')}
+                          {t('settings:bots.tokens.create')}
                         </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+                      </div>
+                    )}
+                    <div className="text-xs text-txt-tertiary">{t('settings:bots.tokens.limitHint', { max: MAX_BOT_TOKENS_PER_BOT })}</div>
+                  </div>
+                )}
+                {spacesOpen && (
+                  <div className="rounded-md bg-surface-input p-2.5 space-y-1.5">
+                    <div className="text-xs font-semibold text-txt-tertiary">{t('settings:bots.spaces.title')}</div>
+                    {spacesLoading && (
+                      <div className="text-xs text-txt-tertiary">{t('settings:bots.spaces.loading')}</div>
+                    )}
+                    {!spacesLoading && spaceOptions.length === 0 && (
+                      <div className="text-xs text-txt-tertiary">{t('settings:bots.spaces.empty')}</div>
+                    )}
+                    {spaceOptions.map((space) => (
+                      <div key={space.id} className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="min-w-0 flex-1 text-sm text-txt-primary truncate">{space.name}</span>
+                        {space.botIsMember ? (
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-xs text-txt-tertiary">{t('settings:bots.spaces.added')}</span>
+                            <button
+                              type="button"
+                              className={dangerButtonClass}
+                              disabled={busy}
+                              onClick={() => void handleRemoveFromSpace(bot, space.id)}
+                            >
+                              {t('settings:bots.spaces.remove')}
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className={`${buttonClass} shrink-0`}
+                            disabled={busy}
+                            onClick={() => void handleAddToSpace(bot, space.id)}
+                          >
+                            {t('settings:bots.spaces.add')}
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       </div>
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChosen} />
       <ImageCropModal

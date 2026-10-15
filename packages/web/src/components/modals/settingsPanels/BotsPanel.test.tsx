@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { BotSummary } from '@backspace/shared';
 
 const mocks = vi.hoisted(() => ({
@@ -113,5 +113,45 @@ describe('BotsPanel tokens', () => {
     await openTokens();
     const create = await screen.findByText('settings:bots.tokens.create');
     expect(create).toBeDisabled();
+  });
+});
+
+describe('BotsPanel layout', () => {
+  const other: BotSummary = { ...bot, id: 'b2', username: 'radio_bot', displayName: 'Radio_bot' };
+
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset());
+    mocks.list.mockResolvedValue({ bots: [bot, other] });
+  });
+  afterEach(() => cleanup());
+
+  it('gives every bot its own card holding all of its actions', async () => {
+    render(<BotsPanel />);
+    const card = await screen.findByRole('listitem', { name: 'Echo_bot' });
+    expect(screen.getAllByRole('listitem')).toHaveLength(2);
+    for (const key of ['edit', 'addToServer', 'tokens', 'regenerate', 'delete']) {
+      expect(within(card).getByText(`settings:bots.actions.${key}`)).toBeTruthy();
+    }
+  });
+
+  it('opens the tokens of one bot inside that bot\'s card and marks the button', async () => {
+    mocks.listTokens.mockResolvedValue({ tokens: [], legacy: false });
+    render(<BotsPanel />);
+    const card = await screen.findByRole('listitem', { name: 'Radio_bot' });
+    const toggle = within(card).getByText('settings:bots.actions.tokens');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    fireEvent.click(toggle);
+    expect(await within(card).findByText('settings:bots.tokens.title')).toBeTruthy();
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const firstCard = screen.getByRole('listitem', { name: 'Echo_bot' });
+    expect(within(firstCard).queryByText('settings:bots.tokens.title')).toBeNull();
+  });
+
+  it('asks before deleting, inside the same card', async () => {
+    render(<BotsPanel />);
+    const card = await screen.findByRole('listitem', { name: 'Echo_bot' });
+    fireEvent.click(within(card).getByText('settings:bots.actions.delete'));
+    expect(within(card).getByText('settings:bots.actions.confirmDelete')).toBeTruthy();
+    expect(within(card).queryByText('settings:bots.actions.delete')).toBeNull();
   });
 });
