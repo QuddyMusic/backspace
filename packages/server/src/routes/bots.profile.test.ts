@@ -85,7 +85,7 @@ describe('the "About" of a bot', () => {
     expect(queueProfileUpdateRelay).toHaveBeenCalledTimes(1);
 
     const list = await app.inject({ method: 'GET', url: '/api/bots', headers: owner() });
-    expect((list.json() as { bots: BotSummary[] }).bots[0].bio).toBe('Plays radio in voice. /play to start.');
+    expect((list.json() as { bots: BotSummary[] }).bots[0]?.bio).toBe('Plays radio in voice. /play to start.');
   });
 
   it('is cleared by blank text or null, and refused over the limit', async () => {
