@@ -874,7 +874,7 @@ describe('slash command registration', () => {
       ['choices on a boolean', [{ name: 'a', description: 'x', options: [
         { name: 'o', description: 'x', type: 'boolean', choices: [{ name: 'n', value: 1 }] },
       ] }]],
-      ['an unknown option type', [{ name: 'a', description: 'x', options: [{ name: 'o', description: 'x', type: 'user' }] }]],
+      ['an unknown option type', [{ name: 'a', description: 'x', options: [{ name: 'o', description: 'x', type: 'emoji' }] }]],
       ['eleven options', [{ name: 'a', description: 'x', options: Array.from({ length: 11 }, (_, i) => ({ name: `o${i}`, description: 'x', type: 'string' })) }]],
       ['a list that is not an array', 'play'],
     ];

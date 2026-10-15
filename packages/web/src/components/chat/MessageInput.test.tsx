@@ -214,6 +214,22 @@ describe('MessageInput slash commands', () => {
   });
 
   it('offers the people of the chat for a user option and invokes with the picked id', async () => {
+    // The list offers the other people of the DM, never oneself.
+    const bob: User = { ...me, id: 'bob', username: 'bob', displayName: 'Bob' };
+    useSpaceStore.getState().reset();
+    useSpaceStore.getState().populateFromReady('', [], [], [{
+      id: 'dm-1',
+      federatedId: null,
+      ownerId: null,
+      ownerHomeUserId: null,
+      ownerHomeInstance: null,
+      createdAt: 1,
+      members: [me, bob],
+      lastMessage: null,
+      name: null,
+      icon: null,
+      metadataUpdatedAt: 1,
+    }]);
     const poke = { ...play, id: 'cmd-2', name: 'poke', options: [{ name: 'who', description: 'Who', type: 'user', required: true }] };
     vi.spyOn(api.commands, 'forChat').mockResolvedValue({ commands: [poke] } as never);
     const invoke = vi.spyOn(api.commands, 'invoke').mockResolvedValue({ id: 'i1', expiresAt: 1 } as never);
@@ -226,18 +242,18 @@ describe('MessageInput slash commands', () => {
     // Picking the command opens the list of people at once.
     fireEvent.change(input, { target: { value: '/po', selectionStart: 3 } });
     fireEvent.click(await screen.findByText('/poke'));
-    expect(await screen.findByText('Alice')).toBeTruthy();
+    expect(await screen.findByText('Bob')).toBeTruthy();
 
-    fireEvent.change(input, { target: { value: '/poke who:al', selectionStart: 12 } });
-    expect(await screen.findByText('Alice')).toBeTruthy();
+    fireEvent.change(input, { target: { value: '/poke who:bo', selectionStart: 12 } });
+    expect(await screen.findByText('Bob')).toBeTruthy();
     fireEvent.keyDown(input, { key: 'Tab' });
-    await waitFor(() => expect(input).toHaveValue('/poke who:@Alice '));
-    expect(useComposerStore.getState().get('dm-1').draftText).toBe('/poke who:<@me> ');
+    await waitFor(() => expect(input).toHaveValue('/poke who:@Bob '));
+    expect(useComposerStore.getState().get('dm-1').draftText).toBe('/poke who:<@bob> ');
 
     fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith(expect.objectContaining({
       command: 'poke',
-      options: { who: 'me' },
+      options: { who: 'bob' },
       dmChannelId: 'dm-1',
     })));
   });
