@@ -453,14 +453,31 @@
       "copied": "Kopiert",
       "dismiss": "Ich habe es gespeichert"
     },
+    "tokens": {
+      "title": "Zugriffstokens",
+      "loading": "Tokens werden geladen",
+      "legacy": "Dieser Bot läuft noch mit seinem alten, langlebigen Token. Erstelle ein Token, um umzustellen: Das alte funktioniert dann sofort nicht mehr.",
+      "empty": "Dieser Bot hat keine Tokens.",
+      "unnamed": "Token ohne Namen",
+      "createdOn": "Erstellt am {{date}}",
+      "neverUsed": "nie verwendet",
+      "lastUsed": "zuletzt verwendet {{time}}",
+      "revoke": "Widerrufen",
+      "confirmRevoke": "Widerruf bestätigen",
+      "nameLabel": "Token-Bezeichnung",
+      "namePlaceholder": "Bezeichnung (optional)",
+      "create": "Token erstellen",
+      "limitHint": "Bis zu {{max}} Tokens pro Bot. Das Widerrufen eines Tokens trennt den Bot; die übrigen Tokens funktionieren weiter."
+    },
     "actions": {
-      "regenerate": "Neues Token",
+      "regenerate": "Alle Tokens zurücksetzen",
       "delete": "Löschen",
       "confirmDelete": "Löschen bestätigen",
       "cancel": "Abbrechen",
       "edit": "Bearbeiten",
       "save": "Speichern",
-      "addToServer": "Zum Server hinzufügen"
+      "addToServer": "Zum Server hinzufügen",
+      "tokens": "Tokens"
     },
     "edit": {
       "nameLabel": "Anzeigename",

@@ -166,6 +166,11 @@ export function tombstoneUser(uid: string, options?: TombstoneOptions): string[]
       .where(eq(schema.userFederationCredentials.userId, uid))
       .run();
 
+    // A bot's access tokens (hash only) go with the account too.
+    tx.delete(schema.botTokens)
+      .where(eq(schema.botTokens.botId, uid))
+      .run();
+
     // A bot's slash commands go with the account (the tombstone keeps the users
     // row, so the ON DELETE CASCADE never fires).
     tx.delete(schema.botCommands).where(eq(schema.botCommands.botId, uid)).run();

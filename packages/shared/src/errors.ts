@@ -41,6 +41,9 @@ export const ERROR_CODES = [
   'bot_proof_invalid',
   'bot_profile_owner_only',
   'bot_revocation_pending',
+  'bot_token_limit_reached',
+  'bot_token_not_found',
+  'bot_token_name_invalid',
 
   // Auth and accounts
   'username_required',

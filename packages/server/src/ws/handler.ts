@@ -38,6 +38,7 @@ import { utcDay } from '../telemetry/day.js';
 import { memberRolesView, rolesForViewer } from '../utils/permissionDataView.js';
 import { canCountUnread, readyUnreadCounts, unreadCountFollowUp } from './channelUnreadCounts.js';
 import { userWrittenMessages } from '../db/userWrittenMessages.js';
+import { isBotTokenString, isRetiredLegacyBotJwt, verifyBotToken } from '../utils/botTokens.js';
 
 // ─── Heartbeat State ──────────────────────────────────────────────────────────
 const wsIsAlive: WeakMap<WebSocket, boolean> = new WeakMap();
@@ -2142,7 +2143,20 @@ export async function registerWebSocket(app: FastifyInstance): Promise<void> {
         }
 
         try {
-          const payload = verifyJwt(parsed.token);
+          // A bot token is checked against its stored hash; anything else is a JWT.
+          let payload: { userId: string; username: string; iat?: number };
+          if (isBotTokenString(parsed.token)) {
+            const resolved = verifyBotToken(parsed.token);
+            if (resolved === 'deleted') {
+              ws.send(JSON.stringify({ type: 'error', message: 'This account has been deleted' }));
+              ws.close();
+              return;
+            }
+            if (resolved === 'invalid') throw new Error('Invalid bot token');
+            payload = { userId: resolved.userId, username: resolved.username };
+          } else {
+            payload = verifyJwt(parsed.token);
+          }
           userId = payload.userId;
           username = payload.username;
 
@@ -2151,6 +2165,12 @@ export async function registerWebSocket(app: FastifyInstance): Promise<void> {
           const userRow = db.select().from(schema.users).where(eq(schema.users.id, userId)).get();
           if (!userRow || userRow.isDeleted) {
             ws.send(JSON.stringify({ type: 'error', message: 'This account has been deleted' }));
+            ws.close();
+            return;
+          }
+          // A bot's old 10-year JWT stops working once it holds a `bsb_` token.
+          if (payload.iat !== undefined && isRetiredLegacyBotJwt(userRow)) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Token has been revoked' }));
             ws.close();
             return;
           }

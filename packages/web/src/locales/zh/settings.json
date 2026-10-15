@@ -452,14 +452,31 @@
       "copied": "已复制",
       "dismiss": "我已保存"
     },
+    "tokens": {
+      "title": "访问令牌",
+      "loading": "正在加载令牌",
+      "legacy": "此机器人仍在使用旧的长期令牌。创建一个令牌即可切换：旧令牌会立即失效。",
+      "empty": "此机器人没有令牌。",
+      "unnamed": "未命名令牌",
+      "createdOn": "创建于 {{date}}",
+      "neverUsed": "从未使用",
+      "lastUsed": "最近使用 {{time}}",
+      "revoke": "撤销",
+      "confirmRevoke": "确认撤销",
+      "nameLabel": "令牌标签",
+      "namePlaceholder": "标签（可选）",
+      "create": "创建令牌",
+      "limitHint": "每个机器人最多 {{max}} 个令牌。撤销令牌会断开机器人；其他令牌继续有效。"
+    },
     "actions": {
-      "regenerate": "新令牌",
+      "regenerate": "重置所有令牌",
       "delete": "删除",
       "confirmDelete": "确认删除",
       "cancel": "取消",
       "edit": "编辑",
       "save": "保存",
-      "addToServer": "添加到服务器"
+      "addToServer": "添加到服务器",
+      "tokens": "令牌"
     },
     "edit": {
       "nameLabel": "显示名称",

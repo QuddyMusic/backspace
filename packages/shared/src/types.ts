@@ -2109,6 +2109,32 @@ export interface BotSummary {
   createdAt: number;
 }
 
+/** One access token of a bot, as the owner lists it. The secret is never listed. */
+export interface BotTokenSummary {
+  id: string;
+  /** The owner's label, or null. */
+  name: string | null;
+  createdAt: number;
+  /** Updated at most once a minute; null while never used. */
+  lastUsedAt: number | null;
+}
+
+export interface BotTokensResponse {
+  tokens: BotTokenSummary[];
+  /** True while the bot still runs on its old 10-year token and holds no new one. */
+  legacy: boolean;
+}
+
+export interface CreateBotTokenRequest {
+  /** Optional label, 1-32 characters after trim. */
+  name?: string;
+}
+
+/** `token` is the only time the secret is shown. */
+export interface CreateBotTokenResponse extends BotTokenSummary {
+  token: string;
+}
+
 /** A bot as the invite search lists it: the owner is named so a manager sees whose code they invite. */
 export interface BotSearchResult extends BotSummary {
   /** The owner's username; null when the owner is deleted or not discoverable. */

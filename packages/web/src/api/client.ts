@@ -92,6 +92,9 @@ import type {
   UpdateBotResponse,
   CreateBotResponse,
   RegenerateBotTokenResponse,
+  BotTokensResponse,
+  CreateBotTokenRequest,
+  CreateBotTokenResponse,
   BotSpacesResponse,
 } from '@backspace/shared';
 import { MESSAGE_PAGING_AFTER, MESSAGE_PAGING_HEADER } from '@backspace/shared';
@@ -429,6 +432,9 @@ export class BackspaceApiClient {
     search: (q: string) => Promise<{ bots: BotSearchResult[] }>;
     create: (data: CreateBotRequest) => Promise<CreateBotResponse>;
     regenerateToken: (id: string) => Promise<RegenerateBotTokenResponse>;
+    listTokens: (id: string) => Promise<BotTokensResponse>;
+    createToken: (id: string, data: CreateBotTokenRequest) => Promise<CreateBotTokenResponse>;
+    revokeToken: (id: string, tokenId: string) => Promise<{ success: boolean }>;
     update: (id: string, data: UpdateBotRequest) => Promise<UpdateBotResponse>;
     spaces: (id: string) => Promise<BotSpacesResponse>;
     addToSpace: (id: string, spaceId: string) => Promise<{ success: boolean }>;
@@ -972,6 +978,9 @@ export class BackspaceApiClient {
       search: (q: string) => request<{ bots: BotSearchResult[] }>('GET', `/bots/search?q=${encodeURIComponent(q)}`),
       create: (data: CreateBotRequest) => request<CreateBotResponse>('POST', '/bots', data),
       regenerateToken: (id: string) => request<RegenerateBotTokenResponse>('POST', `/bots/${id}/token`),
+      listTokens: (id: string) => request<BotTokensResponse>('GET', `/bots/${id}/tokens`),
+      createToken: (id: string, data: CreateBotTokenRequest) => request<CreateBotTokenResponse>('POST', `/bots/${id}/tokens`, data),
+      revokeToken: (id: string, tokenId: string) => request<{ success: boolean }>('DELETE', `/bots/${id}/tokens/${tokenId}`),
       update: (id: string, data: UpdateBotRequest) => request<UpdateBotResponse>('PATCH', `/bots/${id}`, data),
       spaces: (id: string) => request<BotSpacesResponse>('GET', `/bots/${id}/spaces`),
       addToSpace: (id: string, spaceId: string) => request<{ success: boolean }>('POST', `/bots/${id}/spaces`, { spaceId }),

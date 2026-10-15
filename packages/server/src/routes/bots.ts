@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getDb, schema } from '../db/index.js';
-import { authenticate, signJwt } from '../utils/auth.js';
+import { authenticate } from '../utils/auth.js';
 import { sendError } from '../utils/httpErrors.js';
 import { tombstoneUser, collectProfileBroadcastTargetIds } from '../utils/userDeletion.js';
 import { deleteUploadFile, deleteAttachmentByFilename } from '../utils/fileCleanup.js';
@@ -10,20 +10,35 @@ import { generateSnowflake } from '../utils/snowflake.js';
 import { BOT_NAME_MAX_LENGTH, BOT_NAME_MIN_LENGTH, BOT_NAME_SUFFIX, MAX_BOTS_PER_USER } from '@backspace/shared/src/constants.js';
 import { collectBotFederationOrigins } from '../utils/botFederation.js';
 import { revokeBotWithRetry } from '../utils/botRevocationQueue.js';
+import {
+  BOT_TOKEN_NAME_MAX_LENGTH,
+  MAX_BOT_TOKENS_PER_BOT,
+  countBotTokens,
+  issueBotToken,
+  listBotTokens,
+  revokeAllBotTokens,
+  revokeBotToken,
+} from '../utils/botTokens.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from '../config.js';
 import { resizeProfileImage } from '../utils/thumbnail.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { queueProfileUpdateRelay } from '../utils/profileRelay.js';
-import type { BotSearchResult, BotSummary, UpdateBotRequest, UpdateBotResponse } from '@backspace/shared';
+import type {
+  BotSearchResult,
+  BotSummary,
+  BotTokensResponse,
+  CreateBotTokenRequest,
+  CreateBotTokenResponse,
+  UpdateBotRequest,
+  UpdateBotResponse,
+} from '@backspace/shared';
 import { hasPermission, isBanned, isMember, isSpaceOwner, PermissionBits } from '../utils/permissions.js';
 import { addUserToSpace, removeUserFromSpace } from '../utils/spaceMembership.js';
 
 /** Not a bcrypt hash, so password login is impossible (same idea as '!federation-replicated'). */
 const BOT_PASSWORD_MARKER = '!bot';
-/** Bot tokens are JWTs; revocation goes through users.passwordChangedAt. */
-const BOT_TOKEN_TTL = '3650d';
 const BOT_NAME_RE = /^[a-z0-9_]+$/;
 /** Bounds of the invite search string: a username is 5-32 characters, so nothing outside can match. */
 const BOT_SEARCH_MIN_QUERY = 2;
@@ -67,7 +82,7 @@ function findInviteableBot(botId: string) {
 
 /**
  * Bot management for the owning human. Bots are ordinary `users` rows with
- * `is_bot = 1`; they authenticate with a long-lived JWT issued here.
+ * `is_bot = 1`; they authenticate with `bsb_` tokens issued here (utils/botTokens.ts).
  */
 export async function botRoutes(app: FastifyInstance): Promise<void> {
   // Only a human with an account native to this instance manages bots.
@@ -179,7 +194,7 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
 
     const bot = db.select().from(schema.users).where(eq(schema.users.id, id)).get();
     if (!bot) return sendError(reply, 500, 'internal_error');
-    const token = signJwt({ userId: id, username }, { expiresIn: BOT_TOKEN_TTL });
+    const { token } = issueBotToken(id, null);
     return reply.code(201).send({ bot: toSummary(bot), token });
   });
 
@@ -353,12 +368,84 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
     const federation = await revokeBotWithRetry(bot.id, origins, 'soft');
     getDb().delete(schema.userFederationCredentials)
       .where(eq(schema.userFederationCredentials.userId, bot.id)).run();
-    // Revokes every earlier token: same mechanism as a password change.
+    // Every earlier token ends: the `bsb_` tokens are deleted, and an old JWT
+    // is revoked the way a password change revokes sessions.
+    revokeAllBotTokens(bot.id);
     getDb().update(schema.users).set({ passwordChangedAt: Date.now() })
       .where(eq(schema.users.id, bot.id)).run();
     connectionManager.forceDisconnectUser(bot.id);
-    const token = signJwt({ userId: bot.id, username: bot.username }, { expiresIn: BOT_TOKEN_TTL });
+    const { token } = issueBotToken(bot.id, null);
     return reply.send({ token, federation });
+  });
+
+  // ── Tokens of one bot ────────────────────────────────────────────────────
+  // `POST /token` above is the full cut-off (every token, every other instance).
+  // These add and remove single tokens, so a leaked one can go without
+  // restarting the rest of the bot's processes.
+  const tokenRoutesLimit = { rateLimit: { max: 30, timeWindow: '15 minutes' } };
+
+  app.get<{ Params: { id: string } }>('/api/bots/:id/tokens', {
+    preHandler: pre,
+    config: tokenRoutesLimit,
+  }, async (request, reply) => {
+    const bot = findOwnedBot(request.userId, request.params.id);
+    if (!bot) return sendError(reply, 404, 'bot_not_found');
+    const tokens = listBotTokens(bot.id);
+    const body: BotTokensResponse = { tokens, legacy: tokens.length === 0 };
+    return reply.send(body);
+  });
+
+  app.post<{ Params: { id: string }; Body: CreateBotTokenRequest }>('/api/bots/:id/tokens', {
+    preHandler: pre,
+    config: rateLimit,
+  }, async (request, reply) => {
+    const bot = findOwnedBot(request.userId, request.params.id);
+    if (!bot) return sendError(reply, 404, 'bot_not_found');
+
+    const rawName = request.body?.name;
+    let name: string | null = null;
+    if (rawName !== undefined) {
+      const trimmed = typeof rawName === 'string' ? rawName.trim() : '';
+      if (trimmed.length < 1 || trimmed.length > BOT_TOKEN_NAME_MAX_LENGTH) {
+        return sendError(reply, 400, 'bot_token_name_invalid', { max: BOT_TOKEN_NAME_MAX_LENGTH });
+      }
+      name = trimmed;
+    }
+
+    const held = countBotTokens(bot.id);
+    if (held >= MAX_BOT_TOKENS_PER_BOT) {
+      return sendError(reply, 400, 'bot_token_limit_reached', { max: MAX_BOT_TOKENS_PER_BOT });
+    }
+    const issued = issueBotToken(bot.id, name);
+    // The first new token retires the old 10-year JWT (isRetiredLegacyBotJwt):
+    // the sockets that logged in with it end now, not at their next reconnect.
+    if (held === 0) connectionManager.forceDisconnectUser(bot.id);
+    const body: CreateBotTokenResponse = {
+      id: issued.id,
+      name: issued.name,
+      createdAt: issued.createdAt,
+      lastUsedAt: null,
+      token: issued.token,
+    };
+    return reply.code(201).send(body);
+  });
+
+  app.delete<{ Params: { id: string; tokenId: string } }>('/api/bots/:id/tokens/:tokenId', {
+    preHandler: pre,
+    config: tokenRoutesLimit,
+  }, async (request, reply) => {
+    const bot = findOwnedBot(request.userId, request.params.id);
+    if (!bot) return sendError(reply, 404, 'bot_not_found');
+    if (!revokeBotToken(bot.id, request.params.tokenId)) return sendError(reply, 404, 'bot_token_not_found');
+    // Without this the bot would fall back to "holds no token" and its old
+    // 10-year JWT would work again. The last revoke ends every JWT issued so far.
+    if (countBotTokens(bot.id) === 0) {
+      getDb().update(schema.users).set({ passwordChangedAt: Date.now() }).where(eq(schema.users.id, bot.id)).run();
+    }
+    // A socket does not remember which token let it in: all of the bot's
+    // sockets end, and the processes that hold another token reconnect.
+    connectionManager.forceDisconnectUser(bot.id);
+    return reply.send({ success: true });
   });
 
   app.delete<{ Params: { id: string } }>('/api/bots/:id', {

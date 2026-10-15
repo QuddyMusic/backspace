@@ -268,7 +268,10 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   bot_home_not_peered: 'The bot\'s home instance is not peered with this instance',
   bot_proof_invalid: 'Bot identity proof is invalid or expired',
   bot_profile_owner_only: 'A bot\'s profile can only be changed by its owner',
-  bot_revocation_pending: 'The old account of this bot on that instance is still being removed; try again later'
+  bot_revocation_pending: 'The old account of this bot on that instance is still being removed; try again later',
+  bot_token_limit_reached: 'A bot can have at most {{max}} tokens',
+  bot_token_not_found: 'Token not found',
+  bot_token_name_invalid: 'A token name is 1 to {{max}} characters'
 };
 
 function fillPlaceholders(text: string, details: ErrorDetails | undefined): string {

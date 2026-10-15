@@ -453,14 +453,31 @@
       "copied": "Copied",
       "dismiss": "I have saved it"
     },
+    "tokens": {
+      "title": "Access tokens",
+      "loading": "Loading tokens",
+      "legacy": "This bot still runs on its old long-lived token. Create a token to switch: the old one stops working the moment you do.",
+      "empty": "This bot has no tokens.",
+      "unnamed": "Unnamed token",
+      "createdOn": "Created {{date}}",
+      "neverUsed": "never used",
+      "lastUsed": "last used {{time}}",
+      "revoke": "Revoke",
+      "confirmRevoke": "Confirm revoke",
+      "nameLabel": "Token label",
+      "namePlaceholder": "Label (optional)",
+      "create": "Create token",
+      "limitHint": "Up to {{max}} tokens per bot. Revoking a token disconnects the bot; the other tokens keep working."
+    },
     "actions": {
-      "regenerate": "New token",
+      "regenerate": "Reset all tokens",
       "delete": "Delete",
       "confirmDelete": "Confirm delete",
       "cancel": "Cancel",
       "edit": "Edit",
       "save": "Save",
-      "addToServer": "Add to server"
+      "addToServer": "Add to server",
+      "tokens": "Tokens"
     },
     "edit": {
       "nameLabel": "Display name",

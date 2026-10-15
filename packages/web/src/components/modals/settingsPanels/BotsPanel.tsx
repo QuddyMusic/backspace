@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { BotSpaceOption, BotSummary } from '@backspace/shared';
-import { BOT_NAME_MAX_LENGTH, BOT_NAME_SUFFIX, MAX_BOTS_PER_USER } from '@backspace/shared/src/constants';
+import type { BotSpaceOption, BotSummary, BotTokenSummary } from '@backspace/shared';
+import {
+  BOT_NAME_MAX_LENGTH,
+  BOT_NAME_SUFFIX,
+  BOT_TOKEN_NAME_MAX_LENGTH,
+  MAX_BOT_TOKENS_PER_BOT,
+  MAX_BOTS_PER_USER,
+} from '@backspace/shared/src/constants';
 import { api } from '../../../api/client';
 import { describeError } from '../../../i18n/errors';
 import { useFormatters } from '../../../i18n/formatters';
@@ -30,7 +36,7 @@ function stemOf(value: string): string {
 
 export function BotsPanel() {
   const { t } = useTranslation(['settings']);
-  const { formatMediumDate } = useFormatters();
+  const { formatMediumDate, formatRelativeTime } = useFormatters();
   const [bots, setBots] = useState<BotSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState('');
@@ -47,6 +53,12 @@ export function BotsPanel() {
   const [spacesBotId, setSpacesBotId] = useState<string | null>(null);
   const [spaceOptions, setSpaceOptions] = useState<BotSpaceOption[]>([]);
   const [spacesLoading, setSpacesLoading] = useState(false);
+  const [tokensBotId, setTokensBotId] = useState<string | null>(null);
+  const [tokenList, setTokenList] = useState<BotTokenSummary[]>([]);
+  const [tokensLegacy, setTokensLegacy] = useState(false);
+  const [tokensLoading, setTokensLoading] = useState(false);
+  const [tokenName, setTokenName] = useState('');
+  const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -85,6 +97,7 @@ export function BotsPanel() {
     setError(null);
     try {
       const res = await api.bots.regenerateToken(bot.id);
+      if (tokensBotId === bot.id) setTokensBotId(null);
       setRevealed({ username: bot.username, token: res.token });
       setCopied(false);
     } catch (err) {
@@ -209,6 +222,63 @@ export function BotsPanel() {
       setSpacesBotId(null);
     } finally {
       setSpacesLoading(false);
+    }
+  };
+
+  const toggleTokens = async (bot: BotSummary) => {
+    if (tokensBotId === bot.id) {
+      setTokensBotId(null);
+      return;
+    }
+    setTokensBotId(bot.id);
+    setTokenList([]);
+    setTokensLegacy(false);
+    setTokenName('');
+    setConfirmRevokeId(null);
+    setTokensLoading(true);
+    setError(null);
+    try {
+      const res = await api.bots.listTokens(bot.id);
+      setTokenList(res.tokens);
+      setTokensLegacy(res.legacy);
+    } catch (err) {
+      setError(describeError(err));
+      setTokensBotId(null);
+    } finally {
+      setTokensLoading(false);
+    }
+  };
+
+  const handleCreateToken = async (bot: BotSummary) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const label = tokenName.trim();
+      const res = await api.bots.createToken(bot.id, label.length > 0 ? { name: label } : {});
+      const { token, ...summary } = res;
+      setTokenList((prev) => [...prev, summary]);
+      setTokensLegacy(false);
+      setTokenName('');
+      setRevealed({ username: bot.username, token });
+      setCopied(false);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRevokeToken = async (bot: BotSummary, tokenId: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.bots.revokeToken(bot.id, tokenId);
+      setTokenList((prev) => prev.filter((tk) => tk.id !== tokenId));
+      setConfirmRevokeId(null);
+    } catch (err) {
+      setError(describeError(err));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -403,6 +473,9 @@ export function BotsPanel() {
                       <button type="button" className={quietButtonClass} disabled={busy} onClick={() => void toggleSpaces(bot)}>
                         {t('settings:bots.actions.addToServer')}
                       </button>
+                      <button type="button" className={quietButtonClass} disabled={busy} onClick={() => void toggleTokens(bot)}>
+                        {t('settings:bots.actions.tokens')}
+                      </button>
                       <button type="button" className={quietButtonClass} disabled={busy} onClick={() => void handleRegenerate(bot)}>
                         {t('settings:bots.actions.regenerate')}
                       </button>
@@ -424,6 +497,75 @@ export function BotsPanel() {
                   )}
                 </div>
               </div>
+              {tokensBotId === bot.id && (
+                <div className="ml-[52px] rounded-md bg-surface-input p-2.5 space-y-1.5">
+                  <div className="text-xs font-semibold text-txt-tertiary">{t('settings:bots.tokens.title')}</div>
+                  {tokensLoading && <div className="text-xs text-txt-tertiary">{t('settings:bots.tokens.loading')}</div>}
+                  {!tokensLoading && tokensLegacy && (
+                    <div className="text-xs text-txt-tertiary">{t('settings:bots.tokens.legacy')}</div>
+                  )}
+                  {!tokensLoading && !tokensLegacy && tokenList.length === 0 && (
+                    <div className="text-xs text-txt-tertiary">{t('settings:bots.tokens.empty')}</div>
+                  )}
+                  {tokenList.map((tk) => (
+                    <div key={tk.id} className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-sm text-txt-primary truncate">{tk.name ?? t('settings:bots.tokens.unnamed')}</div>
+                        <div className="text-xs text-txt-tertiary truncate">
+                          {t('settings:bots.tokens.createdOn', { date: formatMediumDate(tk.createdAt) })} ·{' '}
+                          {tk.lastUsedAt === null
+                            ? t('settings:bots.tokens.neverUsed')
+                            : t('settings:bots.tokens.lastUsed', { time: formatRelativeTime(tk.lastUsedAt) })}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 gap-1">
+                        {confirmRevokeId === tk.id ? (
+                          <>
+                            <button type="button" className={dangerButtonClass} disabled={busy} onClick={() => void handleRevokeToken(bot, tk.id)}>
+                              {t('settings:bots.tokens.confirmRevoke')}
+                            </button>
+                            <button type="button" className={quietButtonClass} onClick={() => setConfirmRevokeId(null)}>
+                              {t('settings:bots.actions.cancel')}
+                            </button>
+                          </>
+                        ) : (
+                          <button type="button" className={dangerButtonClass} disabled={busy} onClick={() => setConfirmRevokeId(tk.id)}>
+                            {t('settings:bots.tokens.revoke')}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {!tokensLoading && (
+                    <div className="flex gap-2 pt-1">
+                      <label className="sr-only" htmlFor={`bot-token-name-${bot.id}`}>
+                        {t('settings:bots.tokens.nameLabel')}
+                      </label>
+                      <input
+                        id={`bot-token-name-${bot.id}`}
+                        className="input-standard flex-1 min-w-0"
+                        value={tokenName}
+                        placeholder={t('settings:bots.tokens.namePlaceholder')}
+                        maxLength={BOT_TOKEN_NAME_MAX_LENGTH}
+                        autoComplete="off"
+                        onChange={(e) => setTokenName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !busy && tokenList.length < MAX_BOT_TOKENS_PER_BOT) void handleCreateToken(bot);
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className={buttonClass}
+                        disabled={busy || tokenList.length >= MAX_BOT_TOKENS_PER_BOT}
+                        onClick={() => void handleCreateToken(bot)}
+                      >
+                        {t('settings:bots.tokens.create')}
+                      </button>
+                    </div>
+                  )}
+                  <div className="text-xs text-txt-tertiary">{t('settings:bots.tokens.limitHint', { max: MAX_BOT_TOKENS_PER_BOT })}</div>
+                </div>
+              )}
               {spacesBotId === bot.id && (
                 <div className="ml-[52px] rounded-md bg-surface-input p-2.5 space-y-1.5">
                   <div className="text-xs font-semibold text-txt-tertiary">{t('settings:bots.spaces.title')}</div>

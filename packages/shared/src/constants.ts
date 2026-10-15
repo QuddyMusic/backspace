@@ -88,6 +88,10 @@ export const GROUP_DM_ICON_MAX_BYTES = 8 * 1024 * 1024; // 8 MB
 export const GROUP_DM_ICON_MIME_PREFIX = 'image/';
 
 export const MAX_BOTS_PER_USER = 10;
+/** Access tokens one bot may hold at once; each can be revoked on its own. */
+export const MAX_BOT_TOKENS_PER_BOT = 5;
+/** Longest owner label of a bot token. */
+export const BOT_TOKEN_NAME_MAX_LENGTH = 32;
 export const BOT_NAME_SUFFIX = '_bot';
 export const BOT_NAME_MIN_LENGTH = 5;
 export const BOT_NAME_MAX_LENGTH = 32;

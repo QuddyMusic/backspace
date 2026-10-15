@@ -4,7 +4,7 @@ import { FileStore } from '@tus/file-store';
 import { config } from '../config.js';
 import { getDb, schema } from '../db/index.js';
 import { generateSnowflake } from '../utils/snowflake.js';
-import { verifyJwtAndUser, AuthError, tokenFromAuthHeader } from '../utils/auth.js';
+import { verifyAccessToken, AuthError, tokenFromAuthHeader } from '../utils/auth.js';
 import {
   parseUploadMetadata,
   extractExtension,
@@ -125,7 +125,7 @@ export async function filesRoutes(app: FastifyInstance): Promise<void> {
       }
       let identity: { userId: string; username: string; homeInstance: string | null };
       try {
-        identity = await verifyJwtAndUser(token);
+        identity = await verifyAccessToken(token);
       } catch (err) {
         if (err instanceof AuthError) {
           throw { status_code: err.statusCode, body: err.message };

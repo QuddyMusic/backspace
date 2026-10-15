@@ -724,6 +724,10 @@ Per-remote credential this user's client presents when registering or logging in
 
 Migration `0032_bots.sql` adds `users.is_bot` (INTEGER NOT NULL DEFAULT 0) and `users.bot_owner_id` (TEXT, owner's user id, NULL for humans and for a bot's federated account on another instance). A bot's `password_hash` is `'!bot'`. See [bots.md](bots.md).
 
+## Bot tokens (`bot_tokens`)
+
+Migration `0035_bot_tokens.sql`. One row per access token of a bot: `id` (16 hex, the public half of `bsb_<id>.<secret>`), `bot_id` (FK to `users`, cascade), `token_hash` (SHA-256 of the secret), `name` (owner's label, nullable), `created_at`, `last_used_at` (written at most once a minute); index `idx_bot_tokens_bot_id`. Up to 5 per bot. See [bots.md](bots.md), section 1.
+
 ## Bot revocation queue (`bot_revocations`)
 
 Migration `0034_bot_revocations.sql`. A revoke of a bot's federated account that an instance has not accepted yet. Primary key `(bot_id, origin)`, no foreign keys (a bot's tombstone must not delete it). Columns: `mode` (`soft` | `full`), `attempts`, `last_error`, `created_at`, `next_attempt_at` (index `idx_bot_revocations_next_attempt_at`). Rows are deleted on success, on a final refusal and after 7 days. See [bots.md](bots.md), "Revocation retries".

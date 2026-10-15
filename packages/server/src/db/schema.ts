@@ -797,6 +797,25 @@ export const botRevocations = sqliteTable('bot_revocations', {
   dueIdx: index('idx_bot_revocations_next_attempt_at').on(table.nextAttemptAt),
 }));
 
+/**
+ * A bot's access tokens: `bsb_<id>.<secret>`, shown once. Only the SHA-256 of
+ * the secret is stored, so a copy of the database yields no usable token. A
+ * bot holds up to MAX_BOT_TOKENS_PER_BOT, each revocable on its own; the
+ * rows go with the bot (cascade on a real delete, explicit on a tombstone).
+ */
+export const botTokens = sqliteTable('bot_tokens', {
+  /** The public half of the token (16 hex chars): the lookup key. */
+  id: text('id').primaryKey(),
+  botId: text('bot_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull(),
+  name: text('name'),
+  createdAt: integer('created_at').notNull(),
+  /** Written at most once a minute per token. */
+  lastUsedAt: integer('last_used_at'),
+}, (table) => ({
+  botIdx: index('idx_bot_tokens_bot_id').on(table.botId),
+}));
+
 export const inviteLinks = sqliteTable('invite_links', {
   id: text('id').primaryKey(),
   token: text('token').notNull().unique(),

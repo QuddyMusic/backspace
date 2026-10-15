@@ -454,14 +454,31 @@
       "copied": "Copiado",
       "dismiss": "Já salvei"
     },
+    "tokens": {
+      "title": "Tokens de acesso",
+      "loading": "Carregando tokens",
+      "legacy": "Este bot ainda usa o token antigo de longa duração. Crie um token para migrar: o antigo deixa de funcionar assim que você o criar.",
+      "empty": "Este bot não tem tokens.",
+      "unnamed": "Token sem nome",
+      "createdOn": "Criado em {{date}}",
+      "neverUsed": "nunca usado",
+      "lastUsed": "usado {{time}}",
+      "revoke": "Revogar",
+      "confirmRevoke": "Confirmar revogação",
+      "nameLabel": "Rótulo do token",
+      "namePlaceholder": "Rótulo (opcional)",
+      "create": "Criar token",
+      "limitHint": "Até {{max}} tokens por bot. Revogar um token desconecta o bot; os demais tokens continuam funcionando."
+    },
     "actions": {
-      "regenerate": "Novo token",
+      "regenerate": "Redefinir todos os tokens",
       "delete": "Excluir",
       "confirmDelete": "Confirmar exclusão",
       "cancel": "Cancelar",
       "edit": "Editar",
       "save": "Salvar",
-      "addToServer": "Adicionar a um espaço"
+      "addToServer": "Adicionar a um espaço",
+      "tokens": "Tokens"
     },
     "edit": {
       "nameLabel": "Nome de exibição",
