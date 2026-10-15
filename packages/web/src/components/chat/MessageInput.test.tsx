@@ -172,6 +172,58 @@ describe('MessageInput slow sends', () => {
   });
 });
 
+describe('MessageInput slash commands', () => {
+  const play = {
+    id: 'cmd-1',
+    name: 'play',
+    description: 'Play a song',
+    options: [],
+    botId: 'bot-1',
+    updatedAt: 1,
+    bot: { id: 'bot-1', username: 'radio_bot', displayName: null, avatar: null, avatarColor: null },
+  };
+
+  it('invokes a command once however often Enter is pressed while it is on its way', async () => {
+    vi.spyOn(api.commands, 'forChat').mockResolvedValue({ commands: [play] } as never);
+    let finish!: () => void;
+    const invoking = new Promise<never>(resolve => { finish = () => resolve({ id: 'i1' } as never); });
+    const invoke = vi.spyOn(api.commands, 'invoke').mockReturnValue(invoking);
+    useComposerStore.getState().setDraft('dm-1', '/play');
+    render(<MessageInput channelId="dm-1" channelName="general" />);
+    const input = screen.getByRole('textbox');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await act(async () => { finish(); await invoking; });
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(input).toHaveValue('');
+  });
+
+  it('puts the command back when the invocation fails', async () => {
+    vi.spyOn(api.commands, 'forChat').mockResolvedValue({ commands: [play] } as never);
+    vi.spyOn(api.commands, 'invoke').mockRejectedValue(new Error('Bot offline'));
+    useComposerStore.getState().setDraft('dm-1', '/play');
+    render(<MessageInput channelId="dm-1" channelName="general" />);
+    fireEvent.keyDown(screen.getByRole('textbox'), { key: 'Enter' });
+    await waitFor(() => expect(screen.getByRole('textbox')).toHaveValue('/play'));
+    expect(useUIStore.getState().toasts).toEqual([expect.objectContaining({ message: 'Bot offline', type: 'warning' })]);
+  });
+
+  it('asks for the command list again when a new command starts', async () => {
+    const forChat = vi.spyOn(api.commands, 'forChat').mockResolvedValue({ commands: [play] } as never);
+    render(<MessageInput channelId="dm-1" channelName="general" />);
+    const input = screen.getByRole('textbox');
+    fireEvent.change(input, { target: { value: '/', selectionStart: 1 } });
+    await waitFor(() => expect(forChat).toHaveBeenCalledTimes(1));
+    fireEvent.change(input, { target: { value: '/p', selectionStart: 2 } });
+    expect(forChat).toHaveBeenCalledTimes(1);
+    fireEvent.change(input, { target: { value: '', selectionStart: 0 } });
+    fireEvent.change(input, { target: { value: '/', selectionStart: 1 } });
+    await waitFor(() => expect(forChat).toHaveBeenCalledTimes(2));
+  });
+});
+
 it('sends a personal sticker without discarding the current text draft', async () => {
   const token = `sticker:https://chat.test/api/stickers/assets/${'a'.repeat(64)}.webp`;
   vi.spyOn(api.stickers, 'list').mockResolvedValue([{ id: 'a'.repeat(64), name: 'Happy', token }]);

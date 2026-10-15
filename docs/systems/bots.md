@@ -159,6 +159,8 @@ Bot token only, and only the invoked bot. The message is posted through the same
 
 Typing `/` at the start of a message lists the commands of the bots in the chat. Choosing one writes it with its required options as `name:` ready to be filled in; after a space the optional options not used yet are offered (Tab picks one); pasting a full command works too. The form is: options first as `name:value` (several words in double quotes), then the rest of the line, which is the value of the last string option and may be any length: `/play volume:80 any long title`. The server only ever sees the parsed `options`.
 
+The list is fetched again at the start of every new command (the text goes from not starting with `/` to starting with it), so a bot that registered, changed or lost commands, or joined or left the chat, shows up the next time a command is typed; the old list stays visible until the answer arrives. Enter while a command is being invoked does nothing: the composer is cleared as the request leaves and gets the text back if the invocation fails.
+
 ### Scope
 
 Chats on the instance where the bot is connected. Not built: subcommands, autocomplete, private (visible to one person) answers (a bot may message the invoker directly), buttons and forms, `user` and `channel` option types, commands of bots from other instances in direct messages.

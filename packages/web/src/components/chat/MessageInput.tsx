@@ -82,6 +82,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const pickedCommandRef = useRef<BotCommandListing | null>(null);
   const [optionSuggest, setOptionSuggest] = useState<OptionSuggest | null>(null);
   const commandsRequestRef = useRef<Promise<BotCommandListing[]> | null>(null);
+  // True while an Enter that invokes a slash command is on its way: a second Enter must not invoke it again.
+  const commandSubmitRef = useRef(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -221,10 +223,13 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     pickedCommandRef.current = null;
   }, [channelId]);
 
-  // The commands of the bots in this chat: fetched once per chat, shared by every caller.
-  const loadChatCommands = useCallback((): Promise<BotCommandListing[]> => {
+  // The commands of the bots in this chat, shared by every caller. `fresh` asks the
+  // server again (a bot may have registered, changed or lost commands, or joined or
+  // left the chat): the shown list stays until the answer arrives, and the newest
+  // request wins.
+  const loadChatCommands = useCallback((fresh = false): Promise<BotCommandListing[]> => {
     const existing = commandsRequestRef.current;
-    if (existing) return existing;
+    if (existing && !fresh) return existing;
     const request: Promise<BotCommandListing[]> = getApiForOrigin(getChannelOrigin(channelId)).commands
       .forChat(isDm ? { dmChannelId: channelId } : { channelId })
       .then((res) => res.commands)
@@ -420,36 +425,45 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     // A slash command of a bot in this chat: invoke it instead of posting the text.
     const commandHead = /^\/([a-z0-9_-]+)(?:\s+([\s\S]*))?$/i.exec(trimmed);
     if (commandHead && stagedTransfers.length === 0) {
-      // A pasted command may be sent before the list has loaded: wait for it.
-      const known = chatCommands ?? await loadChatCommands();
-      const name = commandHead[1]!.toLowerCase();
-      const picked = pickedCommandRef.current;
-      const command = picked && picked.name === name
-        ? picked
-        : known.find((c) => c.name === name);
-      if (command) {
-        const parsed = parseCommandArgs(command, commandHead[2] ?? '');
-        if (!parsed.ok) {
-          addToast(t('chat:commands.extraText', { text: parsed.extra }), 'warning');
-          return;
-        }
-        try {
-          await getApiForOrigin(getChannelOrigin(channelId)).commands.invoke({
-            botId: command.botId,
-            command: command.name,
-            options: parsed.options,
-            ...(isDm ? { dmChannelId: channelId } : { channelId }),
-          });
+      // An Enter while the previous one is still resolving or invoking this command does nothing.
+      if (commandSubmitRef.current) return;
+      commandSubmitRef.current = true;
+      try {
+        const name = commandHead[1]!.toLowerCase();
+        const picked = pickedCommandRef.current;
+        const find = (list: BotCommandListing[]): BotCommandListing | undefined =>
+          (picked && picked.name === name ? picked : list.find((c) => c.name === name));
+        // A pasted command may be sent before the list has loaded: wait for it.
+        const command = find(chatCommands ?? await loadChatCommands());
+        if (command) {
+          const parsed = parseCommandArgs(command, commandHead[2] ?? '');
+          if (!parsed.ok) {
+            addToast(t('chat:commands.extraText', { text: parsed.extra }), 'warning');
+            return;
+          }
+          // Consume the draft before the request, as a message send does; put it back on failure.
           pickedCommandRef.current = null;
           clearComposer(channelId);
           if (textareaRef.current) {
             textareaRef.current.style.height = 'auto';
             textareaRef.current.focus();
           }
-        } catch (err) {
-          addToast(err instanceof Error ? describeError(err) : t('chat:commands.failed'), 'warning');
+          try {
+            await getApiForOrigin(getChannelOrigin(channelId)).commands.invoke({
+              botId: command.botId,
+              command: command.name,
+              options: parsed.options,
+              ...(isDm ? { dmChannelId: channelId } : { channelId }),
+            });
+          } catch (err) {
+            const currentDraft = useComposerStore.getState().get(channelId).draftText;
+            setDraft(channelId, submittedDraft + (currentDraft ? '\n' + currentDraft : ''));
+            addToast(err instanceof Error ? describeError(err) : t('chat:commands.failed'), 'warning');
+          }
+          return;
         }
-        return;
+      } finally {
+        commandSubmitRef.current = false;
       }
     }
 
@@ -668,8 +682,11 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     const value = e.target.value;
     const cursorPos = e.target.selectionStart;
 
-    // A pasted or typed command is looked up as soon as the text starts with "/".
-    if (value.startsWith('/') && chatCommands === null) void loadChatCommands();
+    // A pasted or typed command is looked up as soon as the text starts with "/", and
+    // asked for again at the start of every new command, so the list follows the bots.
+    if (value.startsWith('/') && (chatCommands === null || !draftText.startsWith('/'))) {
+      void loadChatCommands(chatCommands !== null);
+    }
 
     // Detect a slash command: "/" at the very start of the message, no space typed yet.
     const commandMatch = /^\/([a-z0-9_-]*)$/i.exec(value.slice(0, cursorPos));
