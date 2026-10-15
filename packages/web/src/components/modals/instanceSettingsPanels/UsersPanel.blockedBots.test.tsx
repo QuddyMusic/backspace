@@ -2,6 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { AdminUser } from '@backspace/shared';
+
+// Reached transitively via authStore -> ... -> voiceStore; jsdom has no AudioWorkletNode.
+vi.mock('../../../audio/AudioManager', () => ({
+  AudioManager: {
+    getInstance: vi.fn().mockReturnValue({ setOutputDevice: vi.fn(), setVolume: vi.fn() }),
+  },
+}));
+
 import { UsersPanel } from './UsersPanel';
 import { api } from '../../../api/client';
 
