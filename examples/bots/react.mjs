@@ -7,6 +7,6 @@ const bot = createBot({ baseUrl: process.env.BACKSPACE_URL, token: process.env.B
 bot.run(async (event) => {
   if (event.type !== 'message_created') return;
   const { message } = event;
-  if (message.userId === bot.me.id || !message.content?.includes('!ok')) return;
+  if (message.userId === bot.me.id || message.user?.isBot || !message.content?.includes('!ok')) return;
   await bot.api('PUT', `/messages/${message.id}/reactions/${encodeURIComponent('👍')}`);
 });

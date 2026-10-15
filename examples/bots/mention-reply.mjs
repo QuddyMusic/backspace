@@ -18,7 +18,7 @@ bot.run(async (event) => {
 
   if (event.type === 'message_created') {
     const { message } = event;
-    if (message.userId === bot.me.id || !mentions(message.content, bot.me.id)) return;
+    if (message.userId === bot.me.id || message.user?.isBot || !mentions(message.content, bot.me.id)) return;
     await bot.api('POST', `/channels/${message.channelId}/messages`, {
       content: 'You called?',
       replyToId: message.id,
@@ -28,7 +28,7 @@ bot.run(async (event) => {
 
   if (event.type === 'dm_message_created') {
     const { message } = event;
-    if (message.userId === bot.me.id || message.type !== 'user') return;
+    if (message.userId === bot.me.id || message.user?.isBot || message.type !== 'user') return;
     if (!oneOnOne.has(message.dmChannelId) && !mentions(message.content, bot.me.id)) return;
     await bot.api('POST', `/dm/${message.dmChannelId}/messages`, {
       content: 'You called?',

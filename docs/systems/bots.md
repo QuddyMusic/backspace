@@ -81,6 +81,8 @@ After `auth` the server answers `{ "type": "ready", "user": { "id", ... }, ... }
 
 The bot's own messages come back as events. A bot that answers messages must ignore `message.userId === <own id>` (and DM messages whose `type` is not `user`), or it answers itself.
 
+Messages of other bots arrive as well (`message.user.isBot`). Two bots that answer every message answer each other without end; the examples ignore bots. A bot cannot invoke slash commands (`403 bots_cannot_invoke_commands`), its own or another bot's: a command is something a person asks of a bot.
+
 A mention is the token `<@userId>` in `content`. Code spans and fenced blocks do not count as mentions in the clients; bot code that cares should skip them the same way (`examples/bots/mention-reply.mjs` does).
 
 The socket has no resume. After a reconnect the `ready` payload carries the current state and anything missed is read back with the history endpoints. The server pings every 30 s and drops a dead connection after about 65 s; standard WebSocket clients answer pings themselves.

@@ -272,7 +272,8 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   bot_token_limit_reached: 'A bot can have at most {{max}} tokens',
   bot_token_not_found: 'Token not found',
   bot_token_name_invalid: 'A token name is 1 to {{max}} characters',
-  bot_token_in_use: 'This bot token is already connected from another process'
+  bot_token_in_use: 'This bot token is already connected from another process',
+  bots_cannot_invoke_commands: 'Bots cannot invoke slash commands'
 };
 
 function fillPlaceholders(text: string, details: ErrorDetails | undefined): string {

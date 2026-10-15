@@ -235,6 +235,7 @@
   "bot_token_not_found": "未找到令牌。",
   "bot_token_name_invalid": "令牌名称为 1 到 {{max}} 个字符。",
   "bot_token_in_use": "此机器人令牌已被另一个进程连接。",
+  "bots_cannot_invoke_commands": "机器人无法调用斜杠命令。",
   "bot_account_required": "只有机器人账号可以执行此操作",
   "command_not_found": "该机器人没有此命令",
   "bot_unavailable": "机器人当前未连接",

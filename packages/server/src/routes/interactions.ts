@@ -190,6 +190,12 @@ export async function interactionRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 400, 'validation_failed', { field: 'command', reason: 'is required' });
     }
 
+    // A slash command is something a person asks of a bot. A bot invoking one
+    // (its own or another bot's) could start two bots answering each other.
+    const caller = getDb().select({ isBot: schema.users.isBot }).from(schema.users)
+      .where(eq(schema.users.id, request.userId)).get();
+    if (caller?.isBot === 1) return sendError(reply, 403, 'bots_cannot_invoke_commands');
+
     const access = authorize(request.userId, body.channelId, body.dmChannelId, 'send');
     if (!access.ok) return refuse(reply, access.reason, 'SEND_MESSAGES');
     const chat = access.chat;

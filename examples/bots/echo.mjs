@@ -8,6 +8,7 @@ const bot = createBot({ baseUrl: process.env.BACKSPACE_URL, token: process.env.B
 bot.run(async (event) => {
   if (event.type !== 'dm_message_created') return;
   const { message } = event;
-  if (message.userId === bot.me?.id || message.type !== 'user' || !message.content) return;
+  // Its own messages come back as events; another bot's could start an endless exchange.
+  if (message.userId === bot.me?.id || message.user?.isBot || message.type !== 'user' || !message.content) return;
   await bot.api('POST', `/dm/${message.dmChannelId}/messages`, { content: `you said: ${message.content}` });
 });

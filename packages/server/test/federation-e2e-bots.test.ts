@@ -1008,6 +1008,16 @@ describe('invoking a slash command', () => {
     expect(notInChat.body.code).toBe('bot_not_found');
   });
 
+  it('a bot cannot invoke a command, its own or another bot\'s', async () => {
+    const own = await invoke(bot.token, { botId: bot.id, command: 'play', options: { query: 'x' }, channelId: cid });
+    expect(own.status).toBe(403);
+    expect(own.body.code).toBe('bots_cannot_invoke_commands');
+    const other = await createBot('caller_bot');
+    const viaOther = await invoke(other.token, { botId: bot.id, command: 'play', options: { query: 'x' }, channelId: cid });
+    expect(viaOther.status).toBe(403);
+    expect(viaOther.body.code).toBe('bots_cannot_invoke_commands');
+  });
+
   it('works in a direct message with the bot', async () => {
     const dm = await api<{ id?: string; dmChannel?: { id: string } }>(A, 'POST', '/api/dm', owner.token, { userId: bot.id });
     const dmId = (dm.body.dmChannel?.id ?? dm.body.id) as string;
