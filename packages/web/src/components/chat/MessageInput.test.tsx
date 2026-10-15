@@ -173,6 +173,9 @@ describe('MessageInput slow sends', () => {
 });
 
 describe('MessageInput slash commands', () => {
+  // jsdom does not implement scrollIntoView; the command popover scrolls its selection.
+  beforeEach(() => { Element.prototype.scrollIntoView = vi.fn(); });
+
   const play = {
     id: 'cmd-1',
     name: 'play',

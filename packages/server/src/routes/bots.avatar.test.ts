@@ -42,7 +42,11 @@ vi.mock('../ws/handler.js', () => ({
     addUserSpace: vi.fn(),
   },
 }));
-vi.mock('../utils/thumbnail.js', () => ({ resizeProfileImage: vi.fn(async () => undefined) }));
+// Only the resize is replaced (the files are not images); the rest of the module is used as is.
+vi.mock('../utils/thumbnail.js', async (importActual) => ({
+  ...(await importActual<typeof import('../utils/thumbnail.js')>()),
+  resizeProfileImage: vi.fn(async () => undefined),
+}));
 vi.mock('../utils/profileRelay.js', () => ({ queueProfileUpdateRelay: vi.fn() }));
 
 function applyMigrations(db: Database.Database): void {
@@ -78,9 +82,10 @@ const setAvatar = (avatar: string | null) => app.inject({
 const botAvatar = () => testDb.select().from(schema.users).where(eq(schema.users.id, 'bot-1')).get()?.avatar ?? null;
 
 beforeEach(async () => {
-  // Foreign keys stay off: a held upload only needs a message id, not the message.
   sqlite = new Database(':memory:');
   applyMigrations(sqlite);
+  // Foreign keys explicitly off: a held upload only needs a message id, not the message.
+  sqlite.pragma('foreign_keys = OFF');
   testDb = drizzle(sqlite, { schema });
   testDb.insert(schema.users).values([
     { id: 'owner', username: 'owner', passwordHash: 'x', createdAt: 1 },

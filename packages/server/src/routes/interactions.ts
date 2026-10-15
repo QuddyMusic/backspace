@@ -190,17 +190,17 @@ export async function interactionRoutes(app: FastifyInstance): Promise<void> {
       return sendError(reply, 400, 'validation_failed', { field: 'command', reason: 'is required' });
     }
 
+    const db = getDb();
+    const caller = db.select().from(schema.users).where(eq(schema.users.id, request.userId)).get();
+    if (!caller) return sendError(reply, 404, 'user_not_found');
     // A slash command is something a person asks of a bot. A bot invoking one
     // (its own or another bot's) could start two bots answering each other.
-    const caller = getDb().select({ isBot: schema.users.isBot }).from(schema.users)
-      .where(eq(schema.users.id, request.userId)).get();
-    if (caller?.isBot === 1) return sendError(reply, 403, 'bots_cannot_invoke_commands');
+    if (caller.isBot === 1) return sendError(reply, 403, 'bots_cannot_invoke_commands');
 
     const access = authorize(request.userId, body.channelId, body.dmChannelId, 'send');
     if (!access.ok) return refuse(reply, access.reason, 'SEND_MESSAGES');
     const chat = access.chat;
 
-    const db = getDb();
     const bot = db.select().from(schema.users).where(and(
       eq(schema.users.id, body.botId),
       eq(schema.users.isBot, 1),
@@ -220,9 +220,6 @@ export async function interactionRoutes(app: FastifyInstance): Promise<void> {
     if (isProblem(checked)) return sendError(reply, 400, 'validation_failed', { field: checked.field, reason: checked.reason });
 
     if (!connectionManager.hasLiveConnection(bot.id)) return sendError(reply, 409, 'bot_unavailable');
-
-    const caller = db.select().from(schema.users).where(eq(schema.users.id, request.userId)).get();
-    if (!caller) return sendError(reply, 404, 'user_not_found');
 
     const now = Date.now();
     // Spent interactions have no value after a day: dropped here, no worker needed.
