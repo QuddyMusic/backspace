@@ -10,6 +10,7 @@ import { getActiveRoom, setCameraSubscription } from '../../hooks/useLiveKit';
 import type { UserTile } from '../../hooks/useLiveKit';
 import { isPermissionMutedIn } from '../../utils/permissionMute';
 import { isLocallyMutedIn, setLocalMute } from '../../utils/voiceLocalKeys';
+import { BotBadge } from '../ui/BotBadge';
 
 interface VoiceUserProps {
   tile: UserTile;
@@ -187,6 +188,7 @@ export function VoiceUser({ tile, large }: VoiceUserProps) {
             >
               {displayName}
             </span>
+            {user?.isBot && <BotBadge className="shrink-0" />}
             {isLocal && (
               <span className="text-[10px] text-white/40 font-medium">
                 {t('voice:badges.you')}

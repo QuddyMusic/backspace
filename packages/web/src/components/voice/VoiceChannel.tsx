@@ -261,6 +261,7 @@ export function VoiceChannel({ channelId, channelName, onClick, locked, canManag
                   displayName={displayName}
                   avatar={avatar}
                   avatarColor={avatarColor ?? undefined}
+                  isBot={member?.user.isBot === true}
                   isMuted={isMuted}
                   isDeafened={isParticipantDeafened}
                   isCameraOn={hasCamera}

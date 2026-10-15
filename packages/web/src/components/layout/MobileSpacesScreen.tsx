@@ -657,6 +657,7 @@ export function MobileSpacesScreen() {
                     displayName={displayName}
                     avatar={avatar}
                     avatarColor={avatarColor ?? undefined}
+                    isBot={member?.user.isBot === true}
                     isMuted={isMuted}
                     isDeafened={isDeafened}
                     isCameraOn={hasCamera}
