@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BotCommandListing, BotCommandOption } from '@backspace/shared';
-import { parseCommandArgs, remainingOptions, suggestOptions, suggestValue, type CommandArgContext } from './commandArgs';
+import { argumentFrames, parseCommandArgs, remainingOptions, suggestOptions, suggestValue, type CommandArgContext } from './commandArgs';
 
 function option(name: string, type: BotCommandOption['type'], required = false): BotCommandOption {
   return { name, description: name, type, required };
@@ -176,5 +176,50 @@ describe('suggestValue', () => {
     expect(suggestValue('/ban who:<@u1', [ban], null)).toBeNull();
     expect(suggestValue('/ban who:"bo', [ban], null)).toBeNull();
     expect(suggestValue('/ban hello who:', [ban], null)).toBeNull();
+  });
+});
+
+describe('choices', () => {
+  const vol = listing('vol', [
+    { ...option('level', 'integer', true), choices: [{ name: 'quiet', value: 20 }, { name: 'very loud', value: 95 }] },
+    { ...option('mode', 'string'), choices: [{ name: 'Shuffle', value: 'shuffle' }] },
+  ]);
+
+  it('sends the value of a choice written by name, quoted or not, or by its value', () => {
+    expect(parseCommandArgs(vol, 'level:quiet mode:Shuffle')).toEqual({ ok: true, options: { level: 20, mode: 'shuffle' } });
+    expect(parseCommandArgs(vol, 'level:"very loud"')).toEqual({ ok: true, options: { level: 95 } });
+    expect(parseCommandArgs(vol, 'level:95')).toEqual({ ok: true, options: { level: 95 } });
+  });
+
+  it('leaves a name that is not a choice for the server to refuse', () => {
+    expect(parseCommandArgs(vol, 'level:medium')).toEqual({ ok: true, options: { level: 'medium' } });
+  });
+
+  it('opens the value list for an option with choices', () => {
+    expect(suggestValue('/vol level:q', [vol], null)).toMatchObject({ query: 'q', startIndex: 11 });
+    expect(suggestValue('/vol mode:', [vol], null)).toMatchObject({ query: '' });
+  });
+});
+
+describe('argumentFrames', () => {
+  it('frames each name: and its value, a quoted value and a free-text string up to the next name', () => {
+    const text = '/play query:any long title volume:80 loop:';
+    const frames = argumentFrames(text, play);
+    expect(frames.map((f) => [text.slice(f.nameStart, f.valueStart), text.slice(f.valueStart, f.valueEnd)])).toEqual([
+      ['query:', 'any long title'],
+      ['volume:', '80'],
+      ['loop:', ''],
+    ]);
+    const quoted = '/play query:"a b" loop:true';
+    expect(argumentFrames(quoted, play).map((f) => quoted.slice(f.valueStart, f.valueEnd))).toEqual(['"a b"', 'true']);
+  });
+
+  it('takes a shown mention as one value, and frames nothing for another command or before the space', () => {
+    const kick = listing('kick', [option('who', 'user', true), option('reason', 'string')]);
+    const text = '/kick who:@Bob Smith reason:spam';
+    const frames = argumentFrames(text, kick, [{ start: 10, end: 20 }]);
+    expect(text.slice(frames[0]!.valueStart, frames[0]!.valueEnd)).toBe('@Bob Smith');
+    expect(argumentFrames('/play', play)).toEqual([]);
+    expect(argumentFrames('/roll sides:6', play)).toEqual([]);
   });
 });

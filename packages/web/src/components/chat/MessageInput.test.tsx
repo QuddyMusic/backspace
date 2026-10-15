@@ -247,14 +247,51 @@ describe('MessageInput slash commands', () => {
     fireEvent.change(input, { target: { value: '/poke who:bo', selectionStart: 12 } });
     expect(await screen.findByText('Bob')).toBeTruthy();
     fireEvent.keyDown(input, { key: 'Tab' });
-    await waitFor(() => expect(input).toHaveValue('/poke who:@Bob '));
-    expect(useComposerStore.getState().get('dm-1').draftText).toBe('/poke who:<@bob> ');
+    await waitFor(() => expect(input).toHaveValue('/poke who:@Bob'));
+    expect(useComposerStore.getState().get('dm-1').draftText).toBe('/poke who:<@bob>');
+    // Nothing is offered after a picked value, so this Enter sends.
+    expect(screen.queryByText('Bob')).toBeNull();
 
     fireEvent.keyDown(input, { key: 'Enter' });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith(expect.objectContaining({
       command: 'poke',
       options: { who: 'bob' },
       dmChannelId: 'dm-1',
+    })));
+  });
+
+  it('offers the choices of an option by name and sends the chosen value; a space opens the next options', async () => {
+    const play2 = {
+      ...play,
+      id: 'cmd-3',
+      name: 'volume',
+      options: [
+        { name: 'level', description: 'Level', type: 'integer', required: true, choices: [{ name: 'quiet', value: 20 }, { name: 'loud', value: 80 }] },
+        { name: 'fade', description: 'Fade', type: 'boolean', required: false },
+      ],
+    };
+    vi.spyOn(api.commands, 'forChat').mockResolvedValue({ commands: [play2] } as never);
+    const invoke = vi.spyOn(api.commands, 'invoke').mockResolvedValue({ id: 'i1', expiresAt: 1 } as never);
+    render(<MessageInput channelId="dm-1" channelName="general" />);
+    const input = screen.getByRole('textbox');
+    fireEvent.change(input, { target: { value: '/vol', selectionStart: 4 } });
+    fireEvent.click(await screen.findByText('/volume'));
+    expect(await screen.findByText('quiet')).toBeTruthy();
+    fireEvent.change(input, { target: { value: '/volume level:lo', selectionStart: 16 } });
+    expect(await screen.findByText('loud')).toBeTruthy();
+    expect(screen.queryByText('quiet')).toBeNull();
+    fireEvent.keyDown(input, { key: 'Tab' });
+    await waitFor(() => expect(input).toHaveValue('/volume level:loud'));
+
+    // A space after the value offers the options not written yet.
+    fireEvent.change(input, { target: { value: '/volume level:loud ', selectionStart: 19 } });
+    expect(await screen.findByText('fade:')).toBeTruthy();
+    fireEvent.change(input, { target: { value: '/volume level:loud', selectionStart: 18 } });
+
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(expect.objectContaining({
+      command: 'volume',
+      options: { level: 80 },
     })));
   });
 

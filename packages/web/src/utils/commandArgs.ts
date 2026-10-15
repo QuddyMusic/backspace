@@ -59,9 +59,24 @@ export interface OptionSuggest {
   touched: boolean;
 }
 
+/**
+ * The value of the choice `raw` names: a choice's name (what the list shows
+ * and inserts) or its value written as is, case-insensitively. Undefined when
+ * it is neither; the typed text then goes to the server, which refuses it.
+ */
+function choiceValue(def: BotCommandOption, raw: string): string | number | undefined {
+  const wanted = raw.toLowerCase();
+  const byName = def.choices?.find((c) => c.name.toLowerCase() === wanted);
+  if (byName) return byName.value;
+  return def.choices?.find((c) => String(c.value).toLowerCase() === wanted)?.value;
+}
+
 function setOptionValue(options: OptionValues, def: BotCommandOption, raw: string, context: CommandArgContext): void {
   if (raw.length === 0) return;
-  if (def.type === 'integer' || def.type === 'number') {
+  const chosen = def.choices ? choiceValue(def, raw) : undefined;
+  if (chosen !== undefined) {
+    options[def.name] = chosen;
+  } else if (def.type === 'integer' || def.type === 'number') {
     const n = Number(raw);
     options[def.name] = Number.isNaN(n) ? raw : n;
   } else if (def.type === 'boolean') {
@@ -175,14 +190,20 @@ export interface ValueSuggest {
   touched: boolean;
 }
 
-/** The option types whose values the popover offers. */
+/** The option types whose values the popover offers; any option with choices is offered its choices. */
 const PICKED_TYPES: ReadonlySet<BotCommandOption['type']> = new Set(['user', 'role', 'channel', 'boolean']);
+
+/** Whether the value popover offers anything for `option`. */
+export function offersValues(option: BotCommandOption): boolean {
+  return PICKED_TYPES.has(option.type) || (option.choices?.length ?? 0) > 0;
+}
 
 /**
  * The value popover state for a draft, or null when none applies: the text must
  * start with a known command, everything before the word being typed must be
  * options written by name, and that word must be `name:` of a user, role,
- * channel or boolean option followed by the start of a value. A token or a
+ * channel or boolean option, or of an option with choices, followed by the
+ * start of a value. A token or a
  * quoted value is not offered anything. (The mention picker does not open
  * here: it needs a space before the `@`.)
  */
@@ -201,7 +222,7 @@ export function suggestValue(
   const word = /^([a-z0-9_-]+):(.*)$/i.exec(tail.slice(cut));
   if (!word) return null;
   const option = command.options.find((o) => o.name === word[1]!.toLowerCase());
-  if (!option || !PICKED_TYPES.has(option.type)) return null;
+  if (!option || !offersValues(option)) return null;
   const partial = word[2]!;
   if (partial.startsWith('"') || partial.startsWith('<')) return null;
   if (readNamedPairs(command, tail.slice(0, cut)).rest.length > 0) return null;
@@ -213,4 +234,57 @@ export function suggestValue(
     selectedIndex: 0,
     touched: false,
   };
+}
+
+/** One argument of a command draft as the composer frames it: its `name:` and its value. */
+export interface ArgumentFrame {
+  /** Where `name:` starts, and where its colon ends (the value's start). */
+  nameStart: number;
+  valueStart: number;
+  /** Where the value ends: the next space outside quotes, or the end of a free-text value. */
+  valueEnd: number;
+}
+
+/**
+ * Where the arguments of a draft that starts with `command` sit, in the text
+ * as the textarea shows it, so the composer can draw each as a box: `name:`
+ * and its value. A value is read as the parser reads it: one word, a quoted
+ * run, or for a string option written without quotes, everything up to the
+ * next option written by name. `units` are spans that count as one word
+ * whatever they hold (a mention shown as `@Display name`).
+ */
+export function argumentFrames(
+  text: string,
+  command: BotCommandListing,
+  units: ReadonlyArray<{ start: number; end: number }> = [],
+): ArgumentFrame[] {
+  const head = new RegExp('^/' + command.name + '\\s', 'i').exec(text);
+  if (!head || command.options.length === 0) return [];
+  const types = new Map(command.options.map((o) => [o.name, o.type] as const));
+  const names = command.options.map((o) => o.name).join('|');
+  const named = new RegExp('(^|\\s)(' + names + '):', 'gi');
+  const starts: Array<{ nameStart: number; valueStart: number; name: string }> = [];
+  for (let m = named.exec(text); m; m = named.exec(text)) {
+    if (m.index + m[1]!.length < head[0].length) continue;
+    const nameStart = m.index + m[1]!.length;
+    // A `name:` inside a mention's shown name is part of the mention.
+    if (units.some((u) => nameStart > u.start && nameStart < u.end)) continue;
+    starts.push({ nameStart, valueStart: nameStart + m[2]!.length + 1, name: m[2]!.toLowerCase() });
+  }
+  return starts.map((start, i) => {
+    const next = starts[i + 1]?.nameStart ?? text.length;
+    const rest = text.slice(start.valueStart, next);
+    let length: number;
+    if (rest.startsWith('"')) {
+      const close = rest.indexOf('"', 1);
+      length = close > 0 ? close + 1 : rest.length;
+    } else if (types.get(start.name) === 'string') {
+      length = rest.trimEnd().length;
+    } else {
+      const unit = units.find((u) => u.start === start.valueStart);
+      const space = rest.search(/\s/);
+      length = unit ? unit.end - unit.start : space < 0 ? rest.length : space;
+    }
+    return { nameStart: start.nameStart, valueStart: start.valueStart, valueEnd: start.valueStart + length };
+  });
 }

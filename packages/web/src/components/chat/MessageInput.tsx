@@ -29,6 +29,7 @@ import { getApiForOrigin } from '../../utils/crossStoreResolvers';
 import { describeError } from '../../i18n/errors';
 import { HttpError } from '../../api/client';
 import {
+  argumentFrames,
   parseCommandArgs,
   remainingOptions,
   suggestOptions,
@@ -269,6 +270,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       const text = draftText.slice(0, optionSuggest.startIndex) + option.name + ':';
       setDraft(channelId, text);
       setOptionSuggest(null);
+      // The option's values are offered straight away when it has any to offer.
+      setValueSuggest(chatCommands ? suggestValue(text, chatCommands, optionSuggest.command) : null);
       // The draft holds mention tokens; the textarea shows names.
       const caret = modelFor(text).toDisplay(text.length);
       requestAnimationFrame(() => {
@@ -279,7 +282,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         textarea.selectionEnd = caret;
       });
     },
-    [optionSuggest, draftText, setDraft, channelId, modelFor],
+    [optionSuggest, draftText, setDraft, channelId, chatCommands, modelFor],
   );
 
   // What a typed user, role or channel value may name: the chat's people, and its space's roles and channels.
@@ -313,20 +316,43 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     return err instanceof Error ? describeError(err) : t('chat:commands.failed');
   };
 
+  // The arguments of a command draft, drawn as boxes by the composer's mirror.
+  const argumentBoxes = useMemo(() => {
+    const head = /^\/([a-z0-9_-]+)\s/i.exec(draftText);
+    if (!head || !chatCommands) return [];
+    const name = head[1]!.toLowerCase();
+    const picked = pickedCommandRef.current;
+    const command = picked && picked.name === name ? picked : chatCommands.find((c) => c.name === name);
+    if (!command) return [];
+    const units = mentionModel.parts.filter((p) => p.mention).map((p) => ({ start: p.start, end: p.start + p.text.length }));
+    return argumentFrames(mentionModel.text, command, units);
+  }, [draftText, chatCommands, mentionModel]);
+
   // The value popover's rows.
   const valueMatches = useMemo((): CommandValueCandidate[] => {
     // Like the option popover, it follows the draft: once the command is gone, so is the list.
     if (!valueSuggest || !draftText.startsWith('/' + valueSuggest.command.name + ' ')) return [];
     const { option, query } = valueSuggest;
+    if (option.choices && option.choices.length > 0) {
+      // The list shows a choice's name and writes it; the parser hands the bot its value.
+      return option.choices
+        .filter((c) => c.name.toLowerCase().includes(query) || String(c.value).toLowerCase().includes(query))
+        .map((c) => ({
+          key: String(c.value),
+          label: c.name,
+          detail: String(c.value) === c.name ? undefined : String(c.value),
+          insert: /\s/.test(c.name) ? `"${c.name}"` : c.name,
+        }));
+    }
     if (option.type === 'boolean') {
-      return ['true', 'false'].filter((v) => v.startsWith(query)).map((v) => ({ key: v, label: v, insert: `${v} ` }));
+      return ['true', 'false'].filter((v) => v.startsWith(query)).map((v) => ({ key: v, label: v, insert: v }));
     }
     if (option.type === 'user') {
       return filterMentionCandidates(chatPeople, query).map((c) => ({
         key: c.userId,
         label: spaceMemberName(c.member, c.user),
         detail: `@${c.user.username}`,
-        insert: `<@${c.userId}> `,
+        insert: `<@${c.userId}>`,
       }));
     }
     if (option.type === 'role') {
@@ -334,13 +360,13 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         .filter((r) => r.name.toLowerCase().includes(query))
         .sort((a, b) => b.position - a.position)
         .slice(0, 25)
-        .map((r) => ({ key: r.id, label: r.name, insert: `<@&${r.id}> ` }));
+        .map((r) => ({ key: r.id, label: r.name, insert: `<@&${r.id}>` }));
     }
     return commandContext.channels
       .filter((c) => (!option.channelTypes || option.channelTypes.includes(c.type)) && c.name.toLowerCase().includes(query))
       .slice(0, 25)
       // A name with a space goes in quotes, or the value would end at the space.
-      .map((c) => ({ key: c.id, label: `#${c.name}`, detail: c.type, insert: /\s/.test(c.name) ? `"#${c.name}" ` : `#${c.name} ` }));
+      .map((c) => ({ key: c.id, label: `#${c.name}`, detail: c.type, insert: /\s/.test(c.name) ? `"#${c.name}"` : `#${c.name}` }));
   }, [valueSuggest, draftText, chatPeople, chatRoles, commandContext]);
 
   const selectValue = useCallback(
@@ -348,9 +374,10 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       if (!valueSuggest) return;
       const text = draftText.slice(0, valueSuggest.startIndex) + candidate.insert;
       setDraft(channelId, text);
+      // Nothing more is offered until a space is typed, so Enter right after a
+      // picked value sends the command.
       setValueSuggest(null);
-      // Further options are offered once a value is in.
-      setOptionSuggest(chatCommands ? suggestOptions(text, chatCommands, pickedCommandRef.current) : null);
+      setOptionSuggest(null);
       const caret = modelFor(text).toDisplay(text.length);
       requestAnimationFrame(() => {
         const textarea = textareaRef.current;
@@ -360,7 +387,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
         textarea.selectionEnd = caret;
       });
     },
-    [valueSuggest, draftText, setDraft, channelId, chatCommands, modelFor],
+    [valueSuggest, draftText, setDraft, channelId, modelFor],
   );
 
   // The command popover's rows.
@@ -1221,6 +1248,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
             mentionAnchorRef={mentionAnchorRef}
             mentionStart={mentionState?.startIndex}
             model={mentionModel}
+            frames={argumentBoxes}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
             onPaste={canAttachFiles ? handlePaste : undefined}
