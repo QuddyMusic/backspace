@@ -9,6 +9,7 @@ import { useVoiceParticipantMeta } from '../../hooks/useVoiceParticipantMeta';
 import { getActiveRoom, setCameraSubscription } from '../../hooks/useLiveKit';
 import type { UserTile } from '../../hooks/useLiveKit';
 import { isPermissionMutedIn } from '../../utils/permissionMute';
+import { isLocallyMutedIn, setLocalMute } from '../../utils/voiceLocalKeys';
 
 interface VoiceUserProps {
   tile: UserTile;
@@ -124,8 +125,8 @@ export function VoiceUser({ tile, large }: VoiceUserProps) {
         type: 'checkbox',
         label: t('voice:participantMenu.muteUser'),
         subscribe: useVoiceStore.subscribe,
-        getChecked: () => useVoiceStore.getState().participantMutes.get(targetUserId) ?? false,
-        onChange: (checked) => useVoiceStore.getState().setParticipantMute(targetUserId, checked),
+        getChecked: () => isLocallyMutedIn(useVoiceStore.getState().participantMutes, targetUserId, channelId),
+        onChange: (checked) => setLocalMute(targetUserId, channelId, checked),
       });
 
       items.push({ key: 'vol-sep', type: 'separator' });
@@ -134,7 +135,7 @@ export function VoiceUser({ tile, large }: VoiceUserProps) {
       items.push({
         key: 'volume',
         type: 'custom',
-        render: () => React.createElement(VolumeSliderItem, { userId: targetUserId }),
+        render: () => React.createElement(VolumeSliderItem, { userId: targetUserId, channelId }),
       });
 
       openContextMenu({ x: e.clientX, y: e.clientY }, items);
@@ -241,7 +242,7 @@ export function VoiceUser({ tile, large }: VoiceUserProps) {
                       </svg>
                     </div>
                   )}
-                  {!isLocal && participantMutes.get(participant.userId) && (
+                  {!isLocal && isLocallyMutedIn(participantMutes, participant.userId, currentVoiceChannelId) && (
                     <div className="w-5 h-5 bg-white/20 rounded-full flex items-center justify-center" title={t('voice:badges.locallyMuted')}>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="white">
                         <path d="M3 9v6h4l5 5V4L7 9H3z" />

@@ -340,6 +340,11 @@ Three independent muting mechanisms:
 
 **Effective state:** `effectiveMuted = isMuted || spaceMuted || permissionMuted`
 
+### 4. Listener-local mute and volume ("Mute User", the volume slider)
+- Local to the listener, never sent to the server. `voiceStore.participantMutes` / `participantVolumes`, persisted.
+- A person is keyed by user id: muted once, muted wherever you meet them.
+- A bot can sit in several channels at once and each seat plays its own audio, so a bot is keyed per seat, `userId@channelId` (`utils/voiceLocalKeys.ts`, `voiceSeatKey`). Muting or turning down a bot in one channel leaves its other seats alone. Reads accept both keys, so a mute stored under the plain id before this existed still holds; unmuting a bot lifts both. Bot detection reads the open space's roster, then the voice participant's cached user.
+
 ### Move & Disconnect
 - `voice_move`: Requires MOVE_MEMBERS. Same space only. Preserves voice status.
 - `voice_disconnect`: Requires DISCONNECT_MEMBERS. Full teardown.

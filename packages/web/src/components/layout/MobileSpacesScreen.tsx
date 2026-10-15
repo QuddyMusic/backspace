@@ -28,6 +28,7 @@ import { ChannelMutedIndicator } from '../notifications/ChannelMutedIndicator';
 import { NotificationSettingsModal, type NotificationSettingsModalTarget } from '../notifications/NotificationSettingsModal';
 import { describeCodedError } from '../../i18n/errors';
 import { isPermissionMutedIn } from '../../utils/permissionMute';
+import { isLocallyMutedIn, setLocalMute } from '../../utils/voiceLocalKeys';
 
 export function MobileSpacesScreen() {
   const { t } = useTranslation(['spaces', 'common']);
@@ -572,8 +573,8 @@ export function MobileSpacesScreen() {
         type: 'checkbox',
         label: t('spaces:mobile.muteUser'),
         subscribe: useVoiceStore.subscribe,
-        getChecked: () => useVoiceStore.getState().participantMutes.get(userId) ?? false,
-        onChange: (checked) => useVoiceStore.getState().setParticipantMute(userId, checked),
+        getChecked: () => isLocallyMutedIn(useVoiceStore.getState().participantMutes, userId, channelId),
+        onChange: (checked) => setLocalMute(userId, channelId, checked),
       });
 
       items.push({ key: 'vol-sep', type: 'separator' });
@@ -581,7 +582,7 @@ export function MobileSpacesScreen() {
       items.push({
         key: 'volume',
         type: 'custom',
-        render: () => React.createElement(VolumeSliderItem, { userId }),
+        render: () => React.createElement(VolumeSliderItem, { userId, channelId }),
       });
 
       openContextMenu({ x: e.clientX, y: e.clientY }, items);
@@ -663,7 +664,7 @@ export function MobileSpacesScreen() {
                     isServerMuted={isSpaceMuted}
                     isServerDeafened={isSpaceDeafened}
                     isPermissionMuted={isPermissionMuted}
-                    isLocallyMuted={userId !== user?.id && (participantMutes.get(userId) ?? false)}
+                    isLocallyMuted={userId !== user?.id && isLocallyMutedIn(participantMutes, userId, channel.id)}
                     isSpeaking={speakingUserIds.has(userId)}
                     size="compact"
                   />

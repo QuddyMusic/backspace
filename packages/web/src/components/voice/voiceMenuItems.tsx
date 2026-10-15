@@ -8,6 +8,7 @@ import { useSpaceStore, getChannelOrigin } from '../../stores/spaceStore';
 import { wsSend } from '../../hooks/useWebSocket';
 import { hasPermissionBit, PermissionBits } from '../../utils/permissions';
 import { viewerCanActOnUserInSpace } from '../../utils/roleHierarchy';
+import { localVolumeIn, setLocalVolume } from '../../utils/voiceLocalKeys';
 
 /**
  * Build moderation context menu items for a voice user.
@@ -120,11 +121,10 @@ export function buildVoiceModMenuItems(targetUserId: string, channelId: string):
  * Volume slider for a voice participant, used as a `custom` context menu item.
  * Must be a component (not a plain function) because it subscribes to store state.
  */
-export function VolumeSliderItem({ userId }: { userId: string }) {
+export function VolumeSliderItem({ userId, channelId }: { userId: string; channelId: string }) {
   const { t } = useTranslation(['voice', 'common']);
   const f = useFormatters();
-  const volume = useVoiceStore((s) => s.participantVolumes.get(userId) ?? 100);
-  const setParticipantVolume = useVoiceStore((s) => s.setParticipantVolume);
+  const volume = useVoiceStore((s) => localVolumeIn(s.participantVolumes, userId, channelId));
 
   return (
     <div className="p-3">
@@ -140,7 +140,7 @@ export function VolumeSliderItem({ userId }: { userId: string }) {
           min="0"
           max="200"
           value={volume}
-          onChange={(e) => setParticipantVolume(userId, parseInt(e.target.value))}
+          onChange={(e) => setLocalVolume(userId, channelId, parseInt(e.target.value))}
           className="flex-1 min-w-0 accent-accent-primary h-1"
         />
         <span className="text-xs text-txt-secondary min-w-[32px] flex-shrink-0 text-right">
