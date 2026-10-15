@@ -221,7 +221,7 @@ B verifies the proof with A over the signed server-to-server channel (`POST /api
 
 - An instance without bot support ignores `botProof`: the account there is an ordinary user (no bot flag). A person can also automate a human account without declaring it; the server cannot tell.
 - A token is a full user session: a bot can call any REST endpoint a user can. Scopes (a token limited to some endpoints or spaces) are not built.
-- `isBot` is not carried by the DM relay: on other instances a DM with a bot shows no bot marker.
+- On other instances a bot's row takes the bot flag from its home: the home's answer when the row is created (`/users/by-home-id`) and the participant snapshots of a DM the home relays (federation.md, "Bot flag"). A row created before an instance knew this gets it with the next DM message the bot's home relays.
 - Revocation on another instance depends on the peer. Per origin, `federation` answers `{ success: true }`, `{ success: false, error, pending: true }` (the instance is away, not peered at the moment or answered 5xx/401/408/429: the server keeps trying, see "Revocation retries" below) or `{ success: false, error, pending: false }` (the instance refused: a bot that owns a space there answers `owns_spaces` and stays; a 403 attribution mismatch). While a revoke is pending the old account is still alive on that instance, so a leaked host token still works there until it lands.
 - A regenerated token removes the bot from its spaces on other instances (the account is recreated).
 - The peer of the home instance is found by host without port; two instances on one host and different ports are not supported. `homeInstance` in `register` cannot carry a port.

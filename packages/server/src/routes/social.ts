@@ -42,6 +42,8 @@ export function buildProfileSnapshot(user: typeof schema.users.$inferSelect): Fe
     banner: user.banner ?? null,
     bio: user.bio ?? null,
     status,
+    // Only the home names its bots (receivers check that the sender is the home).
+    ...(user.isBot === 1 && !user.homeInstance ? { isBot: true } : {}),
   };
 }
 

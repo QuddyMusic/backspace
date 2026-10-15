@@ -7,6 +7,7 @@ import { sanitizeUser } from '../../utils/sanitize.js';
 import { generateSnowflake } from '../../utils/snowflake.js';
 import { collectProfileBroadcastTargetIds } from '../../utils/userDeletion.js';
 import { safeFetch } from '../../utils/ssrf.js';
+import { normalizeOriginForCompare } from '../../utils/federationAuth.js';
 import { connectionManager } from '../../ws/handler.js';
 import { and, eq, isNull, lt, or, sql, type SQL } from 'drizzle-orm';
 import { Readable } from 'node:stream';
@@ -248,6 +249,8 @@ export interface HomeProfile {
   accentColor?: string | null;
   avatarColor: string | null;
   bio: string | null;
+  /** The home says the user is one of its bot accounts (`applyHomeBotFlag`). */
+  isBot?: boolean | null;
 }
 
 /** A `/users/by-home-id` answer's profile as a `HomeProfile`. */
@@ -262,7 +265,36 @@ export function homeProfileFromAnswer(answer: { username: string; profile: Feder
     ...(profile.accentColor !== undefined ? { accentColor: profile.accentColor } : {}),
     avatarColor: profile.avatarColor,
     bio: profile.bio,
+    ...(profile.isBot === true ? { isBot: true } : {}),
   };
+}
+
+/**
+ * Marks the row of a user homed elsewhere as a bot when its home says so, and
+ * returns the row as stored. Only the home names its bots: `fromOrigin` must be
+ * the row's home instance, so a third instance relaying a snapshot cannot. The
+ * flag is never cleared (a bot account does not turn into a person) and a
+ * detached account, sovereign here, is left alone. The row's viewers get one
+ * `user_updated`, so the bot badge appears without a reload.
+ *
+ * The flag on such a row only labels it: the row has no credential here, and
+ * an account that can sign in gets the flag only from a verified bot proof
+ * (`POST /api/auth/register` with `botProof`).
+ */
+export function applyHomeBotFlag(
+  row: UserRow,
+  isBot: boolean | null | undefined,
+  fromOrigin: string,
+  db: ReturnType<typeof getDb>,
+): UserRow {
+  if (isBot !== true || row.isBot === 1) return row;
+  if (!row.homeInstance || row.federationHomeOrphaned === 1) return row;
+  if (normalizeOriginForCompare(row.homeInstance) !== normalizeOriginForCompare(fromOrigin)) return row;
+  db.update(schema.users).set({ isBot: 1 }).where(eq(schema.users.id, row.id)).run();
+  const stored = db.select().from(schema.users).where(eq(schema.users.id, row.id)).get();
+  if (!stored) return row;
+  announceUserUpdated(stored);
+  return stored;
 }
 
 /**
@@ -307,12 +339,14 @@ async function resolveHomeAsset(value: string | null, homeOrigin: string): Promi
  * incarnation, which never writes its profile.
  */
 export async function applyHomeProfile(
-  row: UserRow,
+  rowIn: UserRow,
   profile: HomeProfile,
   homeOrigin: string,
   db: ReturnType<typeof getDb>,
 ): Promise<UserRow> {
-  if (!row.homeInstance || row.federationHomeOrphaned === 1) return row;
+  if (!rowIn.homeInstance || rowIn.federationHomeOrphaned === 1) return rowIn;
+  // The bot flag has no version: it holds whichever profile version this answer carries.
+  const row = applyHomeBotFlag(rowIn, profile.isBot, homeOrigin, db);
   if (!isNewerHomeProfile(profile.profileUpdatedAt, row.profileUpdatedAt)) return row;
 
   const avatar = await resolveHomeAsset(profile.avatar, homeOrigin);

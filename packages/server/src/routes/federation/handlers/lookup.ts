@@ -68,6 +68,8 @@ export function registerLookupRoutes(app: FastifyInstance): void {
             banner: user.banner,
             bio: user.bio,
             status: user.status as 'online' | 'idle' | 'dnd' | 'offline' | null,
+            // A bot of this instance says so; a row homed elsewhere is not ours to name.
+            ...(user.isBot === 1 && !user.homeInstance ? { isBot: true } : {}),
           },
         },
       });
@@ -142,6 +144,8 @@ export function registerLookupRoutes(app: FastifyInstance): void {
             // has none stored; it is the one the account was created with,
             // so its creation time orders it before every later edit.
             profileUpdatedAt: user.profileUpdatedAt ?? user.createdAt,
+            // A bot of this instance says so; a row homed elsewhere is not ours to name.
+            ...(user.isBot === 1 && !user.homeInstance ? { isBot: true } : {}),
           },
         },
       });

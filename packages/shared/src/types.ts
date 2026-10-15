@@ -1589,6 +1589,12 @@ export interface FederationRelayProfileSnapshot {
    * '!deleted:<id>' usernames are never shipped (dead-incarnation spec §3.3).
    */
   deleted?: boolean | null;
+  /**
+   * The user is a bot account of the instance that built this snapshot. Only
+   * the home sends it, about its own users; a receiver takes it only when the
+   * sender is the row's home instance, and never clears the flag.
+   */
+  isBot?: boolean | null;
 }
 
 export interface FederationProfileUpdatePayload {
@@ -1816,6 +1822,8 @@ export interface FederationUserLookupProfile {
   // applied like a `profile_update`. Absent from older homes.
   profileUpdatedAt?: number | null;
   accentColor?: string | null;
+  /** A bot account of the answering home (sent only when true, by homes that know bots). */
+  isBot?: boolean | null;
 }
 
 export type FederationUserLookupResponse =

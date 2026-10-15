@@ -364,3 +364,48 @@ describe('relayed snapshots carry the handle', () => {
     expect(buildProfileSnapshot(row('alice')).username).toBe('alice');
   });
 });
+
+describe('the bot flag of a user homed elsewhere', () => {
+  const plain = { profileUpdatedAt: 5000, username: 'x', displayName: null, avatar: null, banner: null, avatarColor: null, bio: null };
+
+  it('is taken from the home whatever version its answer carries', async () => {
+    insertReplica({ id: 'r-bot', username: `radio_bot@${HOME}`, homeUserId: '7001', profileUpdatedAt: 9000 });
+    const { applyHomeProfile } = await import('./profile.js');
+
+    await applyHomeProfile(row('r-bot'), { ...plain, username: 'radio_bot', isBot: true }, HOME_ORIGIN, testDb);
+
+    expect(row('r-bot').isBot).toBe(1);
+    // The older profile version was still refused; only the flag changed.
+    expect(row('r-bot').profileUpdatedAt).toBe(9000);
+  });
+
+  it('is refused from an instance that is not the home, and never cleared', async () => {
+    insertReplica({ id: 'r-ann', username: `ann@${HOME}`, homeUserId: '7002' });
+    const { applyHomeBotFlag } = await import('./profile.js');
+
+    applyHomeBotFlag(row('r-ann'), true, 'https://third.example', testDb);
+    expect(row('r-ann').isBot).toBe(0);
+
+    applyHomeBotFlag(row('r-ann'), true, HOME, testDb);
+    expect(row('r-ann').isBot).toBe(1);
+    applyHomeBotFlag(row('r-ann'), false, HOME_ORIGIN, testDb);
+    expect(row('r-ann').isBot).toBe(1);
+  });
+
+  it('leaves a detached account and a native user alone', async () => {
+    insertReplica({ id: 'r-det', username: `det@${HOME}`, homeUserId: '7003', federationHomeOrphaned: 1 });
+    const { applyHomeBotFlag } = await import('./profile.js');
+    applyHomeBotFlag(row('r-det'), true, HOME_ORIGIN, testDb);
+    expect(row('r-det').isBot).toBe(0);
+  });
+
+  it('is sent by the home for its own bots only', async () => {
+    insertReplica({ id: 'r-far', username: `far_bot@${HOME}`, homeUserId: '7004', isBot: 1 });
+    testDb.insert(schema.users).values({
+      id: 'native-bot', username: 'echo_bot', passwordHash: '!bot', status: 'offline', isAdmin: 0, createdAt: 1, isBot: 1,
+    }).run();
+    const { buildProfileSnapshot } = await import('../social.js');
+    expect(buildProfileSnapshot(row('native-bot')).isBot).toBe(true);
+    expect(buildProfileSnapshot(row('r-far')).isBot).toBeUndefined();
+  });
+});

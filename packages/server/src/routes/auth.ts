@@ -170,8 +170,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       // no consumption (spec §5.7).
     }
 
-    // Cross-instance bot: the ONLY way is_bot=1 can be set here. The client's
-    // homeUserId/username are ignored; identity and the bot flag come from the
+    // Cross-instance bot: the ONLY way an account that can sign in here gets
+    // is_bot=1 (a row of a remote user only takes the label from its home, see
+    // applyHomeBotFlag). The client's homeUserId/username are ignored; identity
+    // and the bot flag come from the
     // home instance over signed S2S (attach-proof is single-use and bound to
     // OUR domain on the home side). The home must already be an active peer:
     // no outbound handshake is ever started from this unauthenticated route.
