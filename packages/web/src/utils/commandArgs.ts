@@ -230,13 +230,26 @@ function setOptionValue(options: OptionValues, def: BotCommandOption, raw: strin
  * without quotes runs up to the next option written by name, or to the end, so
  * a title or a message may be any length. `rest` is what follows the last pair.
  */
+/**
+ * Where the next option written by name starts in `text` (whitespace, then a
+ * `name:` of `defs`): the index of that whitespace, or -1. The names come from
+ * bots, so they are compared as text, never built into a pattern.
+ */
+function nextNamedAt(text: string, defs: ReadonlyMap<string, unknown>): number {
+  const word = /\s([a-z0-9_-]+):/gi;
+  for (let m = word.exec(text); m; m = word.exec(text)) {
+    if (defs.has(m[1]!.toLowerCase())) return m.index;
+    word.lastIndex = m.index + 1;
+  }
+  return -1;
+}
+
 export function readNamedPairs(
   command: Pick<BotCommandListing, 'options'>,
   text: string,
   context: CommandArgContext = NO_CONTEXT,
 ): { options: OptionValues; rest: string } {
   const defs = new Map(command.options.map((o) => [o.name, o] as const));
-  const nextNamed = new RegExp('\\s(?:' + command.options.map((o) => o.name).join('|') + '):', 'i');
   const options: OptionValues = {};
   let remaining = text.trim();
   for (;;) {
@@ -254,12 +267,12 @@ export function readNamedPairs(
       raw = body.slice(1, close);
       body = body.slice(close + 1);
     } else if (def.type === 'string') {
-      const cut = body.search(nextNamed);
+      const cut = nextNamedAt(body, defs);
       raw = (cut < 0 ? body : body.slice(0, cut)).trim();
       body = cut < 0 ? '' : body.slice(cut);
     } else {
       // A user, role or channel may be named by several words; anything else is one word.
-      const cut = body.search(nextNamed);
+      const cut = nextNamedAt(body, defs);
       const spaced = spacedNameLength(def, cut < 0 ? body : body.slice(0, cut), context);
       const space = body.search(/\s/);
       const length = spaced ?? (space < 0 ? body.length : space);
@@ -514,12 +527,14 @@ export function argumentFrames(
   const args = argumentsOf(text, command);
   if (!args || args.options.length === 0) return [];
   const defs = new Map(args.options.map((o) => [o.name, o] as const));
-  const names = args.options.map((o) => o.name).join('|');
-  const named = new RegExp('(^|\\s)(' + names + '):', 'gi');
+  // Every `word:` after whitespace, kept when the word is one of the options
+  // (the names come from bots: compared as text, never built into a pattern).
+  const named = /(^|\s)([a-z0-9_-]+):/gi;
   const starts: Array<{ nameStart: number; colonAt: number; name: string }> = [];
   // A quoted value runs to its closing quote, whatever it holds; so does the parser.
   let quotedUntil = 0;
   for (let m = named.exec(text); m; m = named.exec(text)) {
+    if (!defs.has(m[2]!.toLowerCase())) continue;
     if (m.index + m[1]!.length < args.start) continue;
     const nameStart = m.index + m[1]!.length;
     if (nameStart < quotedUntil) continue;
