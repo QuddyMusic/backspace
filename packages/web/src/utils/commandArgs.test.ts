@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { BotCommandListing, BotCommandOption } from '@backspace/shared';
-import { ARG_SEPARATOR, HEAD_GAP, VALUE_GAP, argumentFrames, draftCommandName, parseCommandArgs, remainingOptions, spaceArguments, suggestOptions, suggestValue, type CommandArgContext } from './commandArgs';
+import {
+  ARG_SEPARATOR, HEAD_GAP, VALUE_GAP, argumentFrames, commandPath, commandRows, draftCommandName, headDraft, parseCommandArgs,
+  remainingOptions, spaceArguments, subcommandMatches, suggestOptions, suggestSubcommand, suggestValue, type CommandArgContext,
+} from './commandArgs';
 
 function option(name: string, type: BotCommandOption['type'], required = false): BotCommandOption {
   return { name, description: name, type, required };
@@ -373,5 +376,74 @@ describe('names of several words typed by hand', () => {
     // Without the chat, `Smith` would be left over and no options offered.
     expect(suggestOptions(who + 'Bob Smith ', [kick], null)).toBeNull();
     expect(suggestValue(who + 'Bob Xy', [kick], null, context)).toBeNull();
+  });
+});
+
+describe('subcommands', () => {
+  const step = (name: string, type: 'subcommand' | 'subcommand_group', options: BotCommandOption[]): BotCommandOption =>
+    ({ name, description: `${name} it`, type, required: false, options });
+  const music = listing('music', [
+    step('play', 'subcommand', [option('query', 'string', true), option('loud', 'boolean')]),
+    step('queue', 'subcommand_group', [step('add', 'subcommand', [option('who', 'user', true)]), step('list', 'subcommand', [])]),
+  ]);
+  const names = (options: readonly BotCommandOption[]) => options.map((o) => o.name);
+
+  it('reads the path written after the command', () => {
+    expect(commandPath('/music', music)).toMatchObject({ path: [], options: null, partial: null });
+    expect(commandPath('/music ', music)).toMatchObject({ path: [], options: null, partial: { text: '', start: 7 } });
+    expect(commandPath('/music qu', music)).toMatchObject({ options: null, partial: { text: 'qu', start: 7 } });
+    expect(commandPath('/music queue ', music)).toMatchObject({ path: ['queue'], partial: { text: '', start: 13 } });
+    expect(commandPath('/music queue add who:x', music)).toMatchObject({ path: ['queue', 'add'], headEnd: 16, options: [{ name: 'who' }] });
+    // A last word still being typed counts once the text is sent.
+    expect(commandPath('/music queue list', music)).toMatchObject({ options: null, partial: { text: 'list' } });
+    expect(commandPath('/music queue list', music, true)).toMatchObject({ path: ['queue', 'list'], options: [] });
+    expect(names(commandPath('/music stop now', music)!.next)).toEqual(['play', 'queue']);
+    expect(commandPath('/musicx', music)).toBeNull();
+    expect(commandPath('/play x', play)).toMatchObject({ path: [], headEnd: 5, options: play.options });
+  });
+
+  it('makes a row of each subcommand, and one of a command without them', () => {
+    expect(commandRows(music).map((r) => [r.path.join(' '), r.description, names(r.options)])).toEqual([
+      ['play', 'play it', ['query', 'loud']],
+      ['queue add', 'add it', ['who']],
+      ['queue list', 'list it', []],
+    ]);
+    expect(commandRows(play).map((r) => r.path)).toEqual([[]]);
+  });
+
+  it('offers the next step until the path reaches a subcommand, then its options', () => {
+    const offered = (text: string) => {
+      const suggest = suggestSubcommand(text, [music], null);
+      return suggest ? names(subcommandMatches(suggest, text)) : null;
+    };
+    expect(offered('/music ')).toEqual(['play', 'queue']);
+    expect(offered('/music q')).toEqual(['queue']);
+    expect(offered('/music queue ')).toEqual(['add', 'list']);
+    expect(offered('/music queue a')).toEqual(['add']);
+    expect(offered('/music play ')).toBeNull();
+    expect(suggestOptions('/music ', [music], null)).toBeNull();
+    expect(suggestOptions('/music play ', [music], null)).toMatchObject({ query: '', startIndex: 12 });
+    expect(names(remainingOptions(music, '/music play loud:true '))).toEqual(['query']);
+    expect(offered('/play ')).toBeNull();
+  });
+
+  it('frames, offers, parses and spaces the arguments after the path', () => {
+    const text = '/music queue add who:bob';
+    expect(argumentFrames(text, music).map((f) => text.slice(f.valueStart, f.valueEnd))).toEqual(['bob']);
+    expect(spaceArguments(text, music, text.length).text).toBe('/music queue add' + HEAD_GAP + 'who:' + VALUE_GAP + 'bob');
+    expect(suggestValue('/music queue add who:b', [music], null)).toMatchObject({ option: { name: 'who' }, query: 'b', startIndex: 21 });
+    const leaf = commandPath('/music play query:song loud:true', music)!;
+    expect(parseCommandArgs({ options: leaf.options! }, 'query:song loud:true')).toEqual({ ok: true, options: { query: 'song', loud: true } });
+    // Before the path is complete there are no arguments.
+    expect(argumentFrames('/music queue who:bob', music)).toEqual([]);
+  });
+
+  it('writes the head of a picked row with its required options', () => {
+    const [playRow, addRow, listRow] = commandRows(music);
+    const played = headDraft(music, playRow!.path, playRow!.options);
+    expect(played).toEqual({ text: '/music play' + HEAD_GAP + 'query:' + VALUE_GAP, caret: ('/music play' + HEAD_GAP + 'query:' + VALUE_GAP).length });
+    expect(headDraft(music, addRow!.path, addRow!.options).text).toBe('/music queue add' + HEAD_GAP + 'who:' + VALUE_GAP);
+    expect(headDraft(music, listRow!.path, listRow!.options)).toEqual({ text: '/music queue list ', caret: 18 });
+    expect(headDraft(play, [], play.options).text).toBe('/play' + HEAD_GAP + 'query:' + VALUE_GAP);
   });
 });

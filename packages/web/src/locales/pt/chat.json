@@ -236,6 +236,10 @@
     "extraText": "Este comando não aceita texto livre, mas sobrou \"{{text}}\". Coloque as opções primeiro e o texto por último",
     "invalidOption": "O valor de {{option}} não serve para este comando.",
     "optionsTitle": "Parâmetros",
-    "required": "obrigatório"
+    "required": "obrigatório",
+    "subcommandsTitle": "Subcomandos",
+    "group": "grupo",
+    "chooseSubcommand": "Escolha um subcomando: {{names}}",
+    "subcommandRefused": "O bot não oferece este subcomando. Escolha um da lista"
   }
 }

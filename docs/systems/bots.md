@@ -138,7 +138,7 @@ A bot registers commands for itself. A person picks one in the message box (typi
 ### Registering
 
 ```
-PUT /api/bots/@me/commands   { commands: [ { name, description, options?: [ { name, description, type, required?, choices?, minValue?, maxValue?, minLength?, maxLength?, channelTypes? } ] } ] }
+PUT /api/bots/@me/commands   { commands: [ { name, description, options?: [ { name, description, type, required?, choices?, minValue?, maxValue?, minLength?, maxLength?, channelTypes?, options? } ] } ] }
 GET /api/bots/@me/commands   → { commands: BotCommand[] }
 ```
 
@@ -162,14 +162,31 @@ A limit on the wrong type, a pair that crosses (`minValue` above `maxValue`), an
 
 Commands are stored on the instance the bot registers them on: register them on every instance where the bot has an account.
 
+### Subcommands
+
+A command may split into subcommands, one or two words after its name (`/music play`, `/music queue add`). Its options are then the steps of a path instead of values:
+
+```json
+{ "name": "music", "description": "Music", "options": [
+  { "name": "play", "description": "Play a track", "type": "subcommand", "options": [
+    { "name": "query", "description": "What to play", "type": "string", "required": true } ] },
+  { "name": "queue", "description": "The queue", "type": "subcommand_group", "options": [
+    { "name": "add", "description": "Add a track", "type": "subcommand", "options": [ ... ] },
+    { "name": "clear", "description": "Empty it", "type": "subcommand" } ] } ] }
+```
+
+A `subcommand` holds value options (the rules above apply to them, at most 10); a `subcommand_group` holds 1 to 25 subcommands. A command lists either value options or subcommands and groups (at most 25), never both, and a group holds subcommands only, so a path is at most two words. A subcommand or group takes no `required`, `choices` or limits. Breaking a rule answers `400 validation_failed` like any other (`details.field` e.g. `commands[0].options[1].options[0].type`). The stored command gives every subcommand and group `required: false` and an `options` list (empty for a subcommand without options).
+
+An invocation of such a command names the path in `subcommand` (`["play"]`, `["queue", "add"]`); `options` are those of the subcommand it names and are checked against its definition. A path is required for a command with subcommands and refused for one without (`400 validation_failed`, `details.field` `subcommand`, the reason names what is expected). The bot gets the path in `interaction.subcommand`, and the subcommand's values in `options` as usual.
+
 ### Invoking
 
 ```
 GET  /api/commands?channelId=<id>  |  ?dmChannelId=<id>   → { commands: [ { id, botId, name, description, options, updatedAt, bot: { id, username, displayName, avatar, avatarColor } } ] }
-POST /api/interactions   { botId, command, options?, channelId | dmChannelId }   → 201 { id, expiresAt }
+POST /api/interactions   { botId, command, subcommand?, options?, channelId | dmChannelId }   → 201 { id, expiresAt }
 ```
 
-`GET` lists the commands of the bots that are in that chat; the caller must be able to see it. `POST` checks, in this order: exactly one of `channelId` and `dmChannelId`; the caller is a member and may write there (SEND_MESSAGES in a channel); the bot is in the chat (`404 bot_not_found`); the command exists (`404 command_not_found`); each option value fits its definition: type, range, length, `choices` when they are strict, and for `user`, `channel` and `role` an id the chat knows (a user in the chat; a channel or role of its space; a channel the caller can see, of an accepted type; anything else answers like a missing id) (`400 validation_failed`, `details.field` is `options.<name>`, `details.reason` says what is wrong); the bot has an open WebSocket (`409 bot_unavailable`). 5 calls per 5 seconds per client address.
+`GET` lists the commands of the bots that are in that chat; the caller must be able to see it. `POST` checks, in this order: exactly one of `channelId` and `dmChannelId`; the caller is a member and may write there (SEND_MESSAGES in a channel); the bot is in the chat (`404 bot_not_found`); the command exists (`404 command_not_found`); the `subcommand` path fits the command (see "Subcommands"); each option value fits its definition: type, range, length, `choices` when they are strict, and for `user`, `channel` and `role` an id the chat knows (a user in the chat; a channel or role of its space; a channel the caller can see, of an accepted type; anything else answers like a missing id) (`400 validation_failed`, `details.field` is `options.<name>`, `details.reason` says what is wrong); the bot has an open WebSocket (`409 bot_unavailable`). 5 calls per 5 seconds per client address.
 
 Command names are unique per bot, not per chat: two bots may both offer `/play`. Every listing entry names its bot, and an invocation names it too (`botId`), so a clash reaches exactly the bot it addresses; the message box shows the bot's `@username` under each command. A command typed out by hand, without picking a row from the list, runs the first of the clashing commands in the listing's order (name, then the bot's username).
 
@@ -183,7 +200,7 @@ Command names are unique per bot, not per chat: two bots may both offer `/play`.
                    "channelId": "...", "spaceId": "...", "expiresAt": 1790000000000 } }
 ```
 
-`options` holds the parsed values with the types of the definition; an optional option that was not given is absent. A `user`, `channel` or `role` value is an id; `resolved` carries the named objects by id (`users`: the user as any member sees it; `channels`: `{ id, spaceId, name, type }`; `roles`: name, colour and position, without the permission bits), and only the kinds the interaction uses. Without such options there is no `resolved`. A call from a space channel carries `channelId` and `spaceId`, a call from a direct or group DM carries `dmChannelId`. `user` is the person who invoked the command.
+`options` holds the parsed values with the types of the definition; an optional option that was not given is absent. For a command with subcommands `subcommand` holds the path invoked (`["queue", "add"]`) and `options` that subcommand's values; a command without subcommands has no `subcommand`. A `user`, `channel` or `role` value is an id; `resolved` carries the named objects by id (`users`: the user as any member sees it; `channels`: `{ id, spaceId, name, type }`; `roles`: name, colour and position, without the permission bits), and only the kinds the interaction uses. Without such options there is no `resolved`. A call from a space channel carries `channelId` and `spaceId`, a call from a direct or group DM carries `dmChannelId`. `user` is the person who invoked the command.
 
 ### Answering
 
@@ -195,7 +212,7 @@ Bot token only, and only the invoked bot. The message is posted through the same
 
 ### In the message box
 
-Typing `/` at the start of a message lists the commands of the bots in the chat. Choosing one writes it with its required options as `name:` ready to be filled in; after a space the options not used yet are offered, required ones first (Tab picks one); pasting a full command works too. The form is: options first as `name:value` (several words in double quotes), then the rest of the line, which is the value of the last string option and may be any length: `/play volume:80 any long title`. The server only ever sees the parsed `options`.
+Typing `/` at the start of a message lists the commands of the bots in the chat, a row for each subcommand of a command that has them (`/music play`, `/music queue add`). Choosing one writes it, with its path, and its required options as `name:` ready to be filled in; after a space the options not used yet are offered, required ones first (Tab picks one); pasting a full command works too. The form is: options first as `name:value` (several words in double quotes), then the rest of the line, which is the value of the last string option and may be any length: `/play volume:80 any long title`. The server only ever sees the parsed `options`.
 
 Each argument of the command is drawn as a two-tone capsule: the option's name on the lighter half, its value on the darker one in a framed slot, dashed while no value is written. It is painted over the text without changing it, so the caret and editing work as in plain text. The room inside and between the capsules is spacing the composer writes (`spaceArguments`): `HEAD_GAP`, an em space, between the command and its first argument, `ARG_SEPARATOR`, an em and an en space, between arguments, and `VALUE_GAP`, a thin and an en space, after a colon. The colon and the thin space are drawn hidden as the name's padding, the en space is the value's. It is written whether an argument is picked from a list, typed or pasted (a command pasted before the bot's command list arrived is spaced when it does); only the whitespace around `name:` changes, a value's own spaces and line breaks stay, a `name:` inside a quoted value is part of the value, a deletion is never respaced, and a run of spaces the caret is in before a name is left as typed. After a colon the caret goes into the value's slot. How far a capsule's ends reach (the name's left end, the value's right end or empty slot) follows the spaces around it, so plain spaces typed by hand and left as they are (after a deletion) keep the capsules apart, only tighter.
 
@@ -205,13 +222,15 @@ The composer puts the caret back after it rewrites the draft in a microtask (`pl
 
 The option list offers the options not written yet, the required ones first and marked as required, so an erased required option is offered again.
 
+A path written by hand is offered step by step: after `/music ` a list of its subcommands and groups (a group is marked as such), after `/music queue ` the group's subcommands; Tab picks, as for options, and a picked subcommand writes its required options. The words of the path are the command's head (plain text before the first capsule); arguments start after the path. Sending a command with subcommands before its path reaches one (`/music`, `/music queue`) sends nothing and says "Choose a subcommand: …" with the names to choose from; the server refuses such a call too.
+
 While the value of an option with `choices`, or of a `user`, `role`, `channel` or `boolean` option, is being typed (`who:`, `who:@bo`), a list offers the choices by name, the chat's people, the space's roles, the space's channels of the accepted types, or `true`/`false`; it also opens as soon as such an option is picked or prefilled. Tab picks, as for options. After a value is picked nothing more is offered until a space is typed, so Enter right away sends the command; a space offers the options not written yet. A choice goes in by name and the bot gets its value; a choice written by hand by its name or its value works too, and so does any other value the option accepts (`volume:34`). A picked person or role goes in as a mention token (`<@id>`, `<@&id>`) shown by name; a channel goes in as `#name` (in quotes when the name has a space: `"#Big lounge"`). Names written by hand also work when exactly one matches in the chat (`who:@bob` by login, display name or space nickname; `group:@Mods`; `where:#lounge`); the client turns them into ids before the call, and anything it cannot match goes to the server as written and is refused. A refused value is shown as "The value of <option> does not fit this command", naming the option.
 
 The list is fetched again at the start of every new command (the text goes from not starting with `/` to starting with it), so a bot that registered, changed or lost commands, or joined or left the chat, shows up the next time a command is typed; the old list stays visible until the answer arrives. Enter while a command is being invoked does nothing: the composer is cleared as the request leaves and gets the text back if the invocation fails.
 
 ### Scope
 
-Chats on the instance where the bot is connected. Not built: subcommands, autocomplete, private (visible to one person) answers (a bot may message the invoker directly), buttons and forms, `user` and `channel` option types, commands of bots from other instances in direct messages.
+Chats on the instance where the bot is connected. Not built: autocomplete, private (visible to one person) answers (a bot may message the invoker directly), buttons and forms, commands of bots from other instances in direct messages.
 
 ## 5c. Voice channels
 

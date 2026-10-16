@@ -1,4 +1,4 @@
-// Slash command bot: registers /play, /stop and /poke and answers them.
+// Slash command bot: registers /play, /stop, /poke and /music and answers them.
 // The server carries the call; what a command does is decided here.
 //
 //   BACKSPACE_URL=https://chat.example.com BOT_TOKEN=... node examples/bots/slash.mjs
@@ -31,7 +31,29 @@ const commands = [
       { name: 'note', description: 'A short note', type: 'string', minLength: 2, maxLength: 40 },
     ],
   },
+  {
+    // Subcommands: `/music play`, `/music queue add|list|clear`. The bot gets the
+    // path in `interaction.subcommand` and that subcommand's values in `options`.
+    name: 'music',
+    description: 'A pretend music queue',
+    options: [
+      { name: 'play', description: 'Play a track now', type: 'subcommand', options: [
+        { name: 'query', description: 'What to play', type: 'string', required: true },
+      ] },
+      { name: 'queue', description: 'The queue of this chat', type: 'subcommand_group', options: [
+        { name: 'add', description: 'Add a track', type: 'subcommand', options: [
+          { name: 'query', description: 'What to add', type: 'string', required: true },
+          { name: 'times', description: 'How many times', type: 'integer', minValue: 1, maxValue: 3 },
+        ] },
+        { name: 'list', description: 'Show the queue', type: 'subcommand' },
+        { name: 'clear', description: 'Empty the queue', type: 'subcommand' },
+      ] },
+    ],
+  },
 ];
+
+/** The pretend queue of each chat, by channel or DM id. */
+const queues = new Map();
 
 bot.run(async (event) => {
   if (event.type === 'ready') {
@@ -42,7 +64,7 @@ bot.run(async (event) => {
   }
   if (event.type !== 'interaction_created') return;
 
-  const { id, command, options, resolved, user } = event.interaction;
+  const { id, command, subcommand, options, resolved, user } = event.interaction;
   const answer = (content) => bot.api('POST', `/interactions/${id}/respond`, { content });
 
   if (command === 'play') {
@@ -55,5 +77,21 @@ bot.run(async (event) => {
     const group = options.group ? ` (for ${resolved?.roles?.[options.group]?.name})` : '';
     const text = `poke ${target?.displayName ?? target?.username} x${options.times ?? 1}${where}${group}${options.note ? `: ${options.note}` : ''}`;
     await answer(options.loud ? text.toUpperCase() : text);
+  } else if (command === 'music') {
+    const chat = event.interaction.channelId ?? event.interaction.dmChannelId;
+    if (!queues.has(chat)) queues.set(chat, []);
+    const queue = queues.get(chat);
+    const path = (subcommand ?? []).join(' ');
+    if (path === 'play') {
+      await answer(`now playing "${options.query}"`);
+    } else if (path === 'queue add') {
+      for (let i = 0; i < (options.times ?? 1); i++) queue.push(options.query);
+      await answer(`queued "${options.query}" (${queue.length} in the queue)`);
+    } else if (path === 'queue list') {
+      await answer(queue.length ? queue.map((title, i) => `${i + 1}. ${title}`).join('\n') : 'the queue is empty');
+    } else if (path === 'queue clear') {
+      queue.length = 0;
+      await answer('the queue is empty now');
+    }
   }
 });

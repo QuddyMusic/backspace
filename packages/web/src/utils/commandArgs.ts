@@ -21,6 +21,91 @@ export function draftCommandName(text: string): string | null {
   return /^\/([a-z0-9_-]+)\s/i.exec(text)?.[1]?.toLowerCase() ?? null;
 }
 
+/** Whether options are the steps of a path (subcommands, groups) rather than values. */
+export function holdsSubcommands(options: readonly BotCommandOption[]): boolean {
+  return options.some((o) => o.type === 'subcommand' || o.type === 'subcommand_group');
+}
+
+/** Where a draft of a command stands: the subcommand path written after it, and what comes next. */
+export interface CommandPath {
+  /** The groups and the subcommand written after the command's name, in order. */
+  path: string[];
+  /** Just after the last word of the head: `/name` and the path. */
+  headEnd: number;
+  /** The value options the arguments are written for; null while the path does not reach them. */
+  options: BotCommandOption[] | null;
+  /** While the path does not reach them: the subcommands or groups to write next. */
+  next: BotCommandOption[];
+  /** The next step being typed at the end of the text, and where it starts; null when none is. */
+  partial: { text: string; start: number } | null;
+}
+
+/**
+ * Reads the head of a draft of `command`: `/name`, then for a command with
+ * subcommands the words of its path (`/music queue add`), each a known step of
+ * the level before, separated by spaces. A word at the very end is still being
+ * typed (`partial`) unless the text is `final`, as when it is sent. Null when
+ * the text is not this command.
+ */
+export function commandPath(text: string, command: BotCommandListing, final = false): CommandPath | null {
+  const name = '/' + command.name;
+  if (text.slice(0, name.length).toLowerCase() !== name) return null;
+  if (name.length < text.length && !/\s/.test(text[name.length]!)) return null;
+  const path: string[] = [];
+  let headEnd = name.length;
+  let level = command.options;
+  while (holdsSubcommands(level)) {
+    const stuck = (partial: CommandPath['partial'] = null): CommandPath => ({ path, headEnd, options: null, next: level, partial });
+    let start = headEnd;
+    while (start < text.length && /[^\S\n]/.test(text[start]!)) start++;
+    if (start === headEnd) return stuck();
+    let end = start;
+    while (end < text.length && /[a-z0-9_-]/i.test(text[end]!)) end++;
+    const word = text.slice(start, end);
+    if (end === text.length && !final) return stuck({ text: word, start });
+    if (end < text.length && !/\s/.test(text[end]!)) return stuck();
+    const step = level.find((o) => o.name === word.toLowerCase());
+    if (!step) return stuck();
+    path.push(step.name);
+    headEnd = end;
+    if (step.type === 'subcommand') return { path, headEnd, options: step.options ?? [], next: [], partial: null };
+    level = step.options ?? [];
+  }
+  return { path, headEnd, options: level, next: [], partial: null };
+}
+
+/**
+ * Where a draft's arguments start and which options they are written for:
+ * after the head and one space. Null while the head is not complete or no
+ * space follows it yet.
+ */
+function argumentsOf(text: string, command: BotCommandListing): { start: number; headEnd: number; options: BotCommandOption[] } | null {
+  const at = commandPath(text, command);
+  if (!at || !at.options || at.headEnd >= text.length || !/\s/.test(text[at.headEnd]!)) return null;
+  return { start: at.headEnd + 1, headEnd: at.headEnd, options: at.options };
+}
+
+/** One row of the command list: a command, or one subcommand of it with its path. */
+export interface CommandRow {
+  command: BotCommandListing;
+  path: string[];
+  description: string;
+  /** The value options the row's command or subcommand takes. */
+  options: BotCommandOption[];
+}
+
+/** The rows a command makes in the command list: itself, or each of its subcommands. */
+export function commandRows(command: BotCommandListing): CommandRow[] {
+  if (!holdsSubcommands(command.options)) {
+    return [{ command, path: [], description: command.description, options: command.options }];
+  }
+  return command.options.flatMap((step) => step.type === 'subcommand'
+    ? [{ command, path: [step.name], description: step.description, options: step.options ?? [] }]
+    : (step.options ?? []).map((leaf) => ({
+      command, path: [step.name, leaf.name], description: leaf.description, options: leaf.options ?? [],
+    })));
+}
+
 /**
  * What the chat knows that typed values may name: its people, and its space's
  * roles and channels (none in a DM).
@@ -146,7 +231,7 @@ function setOptionValue(options: OptionValues, def: BotCommandOption, raw: strin
  * a title or a message may be any length. `rest` is what follows the last pair.
  */
 export function readNamedPairs(
-  command: BotCommandListing,
+  command: Pick<BotCommandListing, 'options'>,
   text: string,
   context: CommandArgContext = NO_CONTEXT,
 ): { options: OptionValues; rest: string } {
@@ -194,7 +279,7 @@ export function readNamedPairs(
  * has no string option to take it.
  */
 export function parseCommandArgs(
-  command: BotCommandListing,
+  command: Pick<BotCommandListing, 'options'>,
   rest: string,
   context: CommandArgContext = NO_CONTEXT,
 ): { ok: true; options: OptionValues } | { ok: false; extra: string } {
@@ -211,8 +296,10 @@ export function parseCommandArgs(
  * yet, the required ones first. A `name:` inside a quoted value names nothing.
  */
 export function remainingOptions(command: BotCommandListing, text: string): BotCommandOption[] {
+  const args = argumentsOf(text, command);
+  if (!args) return [];
   const written = new Set(argumentFrames(text, command).map((f) => text.slice(f.nameStart, f.colonAt).toLowerCase()));
-  const missing = command.options.filter((o) => !written.has(o.name));
+  const missing = args.options.filter((o) => !written.has(o.name));
   return [...missing.filter((o) => o.required), ...missing.filter((o) => !o.required)];
 }
 
@@ -231,8 +318,11 @@ export function suggestOptions(
   if (!head) return null;
   const name = head[1]!.toLowerCase();
   const command = picked && picked.name === name ? picked : commands.find((c) => c.name === name);
-  if (!command || command.options.length === 0) return null;
-  const tail = value.slice(head[0].length);
+  if (!command) return null;
+  // The options of the command, or of the subcommand its path names.
+  const args = argumentsOf(value, command);
+  if (!args || args.options.length === 0) return null;
+  const tail = value.slice(args.start);
   // The word being typed starts after the last whitespace of any kind.
   let cut = tail.length;
   while (cut > 0 && !/\s/.test(tail[cut - 1]!)) cut--;
@@ -240,8 +330,61 @@ export function suggestOptions(
   if (partial.includes(':')) return null;
   // `name: ` with no value yet: its values are offered, not more options.
   if (/(?:^|\s)[a-z0-9_-]+:\s+$/i.test(tail)) return null;
-  if (readNamedPairs(command, tail.slice(0, cut), context).rest.length > 0) return null;
-  return { command, query: partial.toLowerCase(), startIndex: head[0].length + cut, selectedIndex: 0, touched: false };
+  if (readNamedPairs(args, tail.slice(0, cut), context).rest.length > 0) return null;
+  return { command, query: partial.toLowerCase(), startIndex: args.start + cut, selectedIndex: 0, touched: false };
+}
+
+/** The subcommand popover: the next step of a command's path, typed at the end of the draft. */
+export interface SubcommandSuggest {
+  command: BotCommandListing;
+  /** What has been typed of the step so far (lowercase). */
+  query: string;
+  /** Where that partial step starts in the draft. */
+  startIndex: number;
+  selectedIndex: number;
+  /** An arrow key moved the selection: only then does Enter pick it instead of sending. */
+  touched: boolean;
+}
+
+/**
+ * The subcommand popover state for a draft, or null when none applies: the
+ * text must start with a known command that has subcommands and a space, and
+ * end while the next step of its path is being written (`/music `, `/music qu`,
+ * `/music queue `).
+ */
+export function suggestSubcommand(
+  value: string,
+  commands: BotCommandListing[],
+  picked: BotCommandListing | null,
+): SubcommandSuggest | null {
+  const name = draftCommandName(value);
+  if (name === null) return null;
+  const command = picked && picked.name === name ? picked : commands.find((c) => c.name === name);
+  if (!command) return null;
+  const at = commandPath(value, command);
+  if (!at || at.options || !at.partial) return null;
+  return { command, query: at.partial.text.toLowerCase(), startIndex: at.partial.start, selectedIndex: 0, touched: false };
+}
+
+/** The steps the subcommand popover offers: those of the next level whose names start with what is typed. */
+export function subcommandMatches(suggest: SubcommandSuggest, text: string): BotCommandOption[] {
+  const at = commandPath(text, suggest.command);
+  return (at?.next ?? []).filter((o) => o.name.startsWith(suggest.query));
+}
+
+/**
+ * The draft a picked command or subcommand starts: its head (`/music queue
+ * add`), then its required options as `name:` ready to be filled in, spaced as
+ * the composer spaces arguments. The caret goes into the first required
+ * option's slot, or to the end when there is none.
+ */
+export function headDraft(command: BotCommandListing, path: readonly string[], options: readonly BotCommandOption[]): { text: string; caret: number } {
+  const required = options.filter((o) => o.required);
+  const written = ['/' + command.name, ...path].join(' ') + ' ' + required.map((o) => o.name + ':').join(' ');
+  const { text } = spaceArguments(written, command, written.length);
+  const first = argumentFrames(text, command)[0];
+  const caret = required.length > 0 && first ? first.colonAt + 1 + VALUE_GAP.length : text.length;
+  return { text, caret };
 }
 
 /** The value popover of a typed option: which option, and what of its value is typed so far. */
@@ -285,22 +428,24 @@ export function suggestValue(
   const name = head[1]!.toLowerCase();
   const command = picked && picked.name === name ? picked : commands.find((c) => c.name === name);
   if (!command) return null;
-  const tail = value.slice(head[0].length);
+  const args = argumentsOf(value, command);
+  if (!args) return null;
+  const tail = value.slice(args.start);
   // The option being filled is the last `name:` of the text, its value written
   // right after the colon or after its gap (`who:bo`, `who: bo`, VALUE_GAP).
   const word = /(^|\s)([a-z0-9_-]+):([^\S\n]{0,2})(\S*)$/i.exec(tail);
-  if (!word) return suggestSpacedName(command, tail, head[0].length, context);
-  const option = command.options.find((o) => o.name === word[2]!.toLowerCase());
+  if (!word) return suggestSpacedName(command, args.options, tail, args.start, context);
+  const option = args.options.find((o) => o.name === word[2]!.toLowerCase());
   if (!option || !offersValues(option)) return null;
   const partial = word[4]!;
   if (partial.startsWith('"') || partial.startsWith('<')) return null;
   const before = word.index + word[1]!.length;
-  if (readNamedPairs(command, tail.slice(0, before), context).rest.length > 0) return null;
+  if (readNamedPairs(args, tail.slice(0, before), context).rest.length > 0) return null;
   return {
     command,
     option,
     query: partial.replace(/^[#@]/, '').toLowerCase(),
-    startIndex: head[0].length + before + word[2]!.length + 1 + word[3]!.length,
+    startIndex: args.start + before + word[2]!.length + 1 + word[3]!.length,
     selectedIndex: 0,
     touched: false,
   };
@@ -315,6 +460,7 @@ export function suggestValue(
  */
 function suggestSpacedName(
   command: BotCommandListing,
+  options: BotCommandOption[],
   tail: string,
   offset: number,
   context: CommandArgContext,
@@ -324,7 +470,7 @@ function suggestSpacedName(
   for (let m = named.exec(tail); m; m = named.exec(tail)) last = m;
   if (!last) return null;
   const name = last[2]!.toLowerCase();
-  const option = command.options.find((o) => o.name === name);
+  const option = options.find((o) => o.name === name);
   if (!option || !NAMED_TYPES.has(option.type)) return null;
   const before = last.index + last[1]!.length;
   const colonEnd = before + name.length + 1;
@@ -334,7 +480,7 @@ function suggestSpacedName(
   if (!/\s\S/.test(typed) || /\s$/.test(typed) || typed.includes('\n') || typed.startsWith('"') || typed.startsWith('<')) return null;
   const query = typed.replace(/^[#@]/, '').toLowerCase();
   if (!namesOfType(option, context).some((n) => n.toLowerCase().startsWith(query))) return null;
-  if (readNamedPairs(command, tail.slice(0, before), context).rest.length > 0) return null;
+  if (readNamedPairs({ options }, tail.slice(0, before), context).rest.length > 0) return null;
   return { command, option, query, startIndex: offset + colonEnd + gap, selectedIndex: 0, touched: false };
 }
 
@@ -365,16 +511,16 @@ export function argumentFrames(
   units: ReadonlyArray<{ start: number; end: number }> = [],
   context?: CommandArgContext,
 ): ArgumentFrame[] {
-  const head = new RegExp('^/' + command.name + '\\s', 'i').exec(text);
-  if (!head || command.options.length === 0) return [];
-  const defs = new Map(command.options.map((o) => [o.name, o] as const));
-  const names = command.options.map((o) => o.name).join('|');
+  const args = argumentsOf(text, command);
+  if (!args || args.options.length === 0) return [];
+  const defs = new Map(args.options.map((o) => [o.name, o] as const));
+  const names = args.options.map((o) => o.name).join('|');
   const named = new RegExp('(^|\\s)(' + names + '):', 'gi');
   const starts: Array<{ nameStart: number; colonAt: number; name: string }> = [];
   // A quoted value runs to its closing quote, whatever it holds; so does the parser.
   let quotedUntil = 0;
   for (let m = named.exec(text); m; m = named.exec(text)) {
-    if (m.index + m[1]!.length < head[0].length) continue;
+    if (m.index + m[1]!.length < args.start) continue;
     const nameStart = m.index + m[1]!.length;
     if (nameStart < quotedUntil) continue;
     // A `name:` inside a mention's shown name is part of the mention.
@@ -422,7 +568,7 @@ export function argumentFrames(
  */
 export function spaceArguments(text: string, command: BotCommandListing, caret: number): { text: string; caret: number } {
   const frames = argumentFrames(text, command);
-  const head = /^\/[a-z0-9_-]+/i.exec(text);
+  const head = commandPath(text, command);
   if (!head || frames.length === 0) return { text, caret };
   const isSpace = (char: string | undefined) => char !== undefined && /[^\S\n]/.test(char);
   // `caretAt`: where a caret in the run goes, as an offset into `insert`; null
@@ -434,7 +580,7 @@ export function spaceArguments(text: string, command: BotCommandListing, caret: 
     let start = frame.nameStart;
     while (isSpace(text[start - 1])) start--;
     if (frame.nameStart > spacedUpTo && start > 0 && text[start - 1] !== '\n') {
-      edits.push({ start, end: frame.nameStart, insert: start === head[0].length ? HEAD_GAP : ARG_SEPARATOR, caretAt: null });
+      edits.push({ start, end: frame.nameStart, insert: start === head.headEnd ? HEAD_GAP : ARG_SEPARATOR, caretAt: null });
     }
     // After the colon: the value's gap, and the separator too when no value follows.
     const from = frame.colonAt + 1;

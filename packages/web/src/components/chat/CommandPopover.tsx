@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import type { BotCommandListing, BotCommandOption } from '@backspace/shared';
+import type { BotCommandOption } from '@backspace/shared';
+import type { CommandRow } from '../../utils/commandArgs';
 import { Avatar } from '../ui/Avatar';
 import { BotBadge } from '../ui/BotBadge';
 import { useUIStore } from '../../stores/uiStore';
@@ -64,10 +65,14 @@ function rowClass(mobile: boolean, selected: boolean): string {
 }
 
 interface CommandPopoverProps {
-  /** The matching commands, already filtered; the composer owns the list so its keys and this popover index the same rows. */
-  commands: BotCommandListing[];
+  /**
+   * The matching commands, one row per command or per subcommand of one,
+   * already filtered; the composer owns the list so its keys and this popover
+   * index the same rows.
+   */
+  commands: CommandRow[];
   selectedIndex: number;
-  onSelect: (command: BotCommandListing) => void;
+  onSelect: (row: CommandRow) => void;
   anchorRef: AnchorRef;
   /** Origin of the chat ('' is home): the listing's avatar filenames are uploads of that instance. */
   origin: string;
@@ -87,33 +92,36 @@ function CommandList({ commands, selectedIndex, onSelect, origin }: Omit<Command
       <div className="px-2 py-1.5 text-[11px] font-bold text-txt-tertiary uppercase tracking-wider">
         {t('chat:commands.title')}
       </div>
-      {commands.map((command, i) => (
-        <div
-          key={command.id}
-          ref={i === selectedIndex ? selectedRef : undefined}
-          onClick={() => onSelect(command)}
-          className={rowClass(mobile, i === selectedIndex)}
-        >
-          <Avatar
-            src={uploadUrlOn(command.bot.avatar, origin)}
-            name={command.bot.displayName || command.bot.username}
-            size={mobile ? 28 : 24}
-            avatarColor={command.bot.avatarColor}
-          />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className={`${mobile ? 'text-[15px]' : 'text-[14px]'} font-medium text-txt-primary shrink-0`}>
-                {`/${command.name}`}
-              </span>
-              <span className="text-[12px] text-txt-tertiary truncate">{command.description}</span>
-            </div>
-            <div className="flex items-center gap-1.5 mt-0.5">
-              <span className="text-[11px] text-txt-tertiary truncate">{`@${command.bot.username}`}</span>
-              <BotBadge />
+      {commands.map((row, i) => {
+        const { command } = row;
+        return (
+          <div
+            key={[command.id, ...row.path].join(' ')}
+            ref={i === selectedIndex ? selectedRef : undefined}
+            onClick={() => onSelect(row)}
+            className={rowClass(mobile, i === selectedIndex)}
+          >
+            <Avatar
+              src={uploadUrlOn(command.bot.avatar, origin)}
+              name={command.bot.displayName || command.bot.username}
+              size={mobile ? 28 : 24}
+              avatarColor={command.bot.avatarColor}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className={`${mobile ? 'text-[15px]' : 'text-[14px]'} font-medium text-txt-primary shrink-0`}>
+                  {['/' + command.name, ...row.path].join(' ')}
+                </span>
+                <span className="text-[12px] text-txt-tertiary truncate">{row.description}</span>
+              </div>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="text-[11px] text-txt-tertiary truncate">{`@${command.bot.username}`}</span>
+                <BotBadge />
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </>
   );
 }
@@ -176,6 +184,51 @@ export function CommandOptionPopover({ options, selectedIndex, onSelect, anchorR
   return (
     <PopoverShell anchorRef={anchorRef} enabled>
       <OptionList options={options} selectedIndex={selectedIndex} onSelect={onSelect} />
+    </PopoverShell>
+  );
+}
+
+interface CommandSubcommandPopoverProps {
+  /** The next step of the command's path: subcommands, or groups of them. */
+  steps: BotCommandOption[];
+  selectedIndex: number;
+  onSelect: (step: BotCommandOption) => void;
+  anchorRef: AnchorRef;
+}
+
+/** The subcommands (or groups) a command offers next, after `/name ` or `/name group `. */
+export function CommandSubcommandPopover({ steps, selectedIndex, onSelect, anchorRef }: CommandSubcommandPopoverProps) {
+  const { t } = useTranslation(['chat']);
+  const mobile = useUIStore((s) => s.isMobile);
+  const selectedRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    selectedRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [selectedIndex]);
+
+  if (steps.length === 0) return null;
+
+  return (
+    <PopoverShell anchorRef={anchorRef} enabled>
+      <div className="px-2 py-1.5 text-[11px] font-bold text-txt-tertiary uppercase tracking-wider">
+        {t('chat:commands.subcommandsTitle')}
+      </div>
+      {steps.map((step, i) => (
+        <div
+          key={step.name}
+          ref={i === selectedIndex ? selectedRef : undefined}
+          onClick={() => onSelect(step)}
+          className={rowClass(mobile, i === selectedIndex)}
+        >
+          <span className={`${mobile ? 'text-[15px]' : 'text-[14px]'} font-medium text-txt-primary shrink-0`}>
+            {step.name}
+          </span>
+          <span className="text-[12px] text-txt-tertiary truncate flex-1 min-w-0">{step.description}</span>
+          {step.type === 'subcommand_group' && (
+            <span className="text-[11px] text-txt-tertiary shrink-0">{t('chat:commands.group')}</span>
+          )}
+        </div>
+      ))}
     </PopoverShell>
   );
 }

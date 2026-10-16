@@ -167,7 +167,11 @@
     "extraText": "Dieser Befehl nimmt keinen freien Text, aber „{{text}}“ bleibt übrig. Erst die Optionen, dann der Text",
     "invalidOption": "Der Wert von {{option}} passt nicht zu diesem Befehl.",
     "optionsTitle": "Parameter",
-    "required": "erforderlich"
+    "required": "erforderlich",
+    "subcommandsTitle": "Unterbefehle",
+    "group": "Gruppe",
+    "chooseSubcommand": "Wähle einen Unterbefehl: {{names}}",
+    "subcommandRefused": "Der Bot bietet diesen Unterbefehl nicht an. Wähle einen aus der Liste"
   },
   "embed": {
     "loadAction": "Zum Laden klicken",

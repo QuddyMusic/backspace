@@ -2260,7 +2260,15 @@ export interface RegenerateBotTokenResponse {
  * The value types of a slash command option. `user`, `channel` and `role` take
  * an id; the bot also gets the named object in `BotInteraction.resolved`.
  */
-export type BotCommandOptionType = 'string' | 'integer' | 'number' | 'boolean' | 'user' | 'channel' | 'role';
+export type BotCommandValueType = 'string' | 'integer' | 'number' | 'boolean' | 'user' | 'channel' | 'role';
+
+/**
+ * The types of a command's options: a value type, or a step of a command's
+ * path. A `subcommand` holds value options of its own; a `subcommand_group`
+ * holds subcommands. A command, or a group, lists either steps or values,
+ * never both, so a path is at most two words (`/music queue add`).
+ */
+export type BotCommandOptionType = BotCommandValueType | 'subcommand' | 'subcommand_group';
 
 export interface BotCommandChoice {
   name: string;
@@ -2288,13 +2296,24 @@ export interface BotCommandOption {
   maxLength?: number;
   /** Channel options: the channel types accepted; absent means every type. */
   channelTypes?: ChannelType[];
+  /**
+   * A `subcommand`'s value options, or a `subcommand_group`'s subcommands.
+   * Absent on value options; a subcommand without options has none.
+   */
+  options?: BotCommandOption[];
 }
+
+/** An option as a bot registers it: `required` may be left out (false); subcommands never have it. */
+export type BotCommandOptionDefinition = Omit<BotCommandOption, 'required' | 'options'> & {
+  required?: boolean;
+  options?: BotCommandOptionDefinition[];
+};
 
 /** What a bot sends when registering a command. */
 export interface BotCommandDefinition {
   name: string;
   description: string;
-  options?: Array<Omit<BotCommandOption, 'required'> & { required?: boolean }>;
+  options?: BotCommandOptionDefinition[];
 }
 
 export interface BotCommand {
@@ -2339,6 +2358,12 @@ export interface BotInteractionResolved {
 export interface BotInteraction {
   id: string;
   command: string;
+  /**
+   * For a command with subcommands: the path invoked, a subcommand
+   * (`["play"]`) or a group and its subcommand (`["queue", "add"]`).
+   * `options` are that subcommand's. Absent for a command without subcommands.
+   */
+  subcommand?: string[];
   options: Record<string, BotInteractionOptionValue>;
   /** Objects named by `user`, `channel` and `role` options; absent when there are none. */
   resolved?: BotInteractionResolved;
@@ -2354,6 +2379,8 @@ export interface BotInteraction {
 export interface CreateInteractionRequest {
   botId: string;
   command: string;
+  /** Required for a command with subcommands, refused for one without: the path to a subcommand. */
+  subcommand?: string[];
   options?: Record<string, BotInteractionOptionValue>;
   /** Exactly one of channelId and dmChannelId. */
   channelId?: string;

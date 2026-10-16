@@ -5,6 +5,7 @@ import type {
   BotCommandChoice,
   BotCommandOption,
   BotCommandOptionType,
+  BotCommandValueType,
   BotCommandsResponse,
   ChannelType,
   SetBotCommandsRequest,
@@ -20,8 +21,12 @@ const NAME_RE = /^[a-z0-9_-]{1,32}$/;
 const DESCRIPTION_MAX = 100;
 const MAX_COMMANDS = 100;
 const MAX_OPTIONS = 10;
+const MAX_SUBCOMMANDS = 25;
 const MAX_CHOICES = 25;
-const OPTION_TYPES: readonly BotCommandOptionType[] = ['string', 'integer', 'number', 'boolean', 'user', 'channel', 'role'];
+const VALUE_TYPES: readonly BotCommandValueType[] = ['string', 'integer', 'number', 'boolean', 'user', 'channel', 'role'];
+/** The steps of a command's path: a subcommand holds value options, a group holds subcommands. */
+const STEP_TYPES: readonly BotCommandOptionType[] = ['subcommand', 'subcommand_group'];
+const OPTION_TYPES: readonly BotCommandOptionType[] = [...VALUE_TYPES, ...STEP_TYPES];
 const CHANNEL_TYPES: readonly ChannelType[] = ['text', 'voice'];
 /** The option types that may list choices. */
 const CHOICE_TYPES: ReadonlySet<BotCommandOptionType> = new Set(['string', 'integer', 'number']);
@@ -122,10 +127,35 @@ function outsideLimits(option: BotCommandOption, value: string | number): string
   return null;
 }
 
-function validateOptions(raw: unknown, path: string): BotCommandOption[] | Problem {
-  if (raw === undefined) return [];
+/**
+ * Where a list of options sits: right under a command (values, or the steps of
+ * a path), in a group (subcommands only) or in a subcommand (values only).
+ */
+type Level = 'command' | 'group' | 'subcommand';
+
+function isStep(item: unknown): boolean {
+  return isRecord(item) && STEP_TYPES.includes(item.type as BotCommandOptionType);
+}
+
+/**
+ * A command's, a group's or a subcommand's options. A list holds either value
+ * options (at most 10; required ones first) or the steps of a path (at most
+ * 25 subcommands and groups), never both: a group holds subcommands, a
+ * subcommand holds values, so a path is at most two words.
+ */
+function validateOptions(raw: unknown, path: string, level: Level = 'command'): BotCommandOption[] | Problem {
+  if (raw === undefined) {
+    return level === 'group' ? { field: path, reason: `must hold 1 to ${MAX_SUBCOMMANDS} subcommands` } : [];
+  }
   if (!Array.isArray(raw)) return { field: path, reason: 'must be an array' };
-  if (raw.length > MAX_OPTIONS) return { field: path, reason: `at most ${MAX_OPTIONS} options` };
+  const steps = level === 'group' || (level === 'command' && raw.some(isStep));
+  if (steps) {
+    if (raw.length < (level === 'group' ? 1 : 0) || raw.length > MAX_SUBCOMMANDS) {
+      return { field: path, reason: level === 'group' ? `must hold 1 to ${MAX_SUBCOMMANDS} subcommands` : `at most ${MAX_SUBCOMMANDS} subcommands and groups` };
+    }
+  } else if (raw.length > MAX_OPTIONS) {
+    return { field: path, reason: `at most ${MAX_OPTIONS} options` };
+  }
 
   const seen = new Set<string>();
   const out: BotCommandOption[] = [];
@@ -145,13 +175,35 @@ function validateOptions(raw: unknown, path: string): BotCommandOption[] | Probl
       return { field: `${here}.type`, reason: `must be one of ${OPTION_TYPES.join(', ')}` };
     }
     const type = item.type as BotCommandOptionType;
+    if (level === 'group' && type !== 'subcommand') {
+      return { field: `${here}.type`, reason: 'a group holds subcommands only' };
+    }
+    if (level === 'subcommand' && STEP_TYPES.includes(type)) {
+      return { field: `${here}.type`, reason: 'a subcommand holds value options only' };
+    }
+    if (steps !== STEP_TYPES.includes(type)) {
+      return { field: `${here}.type`, reason: 'subcommands and groups cannot sit beside value options' };
+    }
     if (item.required !== undefined && typeof item.required !== 'boolean') {
       return { field: `${here}.required`, reason: 'must be a boolean' };
     }
+
+    if (steps) {
+      if (item.required === true) return { field: `${here}.required`, reason: `not allowed for a ${type}` };
+      if (item.options !== undefined && !Array.isArray(item.options)) return { field: `${here}.options`, reason: 'must be an array' };
+      for (const key of ['choices', 'strictChoices', 'minValue', 'maxValue', 'minLength', 'maxLength', 'channelTypes'] as const) {
+        if (item[key] !== undefined) return { field: `${here}.${key}`, reason: `not allowed for a ${type}` };
+      }
+      const inner = validateOptions(item.options, `${here}.options`, type === 'subcommand' ? 'subcommand' : 'group');
+      if (isProblem(inner)) return inner;
+      out.push({ name: item.name, description, type, required: false, options: inner });
+      continue;
+    }
+
+    if (item.options !== undefined) return { field: `${here}.options`, reason: `not allowed for a ${type} option` };
     const required = item.required === true;
     if (!required) sawOptional = true;
     else if (sawOptional) return { field: `${here}.required`, reason: 'required options must come before optional ones' };
-
     const option: BotCommandOption = { name: item.name, description, type, required };
     const bounds = validateBounds(item, type, here);
     if (isProblem(bounds)) return bounds;

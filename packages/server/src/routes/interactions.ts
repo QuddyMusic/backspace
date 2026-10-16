@@ -191,6 +191,40 @@ function checkOptions(defs: BotCommandOption[], given: unknown, chat: Chat, invo
   return Object.keys(resolved).length > 0 ? { options: out, resolved } : { options: out };
 }
 
+/** Whether a command's (or a group's) options are the steps of a path rather than values. */
+function holdsSteps(defs: BotCommandOption[]): boolean {
+  return defs.some((d) => d.type === 'subcommand' || d.type === 'subcommand_group');
+}
+
+/**
+ * The value options an invocation is checked against: the command's own, or,
+ * for a command with subcommands, those of the subcommand its `subcommand`
+ * path names (a subcommand, or a group and one of its subcommands). A path is
+ * required exactly when the command has subcommands, and must end at one.
+ */
+function leafOptions(defs: BotCommandOption[], given: unknown): { path: string[]; options: BotCommandOption[] } | Problem {
+  const steps = holdsSteps(defs);
+  if (given === undefined || given === null || (Array.isArray(given) && given.length === 0)) {
+    if (!steps) return { path: [], options: defs };
+    return { field: 'subcommand', reason: `is required: one of ${defs.map((d) => d.name).join(', ')}` };
+  }
+  if (!steps) return { field: 'subcommand', reason: 'this command has no subcommands' };
+  if (!Array.isArray(given) || given.length > 2 || given.some((word) => typeof word !== 'string')) {
+    return { field: 'subcommand', reason: 'must be a list of one or two names' };
+  }
+  const path = given as string[];
+  const first = defs.find((d) => d.name === path[0]);
+  if (!first) return { field: 'subcommand', reason: `must start with one of ${defs.map((d) => d.name).join(', ')}` };
+  if (first.type === 'subcommand') {
+    if (path.length !== 1) return { field: 'subcommand', reason: `${first.name} is a subcommand, not a group` };
+    return { path, options: first.options ?? [] };
+  }
+  const inGroup = first.options ?? [];
+  const leaf = path.length === 2 ? inGroup.find((d) => d.name === path[1]) : undefined;
+  if (!leaf) return { field: 'subcommand', reason: `${first.name} needs one of ${inGroup.map((d) => d.name).join(', ')}` };
+  return { path, options: leaf.options ?? [] };
+}
+
 /**
  * Slash command invocation. A user picks a command of a bot that is in the
  * chat; the server checks the user may write there and the values fit the
@@ -285,7 +319,9 @@ export async function interactionRoutes(app: FastifyInstance): Promise<void> {
     )).get();
     if (!definition) return sendError(reply, 404, 'command_not_found');
 
-    const checked = checkOptions(JSON.parse(definition.options) as BotCommandOption[], body.options, chat, request.userId);
+    const leaf = leafOptions(JSON.parse(definition.options) as BotCommandOption[], body.subcommand);
+    if (isProblem(leaf)) return sendError(reply, 400, 'validation_failed', { field: leaf.field, reason: leaf.reason });
+    const checked = checkOptions(leaf.options, body.options, chat, request.userId);
     if (isProblem(checked)) return sendError(reply, 400, 'validation_failed', { field: checked.field, reason: checked.reason });
 
     if (!connectionManager.hasLiveConnection(bot.id)) return sendError(reply, 409, 'bot_unavailable');
@@ -311,6 +347,7 @@ export async function interactionRoutes(app: FastifyInstance): Promise<void> {
     const interaction: BotInteraction = {
       id,
       command: definition.name,
+      ...(leaf.path.length > 0 ? { subcommand: leaf.path } : {}),
       options: checked.options,
       ...(checked.resolved ? { resolved: checked.resolved } : {}),
       user: sanitizeUser(caller),

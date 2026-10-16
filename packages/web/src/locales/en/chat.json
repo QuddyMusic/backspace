@@ -167,7 +167,11 @@
     "extraText": "This command takes no free text, but \"{{text}}\" is left over. Put the options first, the text last",
     "invalidOption": "The value of {{option}} does not fit this command.",
     "optionsTitle": "Parameters",
-    "required": "required"
+    "required": "required",
+    "subcommandsTitle": "Subcommands",
+    "group": "group",
+    "chooseSubcommand": "Choose a subcommand: {{names}}",
+    "subcommandRefused": "The bot does not offer this subcommand. Pick one from the list"
   },
   "embed": {
     "loadAction": "Click to load",
