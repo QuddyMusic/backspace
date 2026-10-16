@@ -342,8 +342,8 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     const command = picked && picked.name === name ? picked : chatCommands.find((c) => c.name === name);
     if (!command) return [];
     const units = mentionModel.parts.filter((p) => p.mention).map((p) => ({ start: p.start, end: p.start + p.text.length }));
-    return argumentFrames(mentionModel.text, command, units);
-  }, [draftText, chatCommands, mentionModel]);
+    return argumentFrames(mentionModel.text, command, units, commandContext);
+  }, [draftText, chatCommands, mentionModel, commandContext]);
 
   // The value popover's rows.
   const valueMatches = useMemo((): CommandValueCandidate[] => {
@@ -881,9 +881,12 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       }
     }
 
+    // Names typed by hand are read against the chat, so a name of several words
+    // stays one value. While a value is being typed only its list is offered.
     const commands = atEnd ? chatCommands : null;
-    setOptionSuggest(commands ? suggestOptions(wire, commands, pickedCommandRef.current) : null);
-    setValueSuggest(commands ? suggestValue(wire, commands, pickedCommandRef.current) : null);
+    const values = commands ? suggestValue(wire, commands, pickedCommandRef.current, commandContext) : null;
+    setValueSuggest(values);
+    setOptionSuggest(commands && !values ? suggestOptions(wire, commands, pickedCommandRef.current, commandContext) : null);
 
 
     handleTyping();

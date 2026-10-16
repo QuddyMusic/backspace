@@ -67,6 +67,38 @@ function idOf(def: BotCommandOption, raw: string, context: CommandArgContext): s
   return idByName(channels, (c) => [c.name], raw.replace(/^#/, '')) ?? raw;
 }
 
+/** The option types whose values name someone or something in the chat. */
+const NAMED_TYPES: ReadonlySet<BotCommandOption['type']> = new Set(['user', 'role', 'channel']);
+
+/** Every name a hand-written value of `def` (a user, role or channel option) may give, from the chat. */
+function namesOfType(def: BotCommandOption, context: CommandArgContext): string[] {
+  if (def.type === 'user') return context.users.flatMap((u) => [...u.names]);
+  if (def.type === 'role') return context.roles.map((r) => r.name.replace(/^@/, ''));
+  if (def.type === 'channel') {
+    return context.channels.filter((c) => !def.channelTypes || def.channelTypes.includes(c.type)).map((c) => c.name);
+  }
+  return [];
+}
+
+/**
+ * How far a user, role or channel value written by hand runs in `rest` (the
+ * text after its `name:`, up to the next option written by name) when it is
+ * several words that together name someone or something in the chat
+ * (`who:Bob Smith`, `where:#Big Voice`): the longest such run, within the
+ * line. Null when no run of several words does; the value is then one word.
+ */
+function spacedNameLength(def: BotCommandOption, rest: string, context: CommandArgContext): number | null {
+  if (!NAMED_TYPES.has(def.type) || rest.startsWith('"') || rest.startsWith('<')) return null;
+  const line = rest.split('\n')[0]!;
+  for (let end = line.length; end > 0; end--) {
+    if (end < line.length && !/\s/.test(line[end]!)) continue;
+    const candidate = line.slice(0, end).trimEnd();
+    if (!/\s/.test(candidate)) return null;
+    if (idOf(def, candidate, context) !== candidate) return candidate.length;
+  }
+  return null;
+}
+
 export interface OptionSuggest {
   command: BotCommandListing;
   /** What has been typed of the option name so far (lowercase). */
@@ -141,9 +173,13 @@ export function readNamedPairs(
       raw = (cut < 0 ? body : body.slice(0, cut)).trim();
       body = cut < 0 ? '' : body.slice(cut);
     } else {
+      // A user, role or channel may be named by several words; anything else is one word.
+      const cut = body.search(nextNamed);
+      const spaced = spacedNameLength(def, cut < 0 ? body : body.slice(0, cut), context);
       const space = body.search(/\s/);
-      raw = space < 0 ? body : body.slice(0, space);
-      body = space < 0 ? '' : body.slice(space);
+      const length = spaced ?? (space < 0 ? body.length : space);
+      raw = body.slice(0, length);
+      body = body.slice(length);
     }
     setOptionValue(options, def, raw, context);
     remaining = body.trim();
@@ -189,6 +225,7 @@ export function suggestOptions(
   value: string,
   commands: BotCommandListing[],
   picked: BotCommandListing | null,
+  context: CommandArgContext = NO_CONTEXT,
 ): OptionSuggest | null {
   const head = /^\/([a-z0-9_-]+)\s/i.exec(value);
   if (!head) return null;
@@ -203,7 +240,7 @@ export function suggestOptions(
   if (partial.includes(':')) return null;
   // `name: ` with no value yet: its values are offered, not more options.
   if (/(?:^|\s)[a-z0-9_-]+:\s+$/i.test(tail)) return null;
-  if (readNamedPairs(command, tail.slice(0, cut)).rest.length > 0) return null;
+  if (readNamedPairs(command, tail.slice(0, cut), context).rest.length > 0) return null;
   return { command, query: partial.toLowerCase(), startIndex: head[0].length + cut, selectedIndex: 0, touched: false };
 }
 
@@ -241,6 +278,7 @@ export function suggestValue(
   value: string,
   commands: BotCommandListing[],
   picked: BotCommandListing | null,
+  context: CommandArgContext = NO_CONTEXT,
 ): ValueSuggest | null {
   const head = /^\/([a-z0-9_-]+)\s/i.exec(value);
   if (!head) return null;
@@ -251,13 +289,13 @@ export function suggestValue(
   // The option being filled is the last `name:` of the text, its value written
   // right after the colon or after its gap (`who:bo`, `who: bo`, VALUE_GAP).
   const word = /(^|\s)([a-z0-9_-]+):([^\S\n]{0,2})(\S*)$/i.exec(tail);
-  if (!word) return null;
+  if (!word) return suggestSpacedName(command, tail, head[0].length, context);
   const option = command.options.find((o) => o.name === word[2]!.toLowerCase());
   if (!option || !offersValues(option)) return null;
   const partial = word[4]!;
   if (partial.startsWith('"') || partial.startsWith('<')) return null;
   const before = word.index + word[1]!.length;
-  if (readNamedPairs(command, tail.slice(0, before)).rest.length > 0) return null;
+  if (readNamedPairs(command, tail.slice(0, before), context).rest.length > 0) return null;
   return {
     command,
     option,
@@ -266,6 +304,38 @@ export function suggestValue(
     selectedIndex: 0,
     touched: false,
   };
+}
+
+/**
+ * The value popover while a user, role or channel name of several words is
+ * typed by hand (`who:Bob Sm`): the last option written by name, its value
+ * the start of a name in the chat, with a word begun after the space (just
+ * after a space the next options are offered, as after any value). `offset`
+ * is where `tail` starts in the draft.
+ */
+function suggestSpacedName(
+  command: BotCommandListing,
+  tail: string,
+  offset: number,
+  context: CommandArgContext,
+): ValueSuggest | null {
+  let last: RegExpExecArray | null = null;
+  const named = /(^|\s)([a-z0-9_-]+):/gi;
+  for (let m = named.exec(tail); m; m = named.exec(tail)) last = m;
+  if (!last) return null;
+  const name = last[2]!.toLowerCase();
+  const option = command.options.find((o) => o.name === name);
+  if (!option || !NAMED_TYPES.has(option.type)) return null;
+  const before = last.index + last[1]!.length;
+  const colonEnd = before + name.length + 1;
+  const gap = /^[^\S\n]{0,2}/.exec(tail.slice(colonEnd))![0].length;
+  const typed = tail.slice(colonEnd + gap);
+  // A space just typed asks for the next option; a second word started after it continues the name.
+  if (!/\s\S/.test(typed) || /\s$/.test(typed) || typed.includes('\n') || typed.startsWith('"') || typed.startsWith('<')) return null;
+  const query = typed.replace(/^[#@]/, '').toLowerCase();
+  if (!namesOfType(option, context).some((n) => n.toLowerCase().startsWith(query))) return null;
+  if (readNamedPairs(command, tail.slice(0, before), context).rest.length > 0) return null;
+  return { command, option, query, startIndex: offset + colonEnd + gap, selectedIndex: 0, touched: false };
 }
 
 /** One argument of a command draft as the composer frames it: its `name:` and its value. */
@@ -286,16 +356,18 @@ export interface ArgumentFrame {
  * `name:` and its value. A value is read as the parser reads it: one word, a
  * quoted run, or for a string option written without quotes, everything up
  * to the next option written by name. `units` are spans that count as one
- * word whatever they hold (a mention shown as `@Display name`).
+ * word whatever they hold (a mention shown as `@Display name`); with the chat's
+ * `context`, a user, role or channel named by several words is one value too.
  */
 export function argumentFrames(
   text: string,
   command: BotCommandListing,
   units: ReadonlyArray<{ start: number; end: number }> = [],
+  context?: CommandArgContext,
 ): ArgumentFrame[] {
   const head = new RegExp('^/' + command.name + '\\s', 'i').exec(text);
   if (!head || command.options.length === 0) return [];
-  const types = new Map(command.options.map((o) => [o.name, o.type] as const));
+  const defs = new Map(command.options.map((o) => [o.name, o] as const));
   const names = command.options.map((o) => o.name).join('|');
   const named = new RegExp('(^|\\s)(' + names + '):', 'gi');
   const starts: Array<{ nameStart: number; colonAt: number; name: string }> = [];
@@ -326,12 +398,13 @@ export function argumentFrames(
     if (rest.startsWith('"')) {
       const close = rest.indexOf('"', 1);
       length = close > 0 ? close + 1 : rest.length;
-    } else if (types.get(start.name) === 'string') {
+    } else if (defs.get(start.name)?.type === 'string') {
       length = rest.trimEnd().length;
     } else {
       const unit = units.find((u) => u.start === from);
+      const spaced = !unit && context ? spacedNameLength(defs.get(start.name)!, rest, context) : null;
       const space = rest.search(/\s/);
-      length = unit ? unit.end - unit.start : space < 0 ? rest.length : space;
+      length = unit ? unit.end - unit.start : spaced ?? (space < 0 ? rest.length : space);
     }
     return { nameStart: start.nameStart, colonAt: start.colonAt, valueStart, valueEnd: length > 0 ? from + length : valueStart };
   });

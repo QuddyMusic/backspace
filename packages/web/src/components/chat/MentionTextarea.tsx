@@ -25,32 +25,75 @@ interface Props extends TextareaHTMLAttributes<HTMLTextAreaElement> {
  * value's frame is drawn by inset shadows (top, bottom, left), which a value
  * wrapped over several lines carries along each line, and closed by an end
  * cap, a zero-width box after the value that draws the right padding and the
- * frame's rounded right end. That cap and the slot of an empty value are
+ * frame's rounded right end. How far those ends reach depends on the spaces
+ * around them (`capsuleRooms`), so plain spaces typed by hand never let two
+ * capsules overlap. That cap and the slot of an empty value are
  * empty inline spans: they take no width and break no line, and their
  * pseudo-element spans exactly the line's text height. The class strings
  * are written out whole so Tailwind finds them.
  */
-const NAME_BOX = 'bg-white/[0.10] text-txt-secondary rounded-l-md [box-shadow:-6px_0_0_0_rgba(255,255,255,0.10)]';
+const NAME_BOX = 'bg-white/[0.10] text-txt-secondary rounded-l-md [box-shadow:calc(-1*var(--reach))_0_0_0_rgba(255,255,255,0.10)]';
 const COLON = 'text-transparent';
 const VALUE_BOX = 'bg-white/[0.05] text-txt-primary [box-shadow:inset_1px_0_0_0_rgba(255,255,255,0.25),inset_0_1px_0_0_rgba(255,255,255,0.25),inset_0_-1px_0_0_rgba(255,255,255,0.25)]';
-const VALUE_END = 'relative after:content-[""] after:absolute after:inset-y-0 after:left-0 after:w-[6px] after:rounded-r-md after:border after:border-l-0 after:border-white/25 after:bg-white/[0.05]';
+const VALUE_END = 'relative after:content-[""] after:absolute after:inset-y-0 after:left-0 after:w-[var(--cap)] after:rounded-r-md after:border after:border-l-0 after:border-white/25 after:bg-white/[0.05]';
 const EMPTY_VALUE_BOX = 'relative after:content-[""] after:absolute after:inset-y-0 after:left-0 after:w-[var(--slot)] after:rounded-r-md after:border after:border-dashed after:border-white/25 after:bg-white/[0.03]';
 const MENTION = 'rounded bg-accent-primary/15 text-accent-primary';
 
-/** Rough widths of the spaces a draft holds, in em, to size an empty value's slot. */
+/** Rough widths of the spaces a draft holds, in em; a plain space is about 0.28em. */
 const SPACE_WIDTHS: Record<string, number> = { '\u2002': 0.5, '\u2003': 1, '\u2009': 0.2 };
+const spaceWidth = (run: string): number => [...run].reduce((w, c) => w + (SPACE_WIDTHS[c] ?? 0.28), 0);
+
+/** How far a capsule reaches past its text, in em: the name's left end, and the value's right end or empty slot. */
+interface CapsuleRoom { name: number; value: number }
+
+/** A capsule end at full size (about 6px), an empty slot between two capsules, and their gaps. */
+const END = 0.4;
+const SLOT = 1;
+const SLOT_AT_END = 2;
+const LINE_START = 0.25;
+const MIN_GAP = 0.12;
 
 /**
- * How wide the slot of an empty value is drawn: generous at the end of the
- * text, and inside the spacing that follows it otherwise, so it never runs
- * under the next argument's capsule.
+ * How far each capsule's ends reach into the spaces around it. With the
+ * composer's spacing they get their full size. A run of spaces typed by hand
+ * and left as is (a deletion is not respaced) can be narrower: between two
+ * capsules it is then shared in proportion, keeping a small gap, and next to
+ * other text an end takes what the run leaves, so capsules never run into
+ * each other or over the text beside them.
  */
-function slotWidth(text: string, frame: ArgumentFrame, next: ArgumentFrame | undefined): string {
-  const after = text.slice(frame.valueStart, next ? next.nameStart : text.length);
-  if (!next && after.trim() === '') return '2em';
-  let room = 0;
-  for (const char of after) room += SPACE_WIDTHS[char] ?? 0.28;
-  return Math.max(0.75, room - 1).toFixed(2) + 'em';
+function capsuleRooms(text: string, frames: readonly ArgumentFrame[]): CapsuleRoom[] {
+  const rooms = frames.map(() => ({ name: END, value: END }));
+  const shared = new Set<number>();
+  const isSpace = (char: string | undefined) => char !== undefined && /[^\S\n]/.test(char);
+  frames.forEach((frame, i) => {
+    const empty = frame.valueEnd === frame.valueStart;
+    let end = frame.valueEnd;
+    while (isSpace(text[end])) end++;
+    const width = spaceWidth(text.slice(frame.valueEnd, end));
+    const next = frames[i + 1];
+    if (next && end === next.nameStart) {
+      // Shared with the next capsule's name.
+      const want = (empty ? SLOT : END) + END;
+      const full = want + (empty ? 0.6 : 0.7);
+      const k = width >= full ? 1 : Math.min(1, Math.max(0, width - MIN_GAP) / want);
+      rooms[i]!.value = empty && width >= full ? width - END - 0.6 : (empty ? SLOT : END) * k;
+      rooms[i + 1]!.name = END * k;
+      shared.add(i + 1);
+    } else if (end >= text.length || text[end] === '\n') {
+      rooms[i]!.value = empty ? SLOT_AT_END : END;
+    } else {
+      rooms[i]!.value = Math.min(empty ? SLOT : END, Math.max(0, width - MIN_GAP));
+    }
+  });
+  frames.forEach((frame, i) => {
+    if (shared.has(i)) return;
+    let start = frame.nameStart;
+    while (isSpace(text[start - 1])) start--;
+    rooms[i]!.name = start === 0 || text[start - 1] === '\n'
+      ? LINE_START
+      : Math.min(END, Math.max(0, spaceWidth(text.slice(start, frame.nameStart)) - 0.25));
+  });
+  return rooms;
 }
 
 type Region = 'name' | 'colon' | 'value';
@@ -101,9 +144,11 @@ export function MentionTextarea({ model, textareaRef, mentionAnchorRef, mentionS
     cuts.add(frame.valueStart);
     cuts.add(frame.valueEnd);
   }
+  const rooms = capsuleRooms(model.text, frames);
+  const em = (n: number) => n.toFixed(3) + 'em';
   const emptySlots = new Map<number, string>();
   frames.forEach((frame, i) => {
-    if (frame.valueEnd === frame.valueStart) emptySlots.set(frame.valueStart, slotWidth(model.text, frame, frames[i + 1]));
+    if (frame.valueEnd === frame.valueStart) emptySlots.set(frame.valueStart, em(rooms[i]!.value));
   });
   const slot = (at: number) => (
     <span key={`empty-${at}`} className={EMPTY_VALUE_BOX} style={{ '--slot': emptySlots.get(at) } as CSSProperties} />
@@ -111,12 +156,17 @@ export function MentionTextarea({ model, textareaRef, mentionAnchorRef, mentionS
 
   // The pieces of one capsule half are wrapped together, so its frame is drawn once around them.
   const pieces: ReactNode[] = [];
-  let group: { key: string; region: Region; children: ReactNode[] } | null = null;
+  let group: { key: string; frame: number; region: Region; children: ReactNode[] } | null = null;
   const flush = () => {
     if (!group) return;
+    const room = rooms[group.frame]!;
     pieces.push(group.region === 'value'
-      ? <span key={group.key} className={VALUE_BOX}>{group.children}<span className={VALUE_END} /></span>
-      : <span key={group.key} className={NAME_BOX}>{group.children}</span>);
+      ? <span key={group.key} className={VALUE_BOX}>
+          {group.children}<span className={VALUE_END} style={{ '--cap': em(room.value) } as CSSProperties} />
+        </span>
+      : <span key={group.key} className={NAME_BOX} style={{ '--reach': em(room.name) } as CSSProperties}>
+          {group.children}
+        </span>);
     group = null;
   };
   model.parts.forEach((part, index) => {
@@ -137,7 +187,7 @@ export function MentionTextarea({ model, textareaRef, mentionAnchorRef, mentionS
       const key = at ? `${at.frame}-${at.region === 'value' ? 'value' : 'name'}` : null;
       if (group && group.key !== key) flush();
       if (!at) { pieces.push(piece); continue; }
-      group ??= { key: key!, region: at.region === 'value' ? 'value' : 'name', children: [] };
+      group ??= { key: key!, frame: at.frame, region: at.region === 'value' ? 'value' : 'name', children: [] };
       group.children.push(piece);
     }
   });

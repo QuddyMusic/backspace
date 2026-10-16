@@ -331,3 +331,47 @@ describe('spaceArguments', () => {
     expect(remainingOptions(ban, want).map((o) => o.name)).toEqual(['who']);
   });
 });
+
+describe('names of several words typed by hand', () => {
+  const kick = listing('kick', [
+    option('who', 'user', true),
+    { ...option('where', 'channel'), channelTypes: ['voice'] },
+    option('group', 'role'),
+    option('times', 'integer'),
+    option('reason', 'string'),
+  ]);
+  const context: CommandArgContext = {
+    users: [{ id: 'u1', names: ['bob', 'Bob Smith'] }, { id: 'u2', names: ['ann', 'Ann Lee'] }],
+    roles: [{ id: 'r1', name: 'Night Shift' }],
+    channels: [{ id: 'c1', name: 'Big Voice', type: 'voice' }, { id: 'c2', name: 'Big Text', type: 'text' }],
+  };
+
+  it('reads a run of words that names someone or something in the chat as one value', () => {
+    expect(parseCommandArgs(kick, 'who:Bob Smith times:3', context)).toEqual({ ok: true, options: { who: 'u1', times: 3 } });
+    expect(parseCommandArgs(kick, 'who:@Ann Lee group:@Night Shift where:#Big Voice', context))
+      .toEqual({ ok: true, options: { who: 'u2', group: 'r1', where: 'c1' } });
+    // One word when no run names anyone: the rest is free text, here the reason.
+    expect(parseCommandArgs(kick, 'who:bob was rude', context)).toEqual({ ok: true, options: { who: 'u1', reason: 'was rude' } });
+    // A channel of a type the option does not take is not a name for it.
+    expect(parseCommandArgs(kick, 'who:bob where:#Big Text', context)).toEqual({ ok: true, options: { who: 'u1', where: '#Big', reason: 'Text' } });
+  });
+
+  it('frames the whole name, and only with the chat at hand', () => {
+    const text = '/kick who:Bob Smith times:3';
+    const slices = (frames: ReturnType<typeof argumentFrames>) => frames.map((f) => text.slice(f.valueStart, f.valueEnd));
+    expect(slices(argumentFrames(text, kick, [], context))).toEqual(['Bob Smith', '3']);
+    expect(slices(argumentFrames(text, kick))).toEqual(['Bob', '3']);
+  });
+
+  it('offers the names while the second word is typed, and the options right after a space', () => {
+    const who = '/kick who:' + VALUE_GAP;
+    expect(suggestValue(who + 'Bob Sm', [kick], null, context)).toMatchObject({ query: 'bob sm', startIndex: who.length });
+    expect(suggestValue(who + 'Bob ', [kick], null, context)).toBeNull();
+    expect(suggestOptions(who + 'Bob ', [kick], null, context)).toMatchObject({ query: '' });
+    expect(suggestValue(who + 'Bob Smith ', [kick], null, context)).toBeNull();
+    expect(suggestOptions(who + 'Bob Smith ', [kick], null, context)).toMatchObject({ query: '' });
+    // Without the chat, `Smith` would be left over and no options offered.
+    expect(suggestOptions(who + 'Bob Smith ', [kick], null)).toBeNull();
+    expect(suggestValue(who + 'Bob Xy', [kick], null, context)).toBeNull();
+  });
+});
