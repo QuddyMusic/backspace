@@ -181,6 +181,11 @@
     "chooseSubcommand": "Выберите подкоманду: {{names}}",
     "subcommandRefused": "Бот не предлагает эту подкоманду. Выберите её из списка"
   },
+  "ephemeral": {
+    "onlyYou": "Видно только вам",
+    "dismiss": "Скрыть",
+    "rowLabel": "Ответ от {{author}}, который видите только вы, {{time}}"
+  },
   "embed": {
     "loadAction": "Нажмите, чтобы загрузить",
     "loadNamed": "Загрузить: {{name}}",

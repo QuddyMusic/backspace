@@ -750,6 +750,7 @@ export type ServerEvent =
   | { type: 'channel_unread_count'; counts: Record<string, number> }
   | { type: 'message_created'; message: MessageWithUser }
   | { type: 'interaction_created'; interaction: BotInteraction }
+  | { type: 'interaction_ephemeral'; reply: EphemeralReply }
   | { type: 'message_updated'; message: MessageWithUser }
   | { type: 'message_deleted'; messageId: string; channelId: string }
   | { type: 'typing'; channelId: string; userId: string; username: string }
@@ -2415,6 +2416,33 @@ export interface CreateInteractionResponse {
 export interface RespondToInteractionRequest {
   content?: string;
   attachments?: string[];
+  /**
+   * Shown only to the person who invoked the command, and not stored: text
+   * only (no attachments), gone when they reload or dismiss it.
+   */
+  ephemeral?: boolean;
+}
+
+/**
+ * A bot's answer to a slash command that only the person who invoked it sees
+ * (`ephemeral: true`). It is never stored: it reaches that person's open
+ * sessions as `interaction_ephemeral` and lives in their client until they
+ * reload or dismiss it.
+ */
+export interface EphemeralReply {
+  /** Unique per reply; not a message id. */
+  id: string;
+  interactionId: string;
+  /** The name of the command it answers. */
+  command: string;
+  /** The bot. */
+  user: User;
+  content: string;
+  createdAt: number;
+  /** The chat it was invoked in: a space channel, or a direct or group DM. */
+  channelId?: string;
+  spaceId?: string;
+  dmChannelId?: string;
 }
 
 export interface BotCommandListing extends BotCommand {

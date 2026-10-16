@@ -211,10 +211,14 @@ Command names are unique per bot, not per chat: two bots may both offer `/play`.
 ### Answering
 
 ```
-POST /api/interactions/:id/respond   { content?, attachments? }   → 201 (the created message)
+POST /api/interactions/:id/respond   { content?, attachments?, ephemeral? }   → 201 (the created message, or the ephemeral answer)
 ```
 
 Bot token only, and only the invoked bot. The message is posted through the same route as `POST /channels/:id/messages` or `POST /dm/:id/messages`, so permissions, the length limit, attachments, embeds and the rate limit are the ordinary ones. The interaction lasts 15 minutes and takes up to 5 responses. Errors: `404 interaction_not_found` (also for another bot's interaction), `410 interaction_expired`, `429 interaction_responses_exceeded`, and whatever the message route answers. The message is the bot's own; mention the invoker with `<@user.id>` if the answer is for them. A bot that never answers causes nothing more than silence until the interaction expires.
+
+`ephemeral: true` makes an answer only the invoker sees. It is not a message and is never stored: the server checks it (text only, 1 to 4000 characters; `attachments` answers `400 validation_failed`, empty text `400 message_empty`, too long `400 content_too_long`), counts it among the 5 answers, and sends `interaction_ephemeral { reply: { id, interactionId, command, user, content, createdAt, channelId?, spaceId?, dmChannelId? } }` to the invoker's open sessions on this instance, and to no one else (`user` is the bot); the call answers 201 with the same `reply`. Nothing reaches the other people of the chat: no message, unread mark, notification or ping, and mentions in it ping no one. A bot may mix public and ephemeral answers to one interaction.
+
+The message box shows such an answer in the timeline of its chat, by its time, marked "Only you can see this" with a "Dismiss" that removes it; it has no reply, reaction, edit or menu, and it is gone after a reload or a sign-out (`stores/ephemeralReplyStore.ts`, `chat/EphemeralReplyRow.tsx`). The rows of the chat are untouched: an answer is drawn after the last row it is not older than and does not take part in anchors, unread or paging.
 
 ### In the message box
 
@@ -236,7 +240,7 @@ The list is fetched again at the start of every new command (the text goes from 
 
 ### Scope
 
-Chats on the instance where the bot is connected. Not built: autocomplete, private (visible to one person) answers (a bot may message the invoker directly), buttons and forms, commands of bots from other instances in direct messages.
+Chats on the instance where the bot is connected. Not built: autocomplete (postponed by the owner), buttons and forms, commands of bots from other instances in direct messages.
 
 ## 5c. Voice channels
 

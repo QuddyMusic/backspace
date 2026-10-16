@@ -173,6 +173,11 @@
     "chooseSubcommand": "Choose a subcommand: {{names}}",
     "subcommandRefused": "The bot does not offer this subcommand. Pick one from the list"
   },
+  "ephemeral": {
+    "onlyYou": "Only you can see this",
+    "dismiss": "Dismiss",
+    "rowLabel": "Answer only you can see from {{author}}, {{time}}"
+  },
   "embed": {
     "loadAction": "Click to load",
     "loadNamed": "Load {{name}}",

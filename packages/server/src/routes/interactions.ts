@@ -11,8 +11,10 @@ import type {
   ChatCommandsResponse,
   CreateInteractionRequest,
   CreateInteractionResponse,
+  EphemeralReply,
   RespondToInteractionRequest,
 } from '@backspace/shared';
+import { MAX_MESSAGE_LENGTH } from '@backspace/shared';
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { requireBot } from '../utils/botAuth.js';
@@ -443,6 +445,20 @@ export async function interactionRoutes(app: FastifyInstance): Promise<void> {
     const now = Date.now();
     if (row.expiresAt <= now) return sendError(reply, 410, 'interaction_expired');
 
+    const body: RespondToInteractionRequest = request.body ?? {};
+    // An answer only the invoker sees is text only, checked here (it skips the message route).
+    const ephemeral = body.ephemeral === true;
+    if (body.ephemeral !== undefined && typeof body.ephemeral !== 'boolean') {
+      return sendError(reply, 400, 'validation_failed', { field: 'ephemeral', reason: 'must be a boolean' });
+    }
+    if (ephemeral) {
+      if (body.attachments !== undefined && (!Array.isArray(body.attachments) || body.attachments.length > 0)) {
+        return sendError(reply, 400, 'validation_failed', { field: 'attachments', reason: 'not allowed in an ephemeral answer' });
+      }
+      if (typeof body.content !== 'string' || body.content.trim().length === 0) return sendError(reply, 400, 'message_empty');
+      if (body.content.length > MAX_MESSAGE_LENGTH) return sendError(reply, 400, 'content_too_long', { max: MAX_MESSAGE_LENGTH });
+    }
+
     // Reserve one of the answers first so concurrent calls cannot overshoot the cap.
     const reserved = db.update(schema.interactions)
       .set({ responses: sql`${schema.interactions.responses} + 1` })
@@ -454,8 +470,26 @@ export async function interactionRoutes(app: FastifyInstance): Promise<void> {
       .run();
     if (reserved.changes === 0) return sendError(reply, 429, 'interaction_responses_exceeded');
 
+    if (ephemeral) {
+      // Not stored anywhere: it goes to the invoker's open sessions and nowhere else.
+      const bot = db.select().from(schema.users).where(eq(schema.users.id, request.userId)).get();
+      const spaceId = row.channelId !== null ? getChannelSpaceId(row.channelId) : null;
+      const answer: EphemeralReply = {
+        id: randomBytes(12).toString('hex'),
+        interactionId: row.id,
+        command: row.command,
+        user: sanitizeUser(bot!),
+        content: body.content as string,
+        createdAt: now,
+        ...(row.channelId !== null
+          ? { channelId: row.channelId, ...(spaceId ? { spaceId } : {}) }
+          : { dmChannelId: row.dmChannelId as string }),
+      };
+      connectionManager.sendToUser(row.userId, { type: 'interaction_ephemeral', reply: answer });
+      return reply.code(201).send(answer);
+    }
+
     // The real message route: same permissions, limits, attachments, embeds and broadcast.
-    const body: RespondToInteractionRequest = request.body ?? {};
     const url = row.channelId !== null
       ? `/api/channels/${row.channelId}/messages`
       : `/api/dm/${row.dmChannelId}/messages`;

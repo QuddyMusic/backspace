@@ -74,6 +74,8 @@ bot.run(async (event) => {
 
   const { id, command, subcommand, options, resolved, user } = event.interaction;
   const answer = (content) => bot.api('POST', `/interactions/${id}/respond`, { content });
+  // Seen only by the person who invoked the command, and not stored.
+  const answerPrivately = (content) => bot.api('POST', `/interactions/${id}/respond`, { content, ephemeral: true });
 
   if (command === 'play') {
     await answer(`<@${user.id}> asked me to play "${options.query}" at volume ${options.volume ?? 'default'}`);
@@ -86,7 +88,7 @@ bot.run(async (event) => {
     const text = `poke ${target?.displayName ?? target?.username} x${options.times ?? 1}${where}${group}${options.note ? `: ${options.note}` : ''}`;
     await answer(options.loud ? text.toUpperCase() : text);
   } else if (command === 'purge') {
-    await answer(`<@${user.id}> would delete the last ${options.count} messages here (this example deletes nothing)`);
+    await answerPrivately(`Would delete the last ${options.count} messages here (this example deletes nothing).`);
   } else if (command === 'music') {
     const chat = event.interaction.channelId ?? event.interaction.dmChannelId;
     if (!queues.has(chat)) queues.set(chat, []);
@@ -98,7 +100,8 @@ bot.run(async (event) => {
       for (let i = 0; i < (options.times ?? 1); i++) queue.push(options.query);
       await answer(`queued "${options.query}" (${queue.length} in the queue)`);
     } else if (path === 'queue list') {
-      await answer(queue.length ? queue.map((title, i) => `${i + 1}. ${title}`).join('\n') : 'the queue is empty');
+      if (queue.length === 0) await answerPrivately('The queue is empty.');
+      else await answer(queue.map((title, i) => `${i + 1}. ${title}`).join('\n'));
     } else if (path === 'queue clear') {
       queue.length = 0;
       await answer('the queue is empty now');

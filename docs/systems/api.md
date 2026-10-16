@@ -735,6 +735,6 @@ PUT    /bots/@me/commands          { commands } → { commands }          [bot t
 GET    /bots/@me/commands          → { commands }                       [bot token]
 GET    /commands                   ?channelId= | ?dmChannelId= → { commands } [caller sees the chat; commands of the bots in it the caller may use (requiredPermissions), with `bot`]
 POST   /interactions               { botId, command, subcommand?, options?, channelId | dmChannelId } → 201 { id, expiresAt } [a person (a bot caller: 403 bots_cannot_invoke_commands); member + SEND_MESSAGES; bot in chat and connected; 5 per 5 s]
-POST   /interactions/:id/respond   { content?, attachments? } → 201 message [the invoked bot; 15 min, 5 responses; goes through the message routes]
+POST   /interactions/:id/respond   { content?, attachments?, ephemeral? } → 201 message | ephemeral reply [the invoked bot; 15 min, 5 responses; goes through the message routes; `ephemeral: true`: text only, not stored, sent to the invoker alone]
 ```
 Errors: `bot_account_required`, `command_not_found`, `missing_permission` (403, the command's requiredPermissions), `bot_unavailable` (409), `interaction_not_found`, `interaction_expired` (410), `interaction_responses_exceeded` (429), and `validation_failed` with `details.field` for a bad definition or option value.

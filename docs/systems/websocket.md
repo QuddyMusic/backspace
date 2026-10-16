@@ -484,3 +484,5 @@ A bot authenticates like any client (`{ type: 'auth', token }`, the token is the
 **Client to server, bots only:** `bot_voice_join { channelId }` and `bot_voice_leave { channelId }` seat a bot in a space voice channel and take it out again without touching its other seats (up to 25); the room is told with the ordinary `voice_state_update`. See [bots.md](bots.md), section 5c.
 
 **Server to a bot:** `interaction_created { interaction: { id, command, subcommand?, options, resolved?, user, channelId?, spaceId?, dmChannelId?, expiresAt } }` when a person invokes one of the bot's slash commands; only the invoked bot's sockets receive it. See [bots.md](bots.md), section 5b.
+
+**Server to the invoker of a slash command:** `interaction_ephemeral { reply: { id, interactionId, command, user, content, createdAt, channelId?, spaceId?, dmChannelId? } }` when the bot answers with `ephemeral: true`; only the invoker's sockets on this instance receive it, nothing is stored, and the client shows it in that chat until a reload or a dismiss. See [bots.md](bots.md), "Answering".

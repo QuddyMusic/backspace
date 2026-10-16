@@ -1,5 +1,6 @@
 import { receiveChannelPoke } from '../components/chat/channelPoke';
 import { useChannelPokeStore } from '../stores/channelPokeStore';
+import { useEphemeralReplyStore } from '../stores/ephemeralReplyStore';
 import { applySpaceMemberUpdate } from '../stores/spaceMemberUpdates';
 import { useUnreadCountStore } from '../stores/unreadCountStore';
 import React, { useEffect, useRef } from 'react';
@@ -268,6 +269,12 @@ function handleEvent(origin: string, event: ServerEvent, readyAlreadyDelivered =
       if (event.message.user) upsertUserView(event.message.user, origin);
       addRealtimeMessage(event.message.channelId, event.message);
       receiveChannelPoke(origin, event.message);
+      break;
+    case 'interaction_ephemeral':
+      // A bot's answer for this person alone: shown in its chat until a reload or a dismiss,
+      // with no unread mark, sound or notification.
+      upsertUserView(event.reply.user, origin);
+      useEphemeralReplyStore.getState().add(event.reply);
       break;
     case 'channel_unread_count':
       useUnreadCountStore.getState().updateCounts(origin, event.counts);

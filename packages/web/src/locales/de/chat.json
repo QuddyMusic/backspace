@@ -173,6 +173,11 @@
     "chooseSubcommand": "Wähle einen Unterbefehl: {{names}}",
     "subcommandRefused": "Der Bot bietet diesen Unterbefehl nicht an. Wähle einen aus der Liste"
   },
+  "ephemeral": {
+    "onlyYou": "Nur du siehst das",
+    "dismiss": "Ausblenden",
+    "rowLabel": "Antwort von {{author}}, die nur du siehst, {{time}}"
+  },
   "embed": {
     "loadAction": "Zum Laden klicken",
     "loadNamed": "{{name}} laden",
