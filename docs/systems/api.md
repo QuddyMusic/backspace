@@ -733,8 +733,8 @@ Full reference in [bots.md](bots.md), section 5b.
 ```
 PUT    /bots/@me/commands          { commands } → { commands }          [bot token; replaces the whole list; 10 per 5 min]
 GET    /bots/@me/commands          → { commands }                       [bot token]
-GET    /commands                   ?channelId= | ?dmChannelId= → { commands } [caller sees the chat; commands of the bots in it, with `bot`]
+GET    /commands                   ?channelId= | ?dmChannelId= → { commands } [caller sees the chat; commands of the bots in it the caller may use (requiredPermissions), with `bot`]
 POST   /interactions               { botId, command, subcommand?, options?, channelId | dmChannelId } → 201 { id, expiresAt } [a person (a bot caller: 403 bots_cannot_invoke_commands); member + SEND_MESSAGES; bot in chat and connected; 5 per 5 s]
 POST   /interactions/:id/respond   { content?, attachments? } → 201 message [the invoked bot; 15 min, 5 responses; goes through the message routes]
 ```
-Errors: `bot_account_required`, `command_not_found`, `bot_unavailable` (409), `interaction_not_found`, `interaction_expired` (410), `interaction_responses_exceeded` (429), and `validation_failed` with `details.field` for a bad definition or option value.
+Errors: `bot_account_required`, `command_not_found`, `missing_permission` (403, the command's requiredPermissions), `bot_unavailable` (409), `interaction_not_found`, `interaction_expired` (410), `interaction_responses_exceeded` (429), and `validation_failed` with `details.field` for a bad definition or option value.

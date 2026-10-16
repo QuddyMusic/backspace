@@ -138,7 +138,7 @@ A bot registers commands for itself. A person picks one in the message box (typi
 ### Registering
 
 ```
-PUT /api/bots/@me/commands   { commands: [ { name, description, options?: [ { name, description, type, required?, choices?, minValue?, maxValue?, minLength?, maxLength?, channelTypes?, options? } ] } ] }
+PUT /api/bots/@me/commands   { commands: [ { name, description, requiredPermissions?, options?: [ { name, description, type, required?, choices?, minValue?, maxValue?, minLength?, maxLength?, channelTypes?, options?, requiredPermissions? } ] } ] }
 GET /api/bots/@me/commands   → { commands: BotCommand[] }
 ```
 
@@ -179,6 +179,12 @@ A `subcommand` holds value options (the rules above apply to them, at most 10); 
 
 An invocation of such a command names the path in `subcommand` (`["play"]`, `["queue", "add"]`); `options` are those of the subcommand it names and are checked against its definition. A path is required for a command with subcommands and refused for one without (`400 validation_failed`, `details.field` `subcommand`, the reason names what is expected). The bot gets the path in `interaction.subcommand`, and the subcommand's values in `options` as usual.
 
+### Required permissions
+
+A command, and each subcommand or group of it, may ask the people who use it for space permissions: `requiredPermissions` is a canonical decimal mask (`"2048"`) or a list of permission names (`["MANAGE_MESSAGES"]`, the names of `PermissionBits`); it is stored and handed back as the mask, and `"0"` or an empty list means none. A value option takes none (`400 validation_failed`, as do an unknown name, a mask that is not canonical, and bits that name no permission).
+
+A person needs every permission the command and the steps of the path ask for, in the channel the command is invoked in (channel overrides apply; ADMINISTRATOR, the space owner and instance admins hold all). Whoever lacks them does not get the command, or that subcommand or group, in `GET /api/commands` (a group whose subcommands are all hidden goes too, and so does a command whose every subcommand is hidden), and a call is refused with `403 missing_permission`, `details.permission` naming the missing ones (`"MANAGE_MESSAGES, KICK_MEMBERS"`). A direct message has no space permissions: a command or step that asks for any is hidden and refused there. Checked on every listing and call, so a changed role counts at once (the message box asks for the list again at every new `/`). The bot's own permissions play no part.
+
 ### Invoking
 
 ```
@@ -186,7 +192,7 @@ GET  /api/commands?channelId=<id>  |  ?dmChannelId=<id>   → { commands: [ { id
 POST /api/interactions   { botId, command, subcommand?, options?, channelId | dmChannelId }   → 201 { id, expiresAt }
 ```
 
-`GET` lists the commands of the bots that are in that chat; the caller must be able to see it. `POST` checks, in this order: exactly one of `channelId` and `dmChannelId`; the caller is a member and may write there (SEND_MESSAGES in a channel); the bot is in the chat (`404 bot_not_found`); the command exists (`404 command_not_found`); the `subcommand` path fits the command (see "Subcommands"); each option value fits its definition: type, range, length, `choices` when they are strict, and for `user`, `channel` and `role` an id the chat knows (a user in the chat; a channel or role of its space; a channel the caller can see, of an accepted type; anything else answers like a missing id) (`400 validation_failed`, `details.field` is `options.<name>`, `details.reason` says what is wrong); the bot has an open WebSocket (`409 bot_unavailable`). 5 calls per 5 seconds per client address.
+`GET` lists the commands of the bots that are in that chat that the caller may use (see "Required permissions"); the caller must be able to see the chat. `POST` checks, in this order: exactly one of `channelId` and `dmChannelId`; the caller is a member and may write there (SEND_MESSAGES in a channel); the bot is in the chat (`404 bot_not_found`); the command exists (`404 command_not_found`); the `subcommand` path fits the command (see "Subcommands"); the caller holds the permissions the command and its path ask for (`403 missing_permission`); each option value fits its definition: type, range, length, `choices` when they are strict, and for `user`, `channel` and `role` an id the chat knows (a user in the chat; a channel or role of its space; a channel the caller can see, of an accepted type; anything else answers like a missing id) (`400 validation_failed`, `details.field` is `options.<name>`, `details.reason` says what is wrong); the bot has an open WebSocket (`409 bot_unavailable`). 5 calls per 5 seconds per client address.
 
 Command names are unique per bot, not per chat: two bots may both offer `/play`. Every listing entry names its bot, and an invocation names it too (`botId`), so a clash reaches exactly the bot it addresses; the message box shows the bot's `@username` under each command. A command typed out by hand, without picking a row from the list, runs the first of the clashing commands in the listing's order (name, then the bot's username).
 

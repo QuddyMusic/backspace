@@ -902,6 +902,12 @@ export const botCommands = sqliteTable('bot_commands', {
   /** JSON array of BotCommandOption. */
   options: text('options').notNull().default('[]'),
   updatedAt: integer('updated_at').notNull(),
+  /**
+   * Permissions a person needs in the invoking channel to see and use the
+   * command (canonical decimal mask); null for none. Its subcommands and
+   * groups may add their own, in `options`.
+   */
+  requiredPermissions: text('required_permissions'),
 }, (table) => ({
   botNameIdx: uniqueIndex('idx_bot_commands_bot_name').on(table.botId, table.name),
 }));

@@ -1,4 +1,4 @@
-// Slash command bot: registers /play, /stop, /poke and /music and answers them.
+// Slash command bot: registers /play, /stop, /poke, /music and /purge and answers them.
 // The server carries the call; what a command does is decided here.
 //
 //   BACKSPACE_URL=https://chat.example.com BOT_TOKEN=... node examples/bots/slash.mjs
@@ -46,9 +46,17 @@ const commands = [
           { name: 'times', description: 'How many times', type: 'integer', minValue: 1, maxValue: 3 },
         ] },
         { name: 'list', description: 'Show the queue', type: 'subcommand' },
-        { name: 'clear', description: 'Empty the queue', type: 'subcommand' },
+        // Only those who may manage messages in the channel see and use this one.
+        { name: 'clear', description: 'Empty the queue', type: 'subcommand', requiredPermissions: ['MANAGE_MESSAGES'] },
       ] },
     ],
+  },
+  {
+    // A whole command for moderators: hidden from everyone else, and in direct messages.
+    name: 'purge',
+    description: 'Pretend to delete recent messages',
+    requiredPermissions: ['MANAGE_MESSAGES'],
+    options: [{ name: 'count', description: 'How many', type: 'integer', required: true, minValue: 1, maxValue: 100 }],
   },
 ];
 
@@ -77,6 +85,8 @@ bot.run(async (event) => {
     const group = options.group ? ` (for ${resolved?.roles?.[options.group]?.name})` : '';
     const text = `poke ${target?.displayName ?? target?.username} x${options.times ?? 1}${where}${group}${options.note ? `: ${options.note}` : ''}`;
     await answer(options.loud ? text.toUpperCase() : text);
+  } else if (command === 'purge') {
+    await answer(`<@${user.id}> would delete the last ${options.count} messages here (this example deletes nothing)`);
   } else if (command === 'music') {
     const chat = event.interaction.channelId ?? event.interaction.dmChannelId;
     if (!queues.has(chat)) queues.set(chat, []);

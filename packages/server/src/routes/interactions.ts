@@ -17,11 +17,12 @@ import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { requireBot } from '../utils/botAuth.js';
 import { sendError } from '../utils/httpErrors.js';
-import { getChannelSpaceId, hasPermission, isDmMember, isMember, PermissionBits } from '../utils/permissions.js';
+import { computePermissions, getChannelSpaceId, hasPermission, isDmMember, isMember, PermissionBits } from '../utils/permissions.js';
 import { sanitizeUser } from '../utils/sanitize.js';
 import { roleView } from '../utils/permissionDataView.js';
 import { connectionManager } from '../ws/handler.js';
 import { COMMAND_STRING_OPTION_MAX } from '@backspace/shared/src/constants.js';
+import { stringToPermissions } from '@backspace/shared/src/permissions.js';
 
 const INTERACTION_TTL_MS = 15 * 60 * 1000;
 const MAX_RESPONSES = 5;
@@ -202,10 +203,17 @@ function holdsSteps(defs: BotCommandOption[]): boolean {
  * path names (a subcommand, or a group and one of its subcommands). A path is
  * required exactly when the command has subcommands, and must end at one.
  */
-function leafOptions(defs: BotCommandOption[], given: unknown): { path: string[]; options: BotCommandOption[] } | Problem {
+interface Leaf {
+  path: string[];
+  options: BotCommandOption[];
+  /** The permissions the steps of the path ask for, on top of the command's own. */
+  needed: bigint;
+}
+
+function leafOptions(defs: BotCommandOption[], given: unknown): Leaf | Problem {
   const steps = holdsSteps(defs);
   if (given === undefined || given === null || (Array.isArray(given) && given.length === 0)) {
-    if (!steps) return { path: [], options: defs };
+    if (!steps) return { path: [], options: defs, needed: 0n };
     return { field: 'subcommand', reason: `is required: one of ${defs.map((d) => d.name).join(', ')}` };
   }
   if (!steps) return { field: 'subcommand', reason: 'this command has no subcommands' };
@@ -217,12 +225,61 @@ function leafOptions(defs: BotCommandOption[], given: unknown): { path: string[]
   if (!first) return { field: 'subcommand', reason: `must start with one of ${defs.map((d) => d.name).join(', ')}` };
   if (first.type === 'subcommand') {
     if (path.length !== 1) return { field: 'subcommand', reason: `${first.name} is a subcommand, not a group` };
-    return { path, options: first.options ?? [] };
+    return { path, options: first.options ?? [], needed: stringToPermissions(first.requiredPermissions) };
   }
   const inGroup = first.options ?? [];
   const leaf = path.length === 2 ? inGroup.find((d) => d.name === path[1]) : undefined;
   if (!leaf) return { field: 'subcommand', reason: `${first.name} needs one of ${inGroup.map((d) => d.name).join(', ')}` };
-  return { path, options: leaf.options ?? [] };
+  return {
+    path,
+    options: leaf.options ?? [],
+    needed: stringToPermissions(first.requiredPermissions) | stringToPermissions(leaf.requiredPermissions),
+  };
+}
+
+/** The names of the permissions in `bits`, for an answer that says which are missing. */
+function permissionNames(bits: bigint): string {
+  return Object.entries(PermissionBits).filter(([, bit]) => (bits & bit) !== 0n).map(([name]) => name).join(', ');
+}
+
+/** What `userId` holds in the chat, channel overrides applied; null in a DM, which has no permissions. */
+function heldIn(userId: string, chat: Chat): bigint | null {
+  return chat.kind === 'channel' ? computePermissions(userId, chat.spaceId, chat.channelId) : null;
+}
+
+/**
+ * The permissions of `needed` missing from `held`: none when nothing is
+ * needed; all of them in a DM; none with ADMINISTRATOR (the space owner and
+ * instance admins hold every permission).
+ */
+function missingPermissions(held: bigint | null, needed: bigint): bigint {
+  if (needed === 0n) return 0n;
+  if (held === null) return needed;
+  if ((held & PermissionBits.ADMINISTRATOR) !== 0n) return 0n;
+  return needed & ~held;
+}
+
+/**
+ * A command as seen by someone holding `held`, or null when it is hidden: the
+ * command's own permissions must be held, and the subcommands and groups whose
+ * permissions are not are left out (a group left empty goes too, and a command
+ * whose every subcommand went is hidden).
+ */
+function visibleOptions(options: BotCommandOption[], required: string | null, held: bigint | null): BotCommandOption[] | null {
+  const allowed = (mask: string | null | undefined) => missingPermissions(held, stringToPermissions(mask)) === 0n;
+  if (!allowed(required)) return null;
+  if (!holdsSteps(options)) return options;
+  const kept: BotCommandOption[] = [];
+  for (const step of options) {
+    if (!allowed(step.requiredPermissions)) continue;
+    if (step.type === 'subcommand_group') {
+      const subs = (step.options ?? []).filter((sub) => allowed(sub.requiredPermissions));
+      if (subs.length > 0) kept.push({ ...step, options: subs });
+    } else {
+      kept.push(step);
+    }
+  }
+  return kept.length > 0 ? kept : null;
 }
 
 /**
@@ -257,15 +314,20 @@ export async function interactionRoutes(app: FastifyInstance): Promise<void> {
       db.select().from(schema.users).where(inArray(schema.users.id, botIds)).all().map((b) => [b.id, b] as const),
     );
     const commands: BotCommandListing[] = [];
+    const held = heldIn(request.userId, access.chat);
     for (const row of db.select().from(schema.botCommands).where(inArray(schema.botCommands.botId, botIds)).all()) {
       const bot = bots.get(row.botId);
       if (!bot) continue;
+      // A command (or a subcommand) the caller lacks the permissions for is not listed.
+      const options = visibleOptions(JSON.parse(row.options) as BotCommandOption[], row.requiredPermissions, held);
+      if (!options) continue;
       commands.push({
         id: row.id,
         botId: row.botId,
         name: row.name,
         description: row.description,
-        options: JSON.parse(row.options) as BotCommandOption[],
+        options,
+        ...(row.requiredPermissions ? { requiredPermissions: row.requiredPermissions } : {}),
         updatedAt: row.updatedAt,
         bot: {
           id: bot.id,
@@ -321,6 +383,10 @@ export async function interactionRoutes(app: FastifyInstance): Promise<void> {
 
     const leaf = leafOptions(JSON.parse(definition.options) as BotCommandOption[], body.subcommand);
     if (isProblem(leaf)) return sendError(reply, 400, 'validation_failed', { field: leaf.field, reason: leaf.reason });
+    // The permissions the command and the steps of its path ask of the caller, in this channel.
+    const needed = stringToPermissions(definition.requiredPermissions) | leaf.needed;
+    const missing = needed === 0n ? 0n : missingPermissions(heldIn(request.userId, chat), needed);
+    if (missing !== 0n) return sendError(reply, 403, 'missing_permission', { permission: permissionNames(missing) });
     const checked = checkOptions(leaf.options, body.options, chat, request.userId);
     if (isProblem(checked)) return sendError(reply, 400, 'validation_failed', { field: checked.field, reason: checked.reason });
 

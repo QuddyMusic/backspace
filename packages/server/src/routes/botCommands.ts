@@ -11,6 +11,7 @@ import type {
   SetBotCommandsRequest,
 } from '@backspace/shared';
 import { COMMAND_STRING_OPTION_MAX } from '@backspace/shared/src/constants.js';
+import { ALL_PERMISSIONS, PermissionBits, parsePermissionString, permissionsToString } from '@backspace/shared/src/permissions.js';
 import { getDb, schema } from '../db/index.js';
 import { authenticate } from '../utils/auth.js';
 import { requireBot } from '../utils/botAuth.js';
@@ -32,7 +33,7 @@ const CHANNEL_TYPES: readonly ChannelType[] = ['text', 'voice'];
 const CHOICE_TYPES: ReadonlySet<BotCommandOptionType> = new Set(['string', 'integer', 'number']);
 
 interface Problem { field: string; reason: string }
-interface NormalizedCommand { name: string; description: string; options: BotCommandOption[] }
+interface NormalizedCommand { name: string; description: string; options: BotCommandOption[]; requiredPermissions: string | null }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -48,6 +49,31 @@ function text(raw: unknown, field: string): string | Problem {
     return { field, reason: `must be 1 to ${DESCRIPTION_MAX} characters` };
   }
   return value;
+}
+
+/**
+ * The permissions a command or a step asks of the people who use it: a
+ * canonical decimal mask or a list of permission names, stored as the mask.
+ * Null for none (absent, `"0"` or an empty list).
+ */
+function validatePermissions(raw: unknown, field: string): string | null | Problem {
+  if (raw === undefined || raw === null) return null;
+  let bits = 0n;
+  if (Array.isArray(raw)) {
+    for (let i = 0; i < raw.length; i++) {
+      const name = raw[i];
+      if (typeof name !== 'string' || !Object.prototype.hasOwnProperty.call(PermissionBits, name)) {
+        return { field: `${field}[${i}]`, reason: 'must be a permission name' };
+      }
+      bits |= PermissionBits[name as keyof typeof PermissionBits];
+    }
+  } else {
+    const parsed = parsePermissionString(raw);
+    if (parsed === null) return { field, reason: 'must be a decimal permission mask or a list of permission names' };
+    if ((parsed & ~ALL_PERMISSIONS) !== 0n) return { field, reason: 'names a permission that does not exist' };
+    bits = parsed;
+  }
+  return bits === 0n ? null : permissionsToString(bits);
 }
 
 function validateChoice(raw: unknown, type: BotCommandOptionType, path: string): BotCommandChoice | Problem {
@@ -190,17 +216,20 @@ function validateOptions(raw: unknown, path: string, level: Level = 'command'): 
 
     if (steps) {
       if (item.required === true) return { field: `${here}.required`, reason: `not allowed for a ${type}` };
+      const needs = validatePermissions(item.requiredPermissions, `${here}.requiredPermissions`);
+      if (isProblem(needs)) return needs;
       if (item.options !== undefined && !Array.isArray(item.options)) return { field: `${here}.options`, reason: 'must be an array' };
       for (const key of ['choices', 'strictChoices', 'minValue', 'maxValue', 'minLength', 'maxLength', 'channelTypes'] as const) {
         if (item[key] !== undefined) return { field: `${here}.${key}`, reason: `not allowed for a ${type}` };
       }
       const inner = validateOptions(item.options, `${here}.options`, type === 'subcommand' ? 'subcommand' : 'group');
       if (isProblem(inner)) return inner;
-      out.push({ name: item.name, description, type, required: false, options: inner });
+      out.push({ name: item.name, description, type, required: false, options: inner, ...(needs ? { requiredPermissions: needs } : {}) });
       continue;
     }
 
     if (item.options !== undefined) return { field: `${here}.options`, reason: `not allowed for a ${type} option` };
+    if (item.requiredPermissions !== undefined) return { field: `${here}.requiredPermissions`, reason: `not allowed for a ${type} option` };
     const required = item.required === true;
     if (!required) sawOptional = true;
     else if (sawOptional) return { field: `${here}.required`, reason: 'required options must come before optional ones' };
@@ -257,7 +286,9 @@ function validateCommands(raw: unknown): NormalizedCommand[] | Problem {
     if (isProblem(description)) return description;
     const options = validateOptions(item.options, `${here}.options`);
     if (isProblem(options)) return options;
-    out.push({ name: item.name, description, options });
+    const requiredPermissions = validatePermissions(item.requiredPermissions, `${here}.requiredPermissions`);
+    if (isProblem(requiredPermissions)) return requiredPermissions;
+    out.push({ name: item.name, description, options, requiredPermissions });
   }
   return out;
 }
@@ -273,6 +304,7 @@ function commandsOf(botId: string): BotCommand[] {
       name: row.name,
       description: row.description,
       options: JSON.parse(row.options) as BotCommandOption[],
+      ...(row.requiredPermissions ? { requiredPermissions: row.requiredPermissions } : {}),
       updatedAt: row.updatedAt,
     }));
 }
@@ -307,12 +339,20 @@ export async function botCommandRoutes(app: FastifyInstance): Promise<void> {
         const row = byName.get(command.name);
         if (row) {
           tx.update(schema.botCommands)
-            .set({ description: command.description, options, updatedAt: now })
+            .set({ description: command.description, options, requiredPermissions: command.requiredPermissions, updatedAt: now })
             .where(eq(schema.botCommands.id, row.id))
             .run();
         } else {
           tx.insert(schema.botCommands)
-            .values({ id: generateSnowflake(), botId, name: command.name, description: command.description, options, updatedAt: now })
+            .values({
+              id: generateSnowflake(),
+              botId,
+              name: command.name,
+              description: command.description,
+              options,
+              requiredPermissions: command.requiredPermissions,
+              updatedAt: now,
+            })
             .run();
         }
       }

@@ -2301,12 +2301,25 @@ export interface BotCommandOption {
    * Absent on value options; a subcommand without options has none.
    */
   options?: BotCommandOption[];
+  /**
+   * Subcommands and groups only: permissions needed, on top of the command's
+   * own, to see and use this step (canonical decimal mask). Absent for none.
+   */
+  requiredPermissions?: string;
 }
 
+/**
+ * Permissions a bot asks of the people who use a command or a step of it: a
+ * canonical decimal mask (`"2048"`) or a list of permission names
+ * (`["MANAGE_MESSAGES"]`). The server stores and hands back the mask.
+ */
+export type BotCommandPermissionsDefinition = string | string[];
+
 /** An option as a bot registers it: `required` may be left out (false); subcommands never have it. */
-export type BotCommandOptionDefinition = Omit<BotCommandOption, 'required' | 'options'> & {
+export type BotCommandOptionDefinition = Omit<BotCommandOption, 'required' | 'options' | 'requiredPermissions'> & {
   required?: boolean;
   options?: BotCommandOptionDefinition[];
+  requiredPermissions?: BotCommandPermissionsDefinition;
 };
 
 /** What a bot sends when registering a command. */
@@ -2314,6 +2327,11 @@ export interface BotCommandDefinition {
   name: string;
   description: string;
   options?: BotCommandOptionDefinition[];
+  /**
+   * Permissions a person needs in the channel to see and use the command;
+   * such a command is hidden from and refused in direct messages.
+   */
+  requiredPermissions?: BotCommandPermissionsDefinition;
 }
 
 export interface BotCommand {
@@ -2322,6 +2340,8 @@ export interface BotCommand {
   name: string;
   description: string;
   options: BotCommandOption[];
+  /** The permissions needed to see and use the command (canonical decimal mask); absent for none. */
+  requiredPermissions?: string;
   updatedAt: number;
 }
 

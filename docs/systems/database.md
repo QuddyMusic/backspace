@@ -746,3 +746,5 @@ Migration `0034_bot_revocations.sql`. A revoke of a bot's federated account that
 ## Slash command tables
 
 The same migration adds the two tables of the slash commands. `bot_commands`: `id` (PK), `bot_id` (FK to `users`, cascade), `name`, `description`, `options` (JSON array, default `'[]'`), `updated_at`; unique index on `(bot_id, name)`. `interactions`: `id` (random 32-hex string, PK), `bot_id` and `user_id` (FKs to `users`, cascade), `channel_id` / `dm_channel_id` (exactly one is set), `command`, `options` (JSON object of the parsed values), `created_at`, `expires_at`, `responses` (default 0); index on `expires_at`. A spent interaction is dropped by the first invocation that comes a day after it expired. A bot's `bot_commands` rows are deleted when the bot is tombstoned.
+
+Migration `0040_command_permissions.sql` adds `bot_commands.required_permissions` (text, nullable): the permissions a person needs in the invoking channel to see and use the command, canonical decimal mask; null for none. Subcommands and groups keep their own `requiredPermissions` inside `options`. See [bots.md](bots.md), "Required permissions".
