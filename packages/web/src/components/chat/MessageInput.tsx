@@ -30,9 +30,9 @@ import { describeError } from '../../i18n/errors';
 import { HttpError } from '../../api/client';
 import {
   argumentFrames,
-  ARG_SEPARATOR,
   VALUE_GAP,
   draftCommandName,
+  spaceArguments,
   parseCommandArgs,
   remainingOptions,
   suggestOptions,
@@ -270,10 +270,9 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const selectOption = useCallback(
     (option: BotCommandOption) => {
       if (!optionSuggest) return;
-      // The composer's own spacing gives the argument's capsule room around it
-      // and between its name and value; the space typed before it is replaced.
-      const before = draftText.slice(0, optionSuggest.startIndex).replace(/[^\S\n]+$/, '');
-      const text = before + ARG_SEPARATOR + option.name + ':' + VALUE_GAP;
+      // The composer's spacing gives the argument's capsule room around it.
+      const written = draftText.slice(0, optionSuggest.startIndex) + option.name + ':';
+      const { text } = spaceArguments(written, optionSuggest.command, written.length);
       setDraft(channelId, text);
       setOptionSuggest(null);
       // The option's values are offered straight away when it has any to offer.
@@ -408,12 +407,13 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       pickedCommandRef.current = command;
       // Required options go into the text straight away, ready to be filled in.
       const required = command.options.filter((o) => o.required);
-      const head = `/${command.name}${ARG_SEPARATOR}`;
-      const text = head + required.map((o) => o.name + ':' + VALUE_GAP).join(ARG_SEPARATOR);
+      const written = `/${command.name} ` + required.map((o) => o.name + ':').join(' ');
+      const { text } = spaceArguments(written, command, written.length);
+      const first = argumentFrames(text, command)[0];
       setDraft(channelId, text);
       setCommandState(null);
       // With required options the caret goes behind the first one; without, the optional ones are offered.
-      const caret = required.length > 0 ? head.length + required[0]!.name.length + 1 + VALUE_GAP.length : text.length;
+      const caret = required.length > 0 && first ? first.colonAt + 1 + VALUE_GAP.length : text.length;
       setOptionSuggest(required.length === 0 && chatCommands ? suggestOptions(text, chatCommands, command) : null);
       // A single required option of a picked type opens its value list at once.
       setValueSuggest(caret === text.length && chatCommands ? suggestValue(text, chatCommands, command) : null);
@@ -860,8 +860,29 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     // After "/name " the options of that command are offered, and the values of a
     // user, role, channel or boolean option (only while the caret is at the end).
     // Both read the draft as stored, mention tokens and all, so offsets match it.
-    const commands = cursorPos === value.length ? chatCommands : null;
-    const wire = commands ? mentionModel.update(value, cursorPos).value : '';
+    const updated = mentionModel.update(value, cursorPos);
+    let wire = updated.value;
+    let atEnd = cursorPos === value.length;
+
+    // Typed or pasted arguments get the composer's spacing, as picked ones do,
+    // so their capsules have room. Only text that grew is respaced: a deleted
+    // space stays deleted, and an IME composition is left alone.
+    const named = chatCommands ? draftCommandName(wire) : null;
+    const picked = pickedCommandRef.current;
+    const typedCommand = named === null ? undefined
+      : picked && picked.name === named ? picked : chatCommands?.find((c) => c.name === named);
+    if (typedCommand && value.length > mentionModel.text.length && !(e.nativeEvent as InputEvent).isComposing) {
+      const spaced = spaceArguments(wire, typedCommand, updated.wireCursor);
+      if (spaced.text !== wire) {
+        wire = spaced.text;
+        atEnd = spaced.caret === wire.length;
+        setDraft(channelId, wire);
+        const caret = modelFor(wire).toDisplay(spaced.caret);
+        requestAnimationFrame(() => textareaRef.current?.setSelectionRange(caret, caret));
+      }
+    }
+
+    const commands = atEnd ? chatCommands : null;
     setOptionSuggest(commands ? suggestOptions(wire, commands, pickedCommandRef.current) : null);
     setValueSuggest(commands ? suggestValue(wire, commands, pickedCommandRef.current) : null);
 

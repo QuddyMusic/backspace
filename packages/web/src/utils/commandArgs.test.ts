@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BotCommandListing, BotCommandOption } from '@backspace/shared';
-import { ARG_SEPARATOR, VALUE_GAP, argumentFrames, draftCommandName, parseCommandArgs, remainingOptions, suggestOptions, suggestValue, type CommandArgContext } from './commandArgs';
+import { ARG_SEPARATOR, HEAD_GAP, VALUE_GAP, argumentFrames, draftCommandName, parseCommandArgs, remainingOptions, spaceArguments, suggestOptions, suggestValue, type CommandArgContext } from './commandArgs';
 
 function option(name: string, type: BotCommandOption['type'], required = false): BotCommandOption {
   return { name, description: name, type, required };
@@ -76,9 +76,14 @@ describe('parseCommandArgs', () => {
 });
 
 describe('remainingOptions', () => {
-  it('offers the optional options that are not written yet', () => {
+  it('offers the options that are not written yet', () => {
     expect(remainingOptions(play, '/play query:x volume:3').map((o) => o.name)).toEqual(['loop']);
     expect(remainingOptions(play, '/play query:x').map((o) => o.name)).toEqual(['volume', 'loop']);
+  });
+
+  it('puts a required option that is not written yet first', () => {
+    expect(remainingOptions(play, '/play volume:3').map((o) => o.name)).toEqual(['query', 'loop']);
+    expect(remainingOptions(play, '/play ').map((o) => o.name)).toEqual(['query', 'volume', 'loop']);
   });
 });
 
@@ -253,7 +258,7 @@ describe('a space after the colon', () => {
 
 describe('the spacing the composer writes', () => {
   const ban = listing('ban', [option('who', 'user', true), option('silent', 'boolean'), option('reason', 'string')]);
-  const who = '/ban' + ARG_SEPARATOR + 'who:' + VALUE_GAP;
+  const who = '/ban' + HEAD_GAP + 'who:' + VALUE_GAP;
 
   it('parses as plain spaces do', () => {
     const rest = 'who:' + VALUE_GAP + '<@u1>' + ARG_SEPARATOR + 'reason:' + VALUE_GAP + 'spam' + ARG_SEPARATOR + 'silent:' + VALUE_GAP + 'true';
@@ -268,6 +273,7 @@ describe('the spacing the composer writes', () => {
     expect(suggestOptions(who, [ban], null)).toBeNull();
     expect(suggestOptions(who + '<@u1> ', [ban], null)).toMatchObject({ query: '', startIndex: who.length + 6 });
     expect(suggestOptions('/ban' + ARG_SEPARATOR, [ban], null)).toMatchObject({ query: '', startIndex: 6 });
+    expect(suggestOptions(who + '<@u1> ', [ban], null)).toMatchObject({ query: '' });
   });
 
   it('gives the thin space to the name\'s box and the en space to the value\'s', () => {
@@ -277,5 +283,31 @@ describe('the spacing the composer writes', () => {
       ['who', 'who:\u2009', '\u2002<@u1>'],
       ['silent', 'silent:\u2009', ''],
     ]);
+  });
+});
+
+describe('spaceArguments', () => {
+  const ban = listing('ban', [option('who', 'user', true), option('silent', 'boolean'), option('reason', 'string')]);
+  const spaced = '/ban' + HEAD_GAP + 'who:' + VALUE_GAP + '<@u1>' + ARG_SEPARATOR + 'reason:' + VALUE_GAP + 'too much spam';
+
+  it('spaces a pasted command as the composer writes it, and keeps a value\'s own spaces', () => {
+    const pasted = '/ban who:<@u1> reason: too much spam';
+    expect(spaceArguments(pasted, ban, pasted.length)).toEqual({ text: spaced, caret: spaced.length });
+    expect(spaceArguments(spaced, ban, 3)).toEqual({ text: spaced, caret: 3 });
+  });
+
+  it('gives a just typed colon its gap and moves the caret past it', () => {
+    const typed = '/ban who:';
+    const text = '/ban' + HEAD_GAP + 'who:' + VALUE_GAP;
+    expect(spaceArguments(typed, ban, typed.length)).toEqual({ text, caret: text.length });
+  });
+
+  it('spaces an empty value followed by the next option, and leaves line breaks and other commands alone', () => {
+    const text = '/ban who: silent:';
+    const want = '/ban' + HEAD_GAP + 'who:' + VALUE_GAP + ARG_SEPARATOR + 'silent:' + VALUE_GAP;
+    expect(spaceArguments(text, ban, 9).text).toBe(want);
+    expect(spaceArguments(text, ban, 9).caret).toBe(('/ban' + HEAD_GAP + 'who:').length);
+    expect(spaceArguments('/ban reason:a\nsilent:true', ban, 0).text).toBe('/ban' + HEAD_GAP + 'reason:' + VALUE_GAP + 'a\nsilent:' + VALUE_GAP + 'true');
+    expect(spaceArguments('/kick who:x', ban, 0)).toEqual({ text: '/kick who:x', caret: 0 });
   });
 });

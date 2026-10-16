@@ -3,13 +3,16 @@ import type { BotCommandListing, BotCommandOption, ChannelType } from '@backspac
 export type OptionValues = Record<string, string | number | boolean>;
 
 /**
- * The spacing the composer writes around an argument it inserts, so the
- * argument's capsule has room inside and out (the capsules are painted over
- * the text and cannot add width of their own): an em and an en space before
- * an option name, and a thin and an en space after its colon. The parser
- * reads any whitespace there, so a command typed with plain spaces means the
- * same; the server only ever sees the parsed options.
+ * The spacing the composer keeps around the arguments of a command draft, so
+ * each argument's capsule has room inside and out (the capsules are painted
+ * over the text and cannot add width of their own): an em space between the
+ * command and its first argument, an em and an en space between arguments,
+ * and a thin and an en space after a colon. `spaceArguments` writes it,
+ * whether an argument was picked from a list, typed or pasted. The parser
+ * reads any whitespace there, so text with plain spaces means the same; the
+ * server only ever sees the parsed options.
  */
+export const HEAD_GAP = '\u2003';
 export const ARG_SEPARATOR = '\u2003\u2002';
 export const VALUE_GAP = '\u2009\u2002';
 
@@ -167,11 +170,10 @@ export function parseCommandArgs(
   return { ok: true, options };
 }
 
-/** The optional options of a command that the text does not name yet. */
+/** The options of a command that the text does not name yet, the required ones first. */
 export function remainingOptions(command: BotCommandListing, text: string): BotCommandOption[] {
-  return command.options.filter(
-    (o) => !o.required && !new RegExp('(?:^|\\s)' + o.name + ':', 'i').test(text),
-  );
+  const missing = command.options.filter((o) => !new RegExp('(?:^|\\s)' + o.name + ':', 'i').test(text));
+  return [...missing.filter((o) => o.required), ...missing.filter((o) => !o.required)];
 }
 
 /**
@@ -318,4 +320,49 @@ export function argumentFrames(
     }
     return { nameStart: start.nameStart, colonAt: start.colonAt, valueStart, valueEnd: length > 0 ? from + length : valueStart };
   });
+}
+
+/**
+ * Writes the composer's spacing (`HEAD_GAP`, `ARG_SEPARATOR`, `VALUE_GAP`)
+ * around every argument of a draft that starts with `command`, in place of
+ * whatever whitespace is there, and moves `caret` with the text. Only the
+ * runs of spaces around `name:` change; a value's own spaces and line breaks
+ * stay as written. Text already spaced comes back unchanged.
+ */
+export function spaceArguments(text: string, command: BotCommandListing, caret: number): { text: string; caret: number } {
+  const frames = argumentFrames(text, command);
+  const head = /^\/[a-z0-9_-]+/i.exec(text);
+  if (!head || frames.length === 0) return { text, caret };
+  const isSpace = (char: string | undefined) => char !== undefined && /[^\S\n]/.test(char);
+  const edits: Array<{ start: number; end: number; insert: string }> = [];
+  let spacedUpTo = -1;
+  frames.forEach((frame, i) => {
+    // Before the name, unless the run after the previous colon already covered it.
+    let start = frame.nameStart;
+    while (isSpace(text[start - 1])) start--;
+    if (frame.nameStart > spacedUpTo && start > 0 && text[start - 1] !== '\n') {
+      edits.push({ start, end: frame.nameStart, insert: start === head[0].length ? HEAD_GAP : ARG_SEPARATOR });
+    }
+    // After the colon: the value's gap, and the separator too when no value follows.
+    const from = frame.colonAt + 1;
+    let end = from;
+    while (isSpace(text[end])) end++;
+    if (end < text.length && text[end] === '\n') return;
+    const next = frames[i + 1];
+    if (next && end === next.nameStart) {
+      edits.push({ start: from, end, insert: VALUE_GAP + ARG_SEPARATOR });
+      spacedUpTo = end;
+    } else {
+      edits.push({ start: from, end, insert: VALUE_GAP });
+    }
+  });
+  let spaced = text;
+  let moved = caret;
+  for (const edit of [...edits].reverse()) {
+    if (text.slice(edit.start, edit.end) === edit.insert) continue;
+    spaced = spaced.slice(0, edit.start) + edit.insert + spaced.slice(edit.end);
+    if (caret >= edit.end) moved += edit.insert.length - (edit.end - edit.start);
+    else if (caret > edit.start) moved = moved - (caret - edit.start) + edit.insert.length;
+  }
+  return { text: spaced, caret: moved };
 }

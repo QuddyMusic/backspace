@@ -244,7 +244,7 @@ describe('MessageInput slash commands', () => {
     fireEvent.click(await screen.findByText('/poke'));
     expect(await screen.findByText('Bob')).toBeTruthy();
     // The required option is written with the composer's spacing, ready for its value.
-    expect(useComposerStore.getState().get('dm-1').draftText).toBe('/poke\u2003\u2002who:\u2009\u2002');
+    expect(useComposerStore.getState().get('dm-1').draftText).toBe('/poke\u2003who:\u2009\u2002');
 
     fireEvent.change(input, { target: { value: '/poke who:bo', selectionStart: 12 } });
     expect(await screen.findByText('Bob')).toBeTruthy();
@@ -295,6 +295,11 @@ describe('MessageInput slash commands', () => {
       command: 'volume',
       options: { level: 80 },
     })));
+
+    // A pasted command gets the same spacing as picked arguments.
+    fireEvent.change(input, { target: { value: '/volume level:loud fade:true', selectionStart: 28 } });
+    expect(useComposerStore.getState().get('dm-1').draftText)
+      .toBe('/volume\u2003level:\u2009\u2002loud\u2003\u2002fade:\u2009\u2002true');
   });
 
   it('asks for the command list again when a new command starts', async () => {

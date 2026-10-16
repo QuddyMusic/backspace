@@ -160,6 +160,9 @@ function OptionList({ options, selectedIndex, onSelect }: Omit<CommandOptionPopo
             {`${option.name}:`}
           </span>
           <span className="text-[12px] text-txt-tertiary truncate flex-1 min-w-0">{option.description}</span>
+          {option.required && (
+            <span className="text-[11px] text-accent-primary shrink-0">{t('chat:commands.required')}</span>
+          )}
           <span className="text-[11px] text-txt-tertiary shrink-0">{option.type}</span>
         </div>
       ))}
