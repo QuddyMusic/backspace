@@ -10,6 +10,7 @@ Source files:
 - `packages/server/src/utils/userDeletion.ts` -- `tombstoneUser` purges a user's bookmarks
 - `packages/server/src/utils/storageJanitor.ts` -- `getReferencedFilenames()` counts files a bookmark owns
 - `packages/shared/src/bookmarks.ts` -- wire types and page limits
+- `packages/web/src/stores/jumpStore.ts`, `packages/web/src/hooks/useJumpNavigation.ts` -- opening a bookmark's conversation at its message (message-list.md, "Jump to message")
 
 DB tables: `message_bookmarks`, `bookmark_attachments`. See [database.md](database.md). Routes: [api.md](api.md).
 
@@ -64,6 +65,10 @@ Per attachment, computed on read by checking the file in `UPLOAD_DIR`: `state: '
 `GET /api/bookmarks` is keyset-paged newest first on `(created_at, id)`, both descending, backed by `idx_message_bookmarks_user_created`. The cursor is `<created_at>:<id>`; a value this server did not issue is `400 validation_failed`. `limit` defaults to 30 (`BOOKMARKS_PAGE_DEFAULT`) and is at most 100 (`BOOKMARKS_PAGE_MAX`).
 
 `GET /api/bookmarks/keys?kind=&channelId=` returns the bookmarked message ids of one channel or DM (`idx_message_bookmarks_user_channel`), for the "is bookmarked" state of an open conversation. It is bounded by the conversation, not by the user's total.
+
+## Events
+
+A created bookmark is announced as `bookmark_added` and a removed one as `bookmark_removed`, to the caller's own sockets on this instance only, so a second tab or device stays in step. Nothing is relayed. A repeated create or a removal that found nothing sends no event. See websocket.md.
 
 ## Limitations
 

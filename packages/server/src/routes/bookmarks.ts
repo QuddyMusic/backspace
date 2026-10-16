@@ -7,6 +7,7 @@ import {
 } from '@backspace/shared/src/bookmarks.js';
 import { authenticate } from '../utils/auth.js';
 import { sendError } from '../utils/httpErrors.js';
+import { connectionManager } from '../ws/handler.js';
 import {
   createBookmark,
   deleteBookmark,
@@ -31,6 +32,8 @@ interface BookmarkParams {
  * Personal bookmarks (docs/systems/bookmarks.md). Every route reads and writes
  * the caller's own bookmarks only. A bookmark lives on the instance that serves
  * the message, so a client asks the instance of the conversation it is in.
+ * A change is pushed to the caller's own sockets as `bookmark_added` /
+ * `bookmark_removed` (docs/systems/websocket.md); nothing is relayed.
  */
 export async function bookmarkRoutes(app: FastifyInstance): Promise<void> {
   // The caller's bookmarks, newest first. Paged: a user has no bookmark limit.
@@ -76,6 +79,8 @@ export async function bookmarkRoutes(app: FastifyInstance): Promise<void> {
     const { kind, messageId } = request.params;
     const result = createBookmark(request.userId, kind, messageId);
     if (!result.ok) return sendError(reply, result.status, result.code);
+    // The caller's other sessions on this instance learn of it; nobody else does.
+    if (result.created) connectionManager.sendToUser(request.userId, { type: 'bookmark_added', bookmark: result.bookmark });
     return reply.code(result.created ? 201 : 200).send(result.bookmark);
   });
 
@@ -85,7 +90,10 @@ export async function bookmarkRoutes(app: FastifyInstance): Promise<void> {
     schema: { params: bookmarkParamsSchema },
   }, async (request) => {
     const { kind, messageId } = request.params;
-    deleteBookmark(request.userId, kind, messageId);
+    const removed = deleteBookmark(request.userId, kind, messageId);
+    if (removed) {
+      connectionManager.sendToUser(request.userId, { type: 'bookmark_removed', kind, channelId: removed.channelId, messageId });
+    }
     return { success: true };
   });
 }

@@ -21,12 +21,18 @@ let sqlite: Database.Database;
 let testDb: TestDb;
 let currentUserId = 'alice';
 
-const hoisted = vi.hoisted(() => ({ uploadDir: '', deleted: [] as string[] }));
+const hoisted = vi.hoisted(() => ({ uploadDir: '', deleted: [] as string[], sent: [] as Array<{ userId: string; event: unknown }> }));
 
 vi.mock('../db/index.js', () => ({
   getDb: () => testDb,
   getRawDb: () => sqlite,
   schema,
+}));
+
+vi.mock('../ws/handler.js', () => ({
+  connectionManager: {
+    sendToUser: (userId: string, event: unknown) => { hoisted.sent.push({ userId, event }); },
+  },
 }));
 
 vi.mock('../utils/auth.js', () => ({
@@ -137,6 +143,7 @@ describe('bookmarks', () => {
   beforeEach(async () => {
     hoisted.uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bookmarks-test-'));
     hoisted.deleted.length = 0;
+    hoisted.sent.length = 0;
     sqlite = new Database(':memory:');
     sqlite.pragma('foreign_keys = ON');
     testDb = drizzle(sqlite, { schema });
@@ -369,6 +376,31 @@ describe('bookmarks', () => {
       const left = testDb.select().from(schema.messageBookmarks).all();
       expect(left).toHaveLength(1);
       expect(left[0]?.userId).toBe('alice');
+    });
+  });
+
+  describe('WebSocket events', () => {
+    it('tells only the caller, once, when a bookmark is created', async () => {
+      addMessage('m-1', 'hello');
+      const created = (await put(app, 'channel', 'm-1')).json() as Bookmark;
+      await put(app, 'channel', 'm-1');
+      expect(hoisted.sent).toEqual([{ userId: 'alice', event: { type: 'bookmark_added', bookmark: created } }]);
+    });
+
+    it('sends nothing for a refused create', async () => {
+      await put(app, 'channel', 'missing');
+      expect(hoisted.sent).toEqual([]);
+    });
+
+    it('tells the caller which conversation a removed bookmark was in, and nothing for a no-op removal', async () => {
+      addMessage('m-1', 'bye');
+      await put(app, 'channel', 'm-1');
+      hoisted.sent.length = 0;
+      await app.inject({ method: 'DELETE', url: '/api/bookmarks/channel/m-1' });
+      await app.inject({ method: 'DELETE', url: '/api/bookmarks/channel/m-1' });
+      expect(hoisted.sent).toEqual([
+        { userId: 'alice', event: { type: 'bookmark_removed', kind: 'channel', channelId: 'ch-1', messageId: 'm-1' } },
+      ]);
     });
   });
 

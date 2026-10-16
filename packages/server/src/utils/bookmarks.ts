@@ -453,21 +453,22 @@ export function deleteBookmarkFiles(filenames: string[]): void {
 }
 
 /**
- * Remove a bookmark and the files it owns. Idempotent: true when a bookmark was
- * removed, false when there was none.
+ * Remove a bookmark and the files it owns. Idempotent: the removed bookmark's
+ * channel id when one was removed, null when there was none.
  */
-export function deleteBookmark(userId: string, kind: BookmarkKind, messageId: string): boolean {
+export function deleteBookmark(userId: string, kind: BookmarkKind, messageId: string): { channelId: string } | null {
   const db = getDb();
   let ownFiles: string[] = [];
   const removed = db.transaction((tx) => {
-    const row = tx.select({ id: schema.messageBookmarks.id }).from(schema.messageBookmarks)
+    const row = tx.select({ id: schema.messageBookmarks.id, channelId: schema.messageBookmarks.channelId })
+      .from(schema.messageBookmarks)
       .where(and(
         eq(schema.messageBookmarks.userId, userId),
         eq(schema.messageBookmarks.kind, kind),
         eq(schema.messageBookmarks.messageId, messageId),
       ))
       .get();
-    if (!row) return false;
+    if (!row) return null;
     ownFiles = tx.select({ filename: schema.bookmarkAttachments.filename })
       .from(schema.bookmarkAttachments)
       .where(and(eq(schema.bookmarkAttachments.bookmarkId, row.id), isNotNull(schema.bookmarkAttachments.filename)))
@@ -475,7 +476,7 @@ export function deleteBookmark(userId: string, kind: BookmarkKind, messageId: st
       .flatMap((attachment) => (attachment.filename ? [attachment.filename] : []));
     tx.delete(schema.bookmarkAttachments).where(eq(schema.bookmarkAttachments.bookmarkId, row.id)).run();
     tx.delete(schema.messageBookmarks).where(eq(schema.messageBookmarks.id, row.id)).run();
-    return true;
+    return { channelId: row.channelId };
   });
   deleteBookmarkFiles(ownFiles);
   return removed;

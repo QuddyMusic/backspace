@@ -360,7 +360,7 @@ Every route reads and writes the current user's own bookmarks. A bookmark lives 
 | PUT | `/api/bookmarks/:kind/:messageId` | JWT | Saves a copy of the message, or returns the bookmark already there. `201` created, `200` existed. Body: the `Bookmark` |
 | DELETE | `/api/bookmarks/:kind/:messageId` | JWT | Removes the bookmark and the files it owns. Idempotent: `{ success: true }` even when there was none |
 
-`kind` is `channel` or `dm`. A `Bookmark` (`packages/shared/src/bookmarks.ts`) carries the saved copy, the original's ids, `attachments[]` with a per-file `state` (`available` or `gone`) and `status` (`ok`, `edited`, `deleted`, `unavailable`), both worked out on each read. Refusals: `404 message_not_found` (no such message, or one the caller cannot read; the two are not told apart), `400 validation_failed` (a system message, an unknown `kind`, a cursor this server did not issue, a `limit` over 100). There is no bookmark limit and no WebSocket event in this version.
+`kind` is `channel` or `dm`. A `Bookmark` (`packages/shared/src/bookmarks.ts`) carries the saved copy, the original's ids, `attachments[]` with a per-file `state` (`available` or `gone`) and `status` (`ok`, `edited`, `deleted`, `unavailable`), both worked out on each read. Refusals: `404 message_not_found` (no such message, or one the caller cannot read; the two are not told apart), `400 validation_failed` (a system message, an unknown `kind`, a cursor this server did not issue, a `limit` over 100). There is no bookmark limit. A create that made a bookmark and a removal that found one are pushed to the caller's own sockets as `bookmark_added` / `bookmark_removed` (websocket.md).
 
 ## GIF (`routes/gif.ts`) — auth required
 ```

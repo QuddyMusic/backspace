@@ -45,6 +45,7 @@ import { initActivityBridge, teardownActivityBridge } from '../../platform/activ
 import { useSpaceStore } from '../../stores/spaceStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useJumpNavigation } from '../../hooks/useJumpNavigation';
 import { useVoiceStore } from '../../stores/voiceStore';
 import { AudioManager } from '../../audio/AudioManager';
 import { isAppSystemAudioSource, userDevicesSignature } from '../../utils/systemAudioSource';
@@ -53,6 +54,7 @@ export function AppLayout() {
   const { t } = useTranslation('common');
   const { spaceId, channelId } = useParams<{ spaceId?: string; channelId?: string }>();
   const navigate = useNavigate();
+  useJumpNavigation();
   
   // Global interaction handler to resume AudioContext
   useEffect(() => {

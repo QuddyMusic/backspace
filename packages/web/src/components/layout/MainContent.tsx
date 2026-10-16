@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom';
 import { useSpaceStore } from '../../stores/spaceStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useActiveJump, useJumpStore } from '../../stores/jumpStore';
 import { MessageList } from '../chat/MessageList';
 import { MessageInput } from '../chat/MessageInput';
 import { VoiceGrid } from '../voice/VoiceGrid';
@@ -90,8 +91,22 @@ export function MainContent() {
   const chromeRevealed = usePointerReveal(voiceContainerRef, voiceFullscreen);
   const searchButtonRef = useRef<HTMLButtonElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [jumpToMessageId, setJumpToMessageId] = useState<string | null>(null);
-  const clearJumpRequest = useCallback(() => setJumpToMessageId(null), []);
+  // A jump to a message (search result, bookmark) is a request in `jumpStore`;
+  // this list takes it once its conversation is the open one.
+  const jumpToMessageId = useActiveJump(currentChannelId);
+  const clearJumpRequest = useJumpStore((s) => s.clearJump);
+  const requestJump = useJumpStore((s) => s.requestJump);
+  const jumpFromSearch = useCallback((messageId: string) => {
+    if (currentChannelId) {
+      requestJump(
+        currentSpaceId
+          ? { kind: 'channel', spaceId: currentSpaceId, channelId: currentChannelId }
+          : { kind: 'dm', channelId: currentChannelId },
+        messageId,
+      );
+    }
+    setSearchOpen(false);
+  }, [currentChannelId, currentSpaceId, requestJump]);
 
   // Resolve the DM header's "first other" member through the canonical view
   // cache. The hook must be called unconditionally at the component top, so we
@@ -430,7 +445,7 @@ export function MainContent() {
           anchorRef={searchButtonRef}
           channelId={currentChannelId}
           isDm={true}
-          onJumpToMessage={(id) => { setJumpToMessageId(id); setSearchOpen(false); }}
+          onJumpToMessage={jumpFromSearch}
         />
       </div>
     );
@@ -568,7 +583,7 @@ export function MainContent() {
         anchorRef={searchButtonRef}
         channelId={currentChannelId}
         isDm={false}
-        onJumpToMessage={(id) => { setJumpToMessageId(id); setSearchOpen(false); }}
+        onJumpToMessage={jumpFromSearch}
       />
     </div>
   );
