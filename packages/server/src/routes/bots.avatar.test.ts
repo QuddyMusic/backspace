@@ -128,6 +128,17 @@ describe('the avatar of a bot', () => {
     expect((await setAvatar('stray.webp')).statusCode).toBe(400);
   });
 
+  it('refuses a path instead of a bare filename', async () => {
+    upload('mine3.webp', 'owner');
+    for (const avatar of ['../mine3.webp', './mine3.webp', 'x/../mine3.webp', '/api/uploads/../mine3.webp', '/etc/passwd', '..', '.hidden']) {
+      const res = await setAvatar(avatar);
+      expect([res.statusCode, (res.json() as { code: string }).code], avatar).toEqual([400, 'avatar_url_invalid']);
+    }
+    expect(botAvatar()).toBeNull();
+    expect((await setAvatar('/api/uploads/mine3.webp')).statusCode).toBe(200);
+    expect(botAvatar()).toBe('mine3.webp');
+  });
+
   it('keeps its current avatar when the same file is sent again, and can drop it', async () => {
     upload('mine2.webp', 'owner');
     expect((await setAvatar('mine2.webp')).statusCode).toBe(200);

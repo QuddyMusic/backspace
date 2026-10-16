@@ -291,8 +291,12 @@ export async function botRoutes(app: FastifyInstance): Promise<void> {
       if (avatar === null) {
         newAvatar = null;
       } else if (typeof avatar === 'string') {
-        const bare = avatar.startsWith('/api/uploads/') ? avatar.slice('/api/uploads/'.length) : avatar;
-        if (!AVATAR_FILE_RE.test(bare) || !fs.existsSync(path.join(config.uploadDir, bare))) {
+        const sent = avatar.startsWith('/api/uploads/') ? avatar.slice('/api/uploads/'.length) : avatar;
+        // Only a bare filename in the upload directory: the name is taken through
+        // `path.basename` (as in PATCH /api/users/@me), and anything path-shaped
+        // is refused rather than cut down to its last part.
+        const bare = path.basename(sent);
+        if (bare !== sent || !AVATAR_FILE_RE.test(bare) || !fs.existsSync(path.join(config.uploadDir, bare))) {
           return sendError(reply, 400, 'avatar_url_invalid');
         }
         // The file must be the owner's own upload that no message holds (or the
