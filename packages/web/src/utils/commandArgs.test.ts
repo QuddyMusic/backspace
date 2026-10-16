@@ -306,8 +306,28 @@ describe('spaceArguments', () => {
     const text = '/ban who: silent:';
     const want = '/ban' + HEAD_GAP + 'who:' + VALUE_GAP + ARG_SEPARATOR + 'silent:' + VALUE_GAP;
     expect(spaceArguments(text, ban, 9).text).toBe(want);
-    expect(spaceArguments(text, ban, 9).caret).toBe(('/ban' + HEAD_GAP + 'who:').length);
+    expect(spaceArguments(text, ban, 9).caret).toBe(('/ban' + HEAD_GAP + 'who:' + VALUE_GAP).length);
     expect(spaceArguments('/ban reason:a\nsilent:true', ban, 0).text).toBe('/ban' + HEAD_GAP + 'reason:' + VALUE_GAP + 'a\nsilent:' + VALUE_GAP + 'true');
     expect(spaceArguments('/kick who:x', ban, 0)).toEqual({ text: '/kick who:x', caret: 0 });
+  });
+
+  it('leaves a space typed before the next option alone, so a new option can be written there', () => {
+    const before = '/ban' + HEAD_GAP + 'who:' + VALUE_GAP + '<@u1>';
+    const after = ARG_SEPARATOR + 'reason:' + VALUE_GAP + 'spam';
+    // A space typed right after the value, in front of the separator.
+    const typed = before + ' ' + after;
+    expect(spaceArguments(typed, ban, before.length + 1)).toEqual({ text: typed, caret: before.length + 1 });
+    // Then `silent:` there: it gets its spacing and the caret goes into its slot.
+    const named = before + ' silent:' + after;
+    const want = before + ARG_SEPARATOR + 'silent:' + VALUE_GAP + ARG_SEPARATOR + 'reason:' + VALUE_GAP + 'spam';
+    const caret = (before + ARG_SEPARATOR + 'silent:' + VALUE_GAP).length;
+    expect(spaceArguments(named, ban, (before + ' silent:').length)).toEqual({ text: want, caret });
+  });
+
+  it('does not read a name inside a quoted value as an option', () => {
+    const text = '/ban reason:"ask who:me" silent:true';
+    const want = '/ban' + HEAD_GAP + 'reason:' + VALUE_GAP + '"ask who:me"' + ARG_SEPARATOR + 'silent:' + VALUE_GAP + 'true';
+    expect(spaceArguments(text, ban, text.length).text).toBe(want);
+    expect(remainingOptions(ban, want).map((o) => o.name)).toEqual(['who']);
   });
 });

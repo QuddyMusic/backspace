@@ -9,6 +9,7 @@ import { isDmChannel, useIsDmChannel, getChannelOrigin, useSpaceStore } from '..
 import { wsSend } from '../../hooks/useWebSocket';
 import { MentionPopover } from './MentionPopover';
 import { CommandOptionPopover, CommandPopover, CommandValuePopover, type CommandValueCandidate } from './CommandPopover';
+import { placeCaret } from './placeCaret';
 import { TypingIndicator } from './TypingIndicator';
 import { InputPopover, type InputPopoverTab } from './InputPopover';
 import { StagedTransferTiles } from './StagedTransferTiles';
@@ -259,7 +260,24 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
     return request;
   }, [channelId, isDm]);
 
-  // The option popover's rows: the optional options of the typed command not written yet.
+  // A command pasted before the list arrived is spaced once it does, as if typed
+  // now. A layout effect, so the new text is written before the caret is put back.
+  useLayoutEffect(() => {
+    if (!chatCommands) return;
+    const draft = useComposerStore.getState().get(channelId).draftText;
+    const name = draftCommandName(draft);
+    const command = name === null ? undefined : chatCommands.find((c) => c.name === name);
+    if (!command) return;
+    const textarea = textareaRef.current;
+    const model = modelFor(draft);
+    const caret = textarea ? model.toWire(textarea.selectionStart) : draft.length;
+    const spaced = spaceArguments(draft, command, caret);
+    if (spaced.text === draft) return;
+    setDraft(channelId, spaced.text);
+    if (textarea && document.activeElement === textarea) placeCaret(textareaRef, modelFor(spaced.text).toDisplay(spaced.caret));
+  }, [chatCommands, channelId, modelFor, setDraft]);
+
+  // The option popover's rows: the options of the typed command not written yet, required first.
   const optionMatches = useMemo(() => {
     if (!optionSuggest || draftCommandName(draftText) !== optionSuggest.command.name) return [];
     return remainingOptions(optionSuggest.command, draftText)
@@ -279,13 +297,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       setValueSuggest(chatCommands ? suggestValue(text, chatCommands, optionSuggest.command) : null);
       // The draft holds mention tokens; the textarea shows names.
       const caret = modelFor(text).toDisplay(text.length);
-      requestAnimationFrame(() => {
-        const textarea = textareaRef.current;
-        if (!textarea) return;
-        textarea.focus();
-        textarea.selectionStart = caret;
-        textarea.selectionEnd = caret;
-      });
+      placeCaret(textareaRef, caret, true);
     },
     [optionSuggest, draftText, setDraft, channelId, chatCommands, modelFor],
   );
@@ -384,13 +396,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       setValueSuggest(null);
       setOptionSuggest(null);
       const caret = modelFor(text).toDisplay(text.length);
-      requestAnimationFrame(() => {
-        const textarea = textareaRef.current;
-        if (!textarea) return;
-        textarea.focus();
-        textarea.selectionStart = caret;
-        textarea.selectionEnd = caret;
-      });
+      placeCaret(textareaRef, caret, true);
     },
     [valueSuggest, draftText, setDraft, channelId, modelFor],
   );
@@ -417,13 +423,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       setOptionSuggest(required.length === 0 && chatCommands ? suggestOptions(text, chatCommands, command) : null);
       // A single required option of a picked type opens its value list at once.
       setValueSuggest(caret === text.length && chatCommands ? suggestValue(text, chatCommands, command) : null);
-      requestAnimationFrame(() => {
-        const textarea = textareaRef.current;
-        if (!textarea) return;
-        textarea.focus();
-        textarea.selectionStart = caret;
-        textarea.selectionEnd = caret;
-      });
+      placeCaret(textareaRef, caret, true);
     },
     [setDraft, channelId, chatCommands],
   );
@@ -873,12 +873,11 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       : picked && picked.name === named ? picked : chatCommands?.find((c) => c.name === named);
     if (typedCommand && value.length > mentionModel.text.length && !(e.nativeEvent as InputEvent).isComposing) {
       const spaced = spaceArguments(wire, typedCommand, updated.wireCursor);
-      if (spaced.text !== wire) {
+      if (spaced.text !== wire || spaced.caret !== updated.wireCursor) {
         wire = spaced.text;
         atEnd = spaced.caret === wire.length;
         setDraft(channelId, wire);
-        const caret = modelFor(wire).toDisplay(spaced.caret);
-        requestAnimationFrame(() => textareaRef.current?.setSelectionRange(caret, caret));
+        placeCaret(textareaRef, modelFor(wire).toDisplay(spaced.caret));
       }
     }
 

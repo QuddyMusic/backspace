@@ -15,19 +15,26 @@ interface Props extends TextareaHTMLAttributes<HTMLTextAreaElement> {
  * An argument is drawn as one capsule in two tones, like the glass pills of
  * the design system: the option's name on the lighter half, its value on the
  * darker one, framed by a line (dashed while no value is written). Only
- * backgrounds, radii, box-shadows and absolutely placed pseudo-elements are
- * used: the mirror must lay its text out exactly as the textarea does, or the
- * caret and the painted text drift apart. The room inside and between the
- * capsules is the spacing the composer writes (see `ARG_SEPARATOR` and
- * `VALUE_GAP`): the colon of `name:` and a thin space after it are the name's
- * right padding, drawn transparent, an en space is the value's left padding,
- * and the outer ends are widened by a shadow in the capsule's colour. The
- * class strings are written out whole so Tailwind finds them.
+ * backgrounds, radii, box-shadows and zero-width boxes with absolutely placed
+ * pseudo-elements are used: the mirror must lay its text out exactly as the
+ * textarea does, or the caret and the painted text drift apart. The room
+ * inside and between the capsules is the spacing the composer writes (see
+ * `spaceArguments`): the colon of `name:` and a thin space after it are the
+ * name's right padding, drawn transparent, and an en space is the value's left
+ * padding. The name's left end is widened by a shadow in its colour; the
+ * value's frame is drawn by inset shadows (top, bottom, left), which a value
+ * wrapped over several lines carries along each line, and closed by an end
+ * cap, a zero-width box after the value that draws the right padding and the
+ * frame's rounded right end. That cap and the slot of an empty value are
+ * empty inline spans: they take no width and break no line, and their
+ * pseudo-element spans exactly the line's text height. The class strings
+ * are written out whole so Tailwind finds them.
  */
 const NAME_BOX = 'bg-white/[0.10] text-txt-secondary rounded-l-md [box-shadow:-6px_0_0_0_rgba(255,255,255,0.10)]';
 const COLON = 'text-transparent';
-const VALUE_BOX = 'relative bg-white/[0.05] text-txt-primary rounded-r-md [box-shadow:6px_0_0_0_rgba(255,255,255,0.05)] after:content-[""] after:pointer-events-none after:absolute after:inset-y-0 after:left-0 after:-right-[6px] after:rounded-r-md after:border after:border-white/25';
-const EMPTY_VALUE_BOX = 'relative inline-block w-0 after:content-[""] after:absolute after:left-0 after:bottom-[-0.28em] after:h-[1.2em] after:w-[var(--slot)] after:rounded-r-md after:border after:border-dashed after:border-white/25 after:bg-white/[0.03]';
+const VALUE_BOX = 'bg-white/[0.05] text-txt-primary [box-shadow:inset_1px_0_0_0_rgba(255,255,255,0.25),inset_0_1px_0_0_rgba(255,255,255,0.25),inset_0_-1px_0_0_rgba(255,255,255,0.25)]';
+const VALUE_END = 'relative after:content-[""] after:absolute after:inset-y-0 after:left-0 after:w-[6px] after:rounded-r-md after:border after:border-l-0 after:border-white/25 after:bg-white/[0.05]';
+const EMPTY_VALUE_BOX = 'relative after:content-[""] after:absolute after:inset-y-0 after:left-0 after:w-[var(--slot)] after:rounded-r-md after:border after:border-dashed after:border-white/25 after:bg-white/[0.03]';
 const MENTION = 'rounded bg-accent-primary/15 text-accent-primary';
 
 /** Rough widths of the spaces a draft holds, in em, to size an empty value's slot. */
@@ -107,7 +114,9 @@ export function MentionTextarea({ model, textareaRef, mentionAnchorRef, mentionS
   let group: { key: string; region: Region; children: ReactNode[] } | null = null;
   const flush = () => {
     if (!group) return;
-    pieces.push(<span key={group.key} className={group.region === 'value' ? VALUE_BOX : NAME_BOX}>{group.children}</span>);
+    pieces.push(group.region === 'value'
+      ? <span key={group.key} className={VALUE_BOX}>{group.children}<span className={VALUE_END} /></span>
+      : <span key={group.key} className={NAME_BOX}>{group.children}</span>);
     group = null;
   };
   model.parts.forEach((part, index) => {

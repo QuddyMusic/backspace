@@ -170,9 +170,13 @@ export function parseCommandArgs(
   return { ok: true, options };
 }
 
-/** The options of a command that the text does not name yet, the required ones first. */
+/**
+ * The options of a command that the draft `text` (`/name ...`) does not name
+ * yet, the required ones first. A `name:` inside a quoted value names nothing.
+ */
 export function remainingOptions(command: BotCommandListing, text: string): BotCommandOption[] {
-  const missing = command.options.filter((o) => !new RegExp('(?:^|\\s)' + o.name + ':', 'i').test(text));
+  const written = new Set(argumentFrames(text, command).map((f) => text.slice(f.nameStart, f.colonAt).toLowerCase()));
+  const missing = command.options.filter((o) => !written.has(o.name));
   return [...missing.filter((o) => o.required), ...missing.filter((o) => !o.required)];
 }
 
@@ -192,7 +196,9 @@ export function suggestOptions(
   const command = picked && picked.name === name ? picked : commands.find((c) => c.name === name);
   if (!command || command.options.length === 0) return null;
   const tail = value.slice(head[0].length);
-  const cut = tail.search(/\S*$/);
+  // The word being typed starts after the last whitespace of any kind.
+  let cut = tail.length;
+  while (cut > 0 && !/\s/.test(tail[cut - 1]!)) cut--;
   const partial = tail.slice(cut);
   if (partial.includes(':')) return null;
   // `name: ` with no value yet: its values are offered, not more options.
@@ -293,12 +299,21 @@ export function argumentFrames(
   const names = command.options.map((o) => o.name).join('|');
   const named = new RegExp('(^|\\s)(' + names + '):', 'gi');
   const starts: Array<{ nameStart: number; colonAt: number; name: string }> = [];
+  // A quoted value runs to its closing quote, whatever it holds; so does the parser.
+  let quotedUntil = 0;
   for (let m = named.exec(text); m; m = named.exec(text)) {
     if (m.index + m[1]!.length < head[0].length) continue;
     const nameStart = m.index + m[1]!.length;
+    if (nameStart < quotedUntil) continue;
     // A `name:` inside a mention's shown name is part of the mention.
     if (units.some((u) => nameStart > u.start && nameStart < u.end)) continue;
-    starts.push({ nameStart, colonAt: nameStart + m[2]!.length, name: m[2]!.toLowerCase() });
+    const colonAt = nameStart + m[2]!.length;
+    starts.push({ nameStart, colonAt, name: m[2]!.toLowerCase() });
+    const from = colonAt + 1 + /^[^\S\n]*/.exec(text.slice(colonAt + 1))![0].length;
+    if (text[from] === '"') {
+      const close = text.indexOf('"', from + 1);
+      quotedUntil = close < 0 ? text.length : close + 1;
+    }
   }
   return starts.map((start, i) => {
     const next = starts[i + 1]?.nameStart ?? text.length;
@@ -327,21 +342,26 @@ export function argumentFrames(
  * around every argument of a draft that starts with `command`, in place of
  * whatever whitespace is there, and moves `caret` with the text. Only the
  * runs of spaces around `name:` change; a value's own spaces and line breaks
- * stay as written. Text already spaced comes back unchanged.
+ * stay as written. A caret in the run after a colon goes behind the value's
+ * gap, into the value's slot; a run before a name that holds the caret is left
+ * as typed, since the person is writing there. Text already spaced comes back
+ * unchanged.
  */
 export function spaceArguments(text: string, command: BotCommandListing, caret: number): { text: string; caret: number } {
   const frames = argumentFrames(text, command);
   const head = /^\/[a-z0-9_-]+/i.exec(text);
   if (!head || frames.length === 0) return { text, caret };
   const isSpace = (char: string | undefined) => char !== undefined && /[^\S\n]/.test(char);
-  const edits: Array<{ start: number; end: number; insert: string }> = [];
+  // `caretAt`: where a caret in the run goes, as an offset into `insert`; null
+  // leaves a run that holds the caret alone.
+  const edits: Array<{ start: number; end: number; insert: string; caretAt: number | null }> = [];
   let spacedUpTo = -1;
   frames.forEach((frame, i) => {
     // Before the name, unless the run after the previous colon already covered it.
     let start = frame.nameStart;
     while (isSpace(text[start - 1])) start--;
     if (frame.nameStart > spacedUpTo && start > 0 && text[start - 1] !== '\n') {
-      edits.push({ start, end: frame.nameStart, insert: start === head[0].length ? HEAD_GAP : ARG_SEPARATOR });
+      edits.push({ start, end: frame.nameStart, insert: start === head[0].length ? HEAD_GAP : ARG_SEPARATOR, caretAt: null });
     }
     // After the colon: the value's gap, and the separator too when no value follows.
     const from = frame.colonAt + 1;
@@ -350,19 +370,24 @@ export function spaceArguments(text: string, command: BotCommandListing, caret: 
     if (end < text.length && text[end] === '\n') return;
     const next = frames[i + 1];
     if (next && end === next.nameStart) {
-      edits.push({ start: from, end, insert: VALUE_GAP + ARG_SEPARATOR });
+      edits.push({ start: from, end, insert: VALUE_GAP + ARG_SEPARATOR, caretAt: VALUE_GAP.length });
       spacedUpTo = end;
     } else {
-      edits.push({ start: from, end, insert: VALUE_GAP });
+      edits.push({ start: from, end, insert: VALUE_GAP, caretAt: VALUE_GAP.length });
     }
   });
   let spaced = text;
   let moved = caret;
   for (const edit of [...edits].reverse()) {
-    if (text.slice(edit.start, edit.end) === edit.insert) continue;
-    spaced = spaced.slice(0, edit.start) + edit.insert + spaced.slice(edit.end);
-    if (caret >= edit.end) moved += edit.insert.length - (edit.end - edit.start);
-    else if (caret > edit.start) moved = moved - (caret - edit.start) + edit.insert.length;
+    const inside = edit.caretAt === null
+      ? caret > edit.start && caret <= edit.end
+      : caret >= edit.start && caret <= edit.end;
+    if (inside && edit.caretAt === null) continue;
+    if (text.slice(edit.start, edit.end) !== edit.insert) {
+      spaced = spaced.slice(0, edit.start) + edit.insert + spaced.slice(edit.end);
+    }
+    if (inside) moved += edit.start + edit.caretAt! - caret;
+    else if (caret > edit.end) moved += edit.insert.length - (edit.end - edit.start);
   }
   return { text: spaced, caret: moved };
 }
