@@ -530,7 +530,7 @@ export function BotsPanel() {
                       <div className="flex flex-wrap gap-2">
                         <select
                           id={`bot-status-type-${bot.id}`}
-                          className="input-standard appearance-none w-full sm:w-44"
+                          className="input-standard appearance-none w-full desktop:w-44"
                           value={editStatusType}
                           onChange={(e) => setEditStatusType(e.target.value as StatusChoice)}
                         >
