@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BotCommandListing, BotCommandOption } from '@backspace/shared';
-import { argumentFrames, parseCommandArgs, remainingOptions, suggestOptions, suggestValue, type CommandArgContext } from './commandArgs';
+import { ARG_SEPARATOR, VALUE_GAP, argumentFrames, draftCommandName, parseCommandArgs, remainingOptions, suggestOptions, suggestValue, type CommandArgContext } from './commandArgs';
 
 function option(name: string, type: BotCommandOption['type'], required = false): BotCommandOption {
   return { name, description: name, type, required };
@@ -247,6 +247,35 @@ describe('a space after the colon', () => {
     expect(frames.map((f) => [text.slice(f.nameStart, f.valueStart), text.slice(f.valueStart, f.valueEnd)])).toEqual([
       ['who:', ' <@u1>'],
       ['silent:', ''],
+    ]);
+  });
+});
+
+describe('the spacing the composer writes', () => {
+  const ban = listing('ban', [option('who', 'user', true), option('silent', 'boolean'), option('reason', 'string')]);
+  const who = '/ban' + ARG_SEPARATOR + 'who:' + VALUE_GAP;
+
+  it('parses as plain spaces do', () => {
+    const rest = 'who:' + VALUE_GAP + '<@u1>' + ARG_SEPARATOR + 'reason:' + VALUE_GAP + 'spam' + ARG_SEPARATOR + 'silent:' + VALUE_GAP + 'true';
+    expect(parseCommandArgs(ban, rest)).toEqual({ ok: true, options: { who: 'u1', reason: 'spam', silent: true } });
+    expect(parseCommandArgs(ban, 'who:' + VALUE_GAP + ARG_SEPARATOR + 'silent:' + VALUE_GAP)).toEqual({ ok: true, options: {} });
+    expect(draftCommandName(who)).toBe('ban');
+  });
+
+  it('keeps the value list open in the gap, and offers options after a typed space', () => {
+    expect(suggestValue(who, [ban], null)).toMatchObject({ query: '', startIndex: who.length });
+    expect(suggestValue(who + 'bo', [ban], null)).toMatchObject({ query: 'bo', startIndex: who.length });
+    expect(suggestOptions(who, [ban], null)).toBeNull();
+    expect(suggestOptions(who + '<@u1> ', [ban], null)).toMatchObject({ query: '', startIndex: who.length + 6 });
+    expect(suggestOptions('/ban' + ARG_SEPARATOR, [ban], null)).toMatchObject({ query: '', startIndex: 6 });
+  });
+
+  it('gives the thin space to the name\'s box and the en space to the value\'s', () => {
+    const text = who + '<@u1>' + ARG_SEPARATOR + 'silent:' + VALUE_GAP;
+    const frames = argumentFrames(text, ban);
+    expect(frames.map((f) => [text.slice(f.nameStart, f.colonAt), text.slice(f.nameStart, f.valueStart), text.slice(f.valueStart, f.valueEnd)])).toEqual([
+      ['who', 'who:\u2009', '\u2002<@u1>'],
+      ['silent', 'silent:\u2009', ''],
     ]);
   });
 });

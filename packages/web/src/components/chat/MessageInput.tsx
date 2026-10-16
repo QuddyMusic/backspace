@@ -30,6 +30,9 @@ import { describeError } from '../../i18n/errors';
 import { HttpError } from '../../api/client';
 import {
   argumentFrames,
+  ARG_SEPARATOR,
+  VALUE_GAP,
+  draftCommandName,
   parseCommandArgs,
   remainingOptions,
   suggestOptions,
@@ -258,7 +261,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
 
   // The option popover's rows: the optional options of the typed command not written yet.
   const optionMatches = useMemo(() => {
-    if (!optionSuggest || !draftText.startsWith('/' + optionSuggest.command.name + ' ')) return [];
+    if (!optionSuggest || draftCommandName(draftText) !== optionSuggest.command.name) return [];
     return remainingOptions(optionSuggest.command, draftText)
       .filter((o) => o.name.startsWith(optionSuggest.query))
       .slice(0, 10);
@@ -267,8 +270,10 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   const selectOption = useCallback(
     (option: BotCommandOption) => {
       if (!optionSuggest) return;
-      // A space after the colon keeps the value's box clear of the name's.
-      const text = draftText.slice(0, optionSuggest.startIndex) + option.name + ': ';
+      // The composer's own spacing gives the argument's capsule room around it
+      // and between its name and value; the space typed before it is replaced.
+      const before = draftText.slice(0, optionSuggest.startIndex).replace(/[^\S\n]+$/, '');
+      const text = before + ARG_SEPARATOR + option.name + ':' + VALUE_GAP;
       setDraft(channelId, text);
       setOptionSuggest(null);
       // The option's values are offered straight away when it has any to offer.
@@ -332,7 +337,7 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
   // The value popover's rows.
   const valueMatches = useMemo((): CommandValueCandidate[] => {
     // Like the option popover, it follows the draft: once the command is gone, so is the list.
-    if (!valueSuggest || !draftText.startsWith('/' + valueSuggest.command.name + ' ')) return [];
+    if (!valueSuggest || draftCommandName(draftText) !== valueSuggest.command.name) return [];
     const { option, query } = valueSuggest;
     if (option.choices && option.choices.length > 0) {
       // The list shows a choice's name and writes it; the parser hands the bot its value.
@@ -403,12 +408,12 @@ export function MessageInput({ channelId, channelName, placeholder }: MessageInp
       pickedCommandRef.current = command;
       // Required options go into the text straight away, ready to be filled in.
       const required = command.options.filter((o) => o.required);
-      const head = `/${command.name} `;
-      const text = head + required.map((o) => `${o.name}: `).join('');
+      const head = `/${command.name}${ARG_SEPARATOR}`;
+      const text = head + required.map((o) => o.name + ':' + VALUE_GAP).join(ARG_SEPARATOR);
       setDraft(channelId, text);
       setCommandState(null);
       // With required options the caret goes behind the first one; without, the optional ones are offered.
-      const caret = required.length > 0 ? head.length + required[0]!.name.length + 2 : text.length;
+      const caret = required.length > 0 ? head.length + required[0]!.name.length + 1 + VALUE_GAP.length : text.length;
       setOptionSuggest(required.length === 0 && chatCommands ? suggestOptions(text, chatCommands, command) : null);
       // A single required option of a picked type opens its value list at once.
       setValueSuggest(caret === text.length && chatCommands ? suggestValue(text, chatCommands, command) : null);

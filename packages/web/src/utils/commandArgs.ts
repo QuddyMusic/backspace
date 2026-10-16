@@ -3,6 +3,22 @@ import type { BotCommandListing, BotCommandOption, ChannelType } from '@backspac
 export type OptionValues = Record<string, string | number | boolean>;
 
 /**
+ * The spacing the composer writes around an argument it inserts, so the
+ * argument's capsule has room inside and out (the capsules are painted over
+ * the text and cannot add width of their own): an em and an en space before
+ * an option name, and a thin and an en space after its colon. The parser
+ * reads any whitespace there, so a command typed with plain spaces means the
+ * same; the server only ever sees the parsed options.
+ */
+export const ARG_SEPARATOR = '\u2003\u2002';
+export const VALUE_GAP = '\u2009\u2002';
+
+/** The command a draft starts with (`/name` and whitespace), lowercase, or null. */
+export function draftCommandName(text: string): string | null {
+  return /^\/([a-z0-9_-]+)\s/i.exec(text)?.[1]?.toLowerCase() ?? null;
+}
+
+/**
  * What the chat knows that typed values may name: its people, and its space's
  * roles and channels (none in a DM).
  */
@@ -174,11 +190,11 @@ export function suggestOptions(
   const command = picked && picked.name === name ? picked : commands.find((c) => c.name === name);
   if (!command || command.options.length === 0) return null;
   const tail = value.slice(head[0].length);
-  const cut = Math.max(tail.lastIndexOf(' '), tail.lastIndexOf('\n')) + 1;
+  const cut = tail.search(/\S*$/);
   const partial = tail.slice(cut);
   if (partial.includes(':')) return null;
   // `name: ` with no value yet: its values are offered, not more options.
-  if (/(?:^|\s)[a-z0-9_-]+:\s$/i.test(tail)) return null;
+  if (/(?:^|\s)[a-z0-9_-]+:\s+$/i.test(tail)) return null;
   if (readNamedPairs(command, tail.slice(0, cut)).rest.length > 0) return null;
   return { command, query: partial.toLowerCase(), startIndex: head[0].length + cut, selectedIndex: 0, touched: false };
 }
@@ -225,8 +241,8 @@ export function suggestValue(
   if (!command) return null;
   const tail = value.slice(head[0].length);
   // The option being filled is the last `name:` of the text, its value written
-  // right after the colon or after one space (`who:bo`, `who: bo`).
-  const word = /(^|\s)([a-z0-9_-]+):( ?)(\S*)$/i.exec(tail);
+  // right after the colon or after its gap (`who:bo`, `who: bo`, VALUE_GAP).
+  const word = /(^|\s)([a-z0-9_-]+):([^\S\n]{0,2})(\S*)$/i.exec(tail);
   if (!word) return null;
   const option = command.options.find((o) => o.name === word[2]!.toLowerCase());
   if (!option || !offersValues(option)) return null;
@@ -246,9 +262,11 @@ export function suggestValue(
 
 /** One argument of a command draft as the composer frames it: its `name:` and its value. */
 export interface ArgumentFrame {
-  /** Where `name:` starts; the name's box runs to `valueStart` (the colon included). */
+  /** Where `name:` starts; the name's box runs to `valueStart`. */
   nameStart: number;
-  /** Just after the colon: the value's box starts here, a space after the colon included. */
+  /** The colon, drawn hidden inside the name's box. */
+  colonAt: number;
+  /** Where the value's box starts: after the colon (and a thin space right after it). */
   valueStart: number;
   /** Where the value ends; equal to `valueStart` while no value is written. */
   valueEnd: number;
@@ -256,11 +274,11 @@ export interface ArgumentFrame {
 
 /**
  * Where the arguments of a draft that starts with `command` sit, in the text
- * as the textarea shows it, so the composer can draw each as a box: `name:`
- * and its value. A value is read as the parser reads it: one word, a quoted
- * run, or for a string option written without quotes, everything up to the
- * next option written by name. `units` are spans that count as one word
- * whatever they hold (a mention shown as `@Display name`).
+ * as the textarea shows it, so the composer can draw each as a capsule:
+ * `name:` and its value. A value is read as the parser reads it: one word, a
+ * quoted run, or for a string option written without quotes, everything up
+ * to the next option written by name. `units` are spans that count as one
+ * word whatever they hold (a mention shown as `@Display name`).
  */
 export function argumentFrames(
   text: string,
@@ -272,19 +290,20 @@ export function argumentFrames(
   const types = new Map(command.options.map((o) => [o.name, o.type] as const));
   const names = command.options.map((o) => o.name).join('|');
   const named = new RegExp('(^|\\s)(' + names + '):', 'gi');
-  const starts: Array<{ nameStart: number; valueStart: number; name: string }> = [];
+  const starts: Array<{ nameStart: number; colonAt: number; name: string }> = [];
   for (let m = named.exec(text); m; m = named.exec(text)) {
     if (m.index + m[1]!.length < head[0].length) continue;
     const nameStart = m.index + m[1]!.length;
     // A `name:` inside a mention's shown name is part of the mention.
     if (units.some((u) => nameStart > u.start && nameStart < u.end)) continue;
-    starts.push({ nameStart, valueStart: nameStart + m[2]!.length + 1, name: m[2]!.toLowerCase() });
+    starts.push({ nameStart, colonAt: nameStart + m[2]!.length, name: m[2]!.toLowerCase() });
   }
   return starts.map((start, i) => {
     const next = starts[i + 1]?.nameStart ?? text.length;
-    // One space right after the colon belongs to the value's box.
-    const gap = text[start.valueStart] === ' ' ? 1 : 0;
-    const from = start.valueStart + gap;
+    // A thin space right after the colon pads the name; the spacing after it pads the value.
+    const valueStart = start.colonAt + 1 + (text[start.colonAt + 1] === '\u2009' ? 1 : 0);
+    const gap = /^[^\S\n]*/.exec(text.slice(valueStart, next))![0].length;
+    const from = valueStart + gap;
     const rest = text.slice(from, next);
     let length: number;
     if (rest.startsWith('"')) {
@@ -297,6 +316,6 @@ export function argumentFrames(
       const space = rest.search(/\s/);
       length = unit ? unit.end - unit.start : space < 0 ? rest.length : space;
     }
-    return { nameStart: start.nameStart, valueStart: start.valueStart, valueEnd: length > 0 ? from + length : start.valueStart };
+    return { nameStart: start.nameStart, colonAt: start.colonAt, valueStart, valueEnd: length > 0 ? from + length : valueStart };
   });
 }

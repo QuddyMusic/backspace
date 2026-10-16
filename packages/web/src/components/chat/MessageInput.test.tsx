@@ -243,6 +243,8 @@ describe('MessageInput slash commands', () => {
     fireEvent.change(input, { target: { value: '/po', selectionStart: 3 } });
     fireEvent.click(await screen.findByText('/poke'));
     expect(await screen.findByText('Bob')).toBeTruthy();
+    // The required option is written with the composer's spacing, ready for its value.
+    expect(useComposerStore.getState().get('dm-1').draftText).toBe('/poke\u2003\u2002who:\u2009\u2002');
 
     fireEvent.change(input, { target: { value: '/poke who:bo', selectionStart: 12 } });
     expect(await screen.findByText('Bob')).toBeTruthy();
