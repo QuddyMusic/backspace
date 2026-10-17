@@ -112,6 +112,14 @@ describe('a bookmark on a message', () => {
     expect(screen.queryByText('Bookmark message')).toBeNull();
   });
 
+  it('is offered on the page\'s own instance, whose origin is the empty string', async () => {
+    useSpaceStore.setState({ channelOriginMap: new Map([[dm.id, '']]) });
+    add.mockResolvedValue({ ...saved(), instanceOrigin: '' });
+    renderMessage();
+    fireEvent.click(screen.getByRole('button', { name: 'Bookmark' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Remove bookmark' })).toBeInTheDocument());
+  });
+
   it('has none while the message\'s instance is not known', () => {
     useSpaceStore.setState({ channelOriginMap: new Map() });
     renderMessage();

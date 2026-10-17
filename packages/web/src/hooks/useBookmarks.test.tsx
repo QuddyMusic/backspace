@@ -64,6 +64,14 @@ describe('useBookmarkedConversation', () => {
     await waitFor(() => expect(keys).toHaveBeenCalledWith('dm', 'dm-1'));
   });
 
+  it('reads the conversations of the page\'s own instance, whose origin is the empty string', async () => {
+    channelOrigins = new Map([['ch-1', '']]);
+    keys.mockResolvedValue(['m-1']);
+    renderHook(() => useBookmarkedConversation('ch-1'));
+    await waitFor(() => expect(keys).toHaveBeenCalledWith('channel', 'ch-1'));
+    await waitFor(() => expect(useBookmarkStore.getState().loadedConversations.size).toBe(1));
+  });
+
   it('does nothing for a channel whose instance is unknown', () => {
     channelOrigins = new Map();
     renderHook(() => useBookmarkedConversation('ch-1'));
@@ -141,8 +149,17 @@ describe('useMessageBookmark', () => {
   });
 
   it('does nothing while the message\'s instance is unknown', async () => {
-    const { result } = renderHook(() => useMessageBookmark({ ...params, origin: '' }));
+    const { result } = renderHook(() => useMessageBookmark({ ...params, origin: undefined }));
+    expect(result.current.bookmarked).toBe(false);
     await act(() => result.current.toggle());
     expect(add).not.toHaveBeenCalled();
+  });
+
+  it('works on the page\'s own instance, whose origin is the empty string', async () => {
+    add.mockResolvedValue(saved('m-1'));
+    const { result } = renderHook(() => useMessageBookmark({ ...params, origin: '' }));
+    await act(() => result.current.toggle());
+    expect(add).toHaveBeenCalledWith('channel', 'm-1');
+    expect(result.current.bookmarked).toBe(true);
   });
 });

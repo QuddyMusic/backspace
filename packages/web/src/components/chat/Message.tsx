@@ -216,8 +216,11 @@ export function Message({ message, isCompact, isFirstInGroup, previousMessageId 
   const isAuthor = isMine(message.user, messageOrigin, self);
   // A system message (a join, a leave) is not a message the user wrote; the
   // server refuses to bookmark it.
-  const canBookmark = !pending && message.type !== 'system' && messageOrigin !== '';
-  const bookmark = useMessageBookmark({ origin: messageOrigin, channelId: channelKey, messageId: message.id });
+  // The instance's origin is '' for the page's own instance, so only a channel
+  // the client does not know has no origin at all.
+  const bookmarkOrigin = useSpaceStore((s) => s.channelOriginMap.get(channelKey));
+  const canBookmark = !pending && message.type !== 'system' && bookmarkOrigin !== undefined;
+  const bookmark = useMessageBookmark({ origin: bookmarkOrigin, channelId: channelKey, messageId: message.id });
   // The channel whose origin issued this message's ids; mentions resolve there.
   const mentionChannelId = channelKey || null;
   const selfIdHere = useSelfIdInChannel(mentionChannelId);

@@ -20,19 +20,21 @@ export function bookmarkKindOf(channelId: string): BookmarkKind {
 export function useBookmarkedConversation(channelId: string | null | undefined): void {
   const origin = useSpaceStore((s) => (channelId ? s.channelOriginMap.get(channelId) : undefined));
   const kind = channelId ? bookmarkKindOf(channelId) : null;
+  // `origin` is '' for the page's own instance and undefined for a channel the
+  // client does not know; only the second has nothing to read.
   const loaded = useBookmarkStore((s) => (
-    origin && channelId && kind ? s.loadedConversations.has(bookmarkConversationKey(origin, kind, channelId)) : true
+    origin !== undefined && channelId && kind ? s.loadedConversations.has(bookmarkConversationKey(origin, kind, channelId)) : true
   ));
 
   useEffect(() => {
-    if (!origin || !channelId || !kind || loaded) return;
+    if (origin === undefined || !channelId || !kind || loaded) return;
     void useBookmarkStore.getState().loadConversation(origin, kind, channelId);
   }, [origin, channelId, kind, loaded]);
 }
 
 interface MessageBookmarkParams {
-  /** The instance that serves the message: the origin of its channel. Empty while unknown. */
-  origin: string;
+  /** The instance that serves the message: the origin of its channel ('' is the page's own instance). Undefined while unknown. */
+  origin: string | undefined;
   channelId: string;
   messageId: string;
 }
@@ -49,12 +51,12 @@ export interface MessageBookmark {
 export function useMessageBookmark({ origin, channelId, messageId }: MessageBookmarkParams): MessageBookmark {
   const { t } = useTranslation('bookmarks');
   const kind = bookmarkKindOf(channelId);
-  const bookmarked = useBookmarkStore((s) => selectIsBookmarked(s, origin, kind, messageId));
+  const bookmarked = useBookmarkStore((s) => origin !== undefined && selectIsBookmarked(s, origin, kind, messageId));
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
 
   const toggle = useCallback(async () => {
-    if (!origin || busyRef.current) return;
+    if (origin === undefined || busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
     const store = useBookmarkStore.getState();
