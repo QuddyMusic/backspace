@@ -13,6 +13,7 @@ import { useChatStore } from '../../stores/chatStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useInstanceStore } from '../../stores/instanceStore';
 import { useContextMenuStore, type ContextMenuItem } from '../../stores/contextMenuStore';
+import { BookmarkIcon } from '../ui/BookmarkIcon';
 import { Tooltip } from '../ui/Tooltip';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { TransferOwnershipModal } from '../modals/TransferOwnershipModal';
@@ -50,7 +51,7 @@ interface SidebarItemProps {
   onClick: () => void;
   onContextMenu?: (e: React.MouseEvent) => void;
   type?: 'space' | 'dm' | 'action';
-  actionType?: 'add' | 'join' | 'explore';
+  actionType?: 'add' | 'join' | 'explore' | 'bookmarks';
   hasUnread?: boolean;
   dimmed?: boolean;
   federationBadge?: boolean;
@@ -123,6 +124,8 @@ function SidebarItem({ id, name, icon, avatarColor, active, onClick, onContextMe
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z" />
           </svg>
+        ) : actionType === 'bookmarks' ? (
+          <BookmarkIcon size={20} />
         ) : actionType === 'explore' ? (
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-5.5-2.5l7.51-3.49L17.5 6.5 9.99 9.99 6.5 17.5zm5.5-6.6c.61 0 1.1.49 1.1 1.1s-.49 1.1-1.1 1.1-1.1-.49-1.1-1.1.49-1.1 1.1-1.1z" />
@@ -599,7 +602,7 @@ function FolderSlot({
 // ─── SpaceSidebar (main component) ────────────────────────────────────────
 
 export function SpaceSidebar() {
-  const { t } = useTranslation(['spaces', 'common']);
+  const { t } = useTranslation(['spaces', 'common', 'bookmarks']);
   const spaces = useSpaceStore((s) => s.spaces);
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId);
   const setCurrentSpace = useSpaceStore((s) => s.setCurrentSpace);
@@ -1234,6 +1237,15 @@ export function SpaceSidebar() {
         onClick={() => openModal('joinSpace')}
         type="action"
         actionType="join"
+      />
+
+      <SidebarItem
+        id="bookmarks"
+        name={t('bookmarks:title')}
+        active={false}
+        onClick={() => openModal('bookmarks')}
+        type="action"
+        actionType="bookmarks"
       />
 
       <SidebarItem

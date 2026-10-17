@@ -10,5 +10,24 @@
   "toast": {
     "addFailed": "Não foi possível salvar o favorito: {{reason}}",
     "removeFailed": "Não foi possível remover o favorito: {{reason}}"
+  },
+  "title": "Favoritos",
+  "list": {
+    "loading": "Carregando…",
+    "empty": "Ainda não há favoritos",
+    "emptyHint": "Salve uma mensagem pela barra ou pelo menu dela para encontrá-la aqui.",
+    "error": "Não foi possível carregar os favoritos de algumas instâncias.",
+    "retry": "Tentar de novo",
+    "showMore": "Mostrar mais",
+    "open": "Abrir a mensagem de {{name}}",
+    "remove": "Remover dos favoritos"
+  },
+  "status": {
+    "edited": "O original foi editado. Esta é a cópia salva.",
+    "deleted": "A mensagem original foi apagada. Esta é a cópia salva.",
+    "unavailable": "O original não está mais disponível para você. Esta é a cópia salva."
+  },
+  "attachment": {
+    "gone": "arquivo apagado"
   }
 }

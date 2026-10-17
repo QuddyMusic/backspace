@@ -78,6 +78,16 @@ The sources are the user's own `add` / `remove` answers and `bookmark_added` / `
 
 A message shows the bookmark button in its hover bar and an entry in its menu (`useMessageBookmark`): highlighted when saved, and a click on it removes the bookmark. Not offered for a message not sent yet, a system message (the server refuses it) or a channel whose instance is not known. A failed request is a toast with the server's reason (`describeError`); a second click while one is in flight is ignored.
 
+## The window
+
+Desktop: a bookmark button in the space sidebar (next to Explore) opens `BookmarksModal` (`activeModal: 'bookmarks'`). Mobile: a "Bookmarks" row on the You screen pushes the `bookmarks` screen (`MobileBookmarksScreen`). Both render `BookmarkList`.
+
+`BookmarkList` reads the page's own instance (`''`) and every connected instance (`loadList`), merges the pages and orders them by when they were saved, newest first. "Show more" reads the next page of each instance that has one; an instance that failed shows a retry and does not hide the others.
+
+A row (`BookmarkRow`) shows the author, the instance host, space and channel, the date and time of the original, the saved text and its attachments by name and size (metadata only: a file whose original was deleted is marked "file deleted"). The author is drawn live: `useBookmarkAuthors` indexes the `userViews` cache by the issuing origin and the row id, so a changed avatar or name shows without a reload; an author the cache has not seen gets the saved name and initials. A status badge appears for `edited`, `deleted` and `unavailable` originals, with the saved copy kept.
+
+Clicking a row calls `jumpStore.requestJump` (a space channel by space and channel, a DM by channel), so the exact conversation opens at that message, edited or not; a deleted original opens its conversation and the list shows its own "message unavailable" notice. The window closes when the jump was accepted. The highlighted bookmark icon on a row removes the bookmark (`bookmarkStore.remove`; a failure is a toast).
+
 ## Events
 
 A created bookmark is announced as `bookmark_added` and a removed one as `bookmark_removed`, to the caller's own sockets on this instance only, so a second tab or device stays in step. Nothing is relayed. A repeated create or a removal that found nothing sends no event. See websocket.md.
