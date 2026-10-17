@@ -1,0 +1,14 @@
+{
+  "message": {
+    "add": "Bookmark",
+    "remove": "Remove bookmark"
+  },
+  "menu": {
+    "add": "Bookmark message",
+    "remove": "Remove bookmark"
+  },
+  "toast": {
+    "addFailed": "Could not save the bookmark: {{reason}}",
+    "removeFailed": "Could not remove the bookmark: {{reason}}"
+  }
+}

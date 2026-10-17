@@ -1,0 +1,14 @@
+{
+  "message": {
+    "add": "Salvar nos favoritos",
+    "remove": "Remover dos favoritos"
+  },
+  "menu": {
+    "add": "Salvar mensagem nos favoritos",
+    "remove": "Remover dos favoritos"
+  },
+  "toast": {
+    "addFailed": "Não foi possível salvar o favorito: {{reason}}",
+    "removeFailed": "Não foi possível remover o favorito: {{reason}}"
+  }
+}

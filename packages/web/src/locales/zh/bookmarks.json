@@ -1,0 +1,14 @@
+{
+  "message": {
+    "add": "添加书签",
+    "remove": "移除书签"
+  },
+  "menu": {
+    "add": "将消息加入书签",
+    "remove": "移除书签"
+  },
+  "toast": {
+    "addFailed": "无法保存书签：{{reason}}",
+    "removeFailed": "无法移除书签：{{reason}}"
+  }
+}

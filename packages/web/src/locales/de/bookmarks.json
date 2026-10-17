@@ -1,0 +1,14 @@
+{
+  "message": {
+    "add": "Lesezeichen",
+    "remove": "Lesezeichen entfernen"
+  },
+  "menu": {
+    "add": "Nachricht als Lesezeichen speichern",
+    "remove": "Lesezeichen entfernen"
+  },
+  "toast": {
+    "addFailed": "Das Lesezeichen konnte nicht gespeichert werden: {{reason}}",
+    "removeFailed": "Das Lesezeichen konnte nicht entfernt werden: {{reason}}"
+  }
+}

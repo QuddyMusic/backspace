@@ -10,6 +10,7 @@ Source files:
 - `packages/server/src/utils/userDeletion.ts` -- `tombstoneUser` purges a user's bookmarks
 - `packages/server/src/utils/storageJanitor.ts` -- `getReferencedFilenames()` counts files a bookmark owns
 - `packages/shared/src/bookmarks.ts` -- wire types and page limits
+- `packages/web/src/stores/bookmarkStore.ts`, `packages/web/src/hooks/useBookmarks.ts`, `packages/web/src/components/ui/BookmarkIcon.tsx` -- client state and the message button
 - `packages/web/src/stores/jumpStore.ts`, `packages/web/src/hooks/useJumpNavigation.ts` -- opening a bookmark's conversation at its message (message-list.md, "Jump to message")
 
 DB tables: `message_bookmarks`, `bookmark_attachments`. See [database.md](database.md). Routes: [api.md](api.md).
@@ -65,6 +66,17 @@ Per attachment, computed on read by checking the file in `UPLOAD_DIR`: `state: '
 `GET /api/bookmarks` is keyset-paged newest first on `(created_at, id)`, both descending, backed by `idx_message_bookmarks_user_created`. The cursor is `<created_at>:<id>`; a value this server did not issue is `400 validation_failed`. `limit` defaults to 30 (`BOOKMARKS_PAGE_DEFAULT`) and is at most 100 (`BOOKMARKS_PAGE_MAX`).
 
 `GET /api/bookmarks/keys?kind=&channelId=` returns the bookmarked message ids of one channel or DM (`idx_message_bookmarks_user_channel`), for the "is bookmarked" state of an open conversation. It is bounded by the conversation, not by the user's total.
+
+## Client state
+
+`bookmarkStore` is keyed by origin, because ids are issued per instance. It holds two things and never the user's whole list, since there is no limit:
+
+- **`keys`**: the bookmarked messages of the conversations the user has opened, as `origin / kind / messageId`. `MessageList` mounts `useBookmarkedConversation`, which reads `GET /api/bookmarks/keys` from the instance that serves the conversation once per conversation (`origin` is `channelOriginMap`, `kind` is `isDmChannel`). Changes that arrive while that read is in flight are laid over its answer, so a push is never lost to a stale read.
+- **`lists`**: the window's list per origin, newest first, one page at a time (`loadList`, `loadMore`). A failed instance is marked `error` and does not hide the others.
+
+The sources are the user's own `add` / `remove` answers and `bookmark_added` / `bookmark_removed` from that instance's socket (`useWebSocket` files them under the origin of the socket that delivered them). When an instance's socket reports `ready` again, `resync(origin)` forgets what was read from it, because events sent while it was down were missed; the open conversation reads again by itself. `forgetOrigin` (an instance removed) and `reset` (sign-out) drop the rest, and `reset` also drops answers still in flight.
+
+A message shows the bookmark button in its hover bar and an entry in its menu (`useMessageBookmark`): highlighted when saved, and a click on it removes the bookmark. Not offered for a message not sent yet, a system message (the server refuses it) or a channel whose instance is not known. A failed request is a toast with the server's reason (`describeError`); a second click while one is in flight is ignored.
 
 ## Events
 
