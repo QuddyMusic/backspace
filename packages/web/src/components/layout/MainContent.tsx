@@ -19,6 +19,7 @@ import { useVoiceStore } from '../../stores/voiceStore';
 import { canStartDmCall, startDmCall, cancelOutgoingDmCall, isDmCallRunning, joinDmCall } from '../../utils/voiceActions';
 import { useActiveDmCall } from '../../hooks/useActiveDmCall';
 import { MemberListToggleButton } from './MemberListToggleButton';
+import { BookmarksButton } from './BookmarksButton';
 import { TransferIndicator } from './TransferIndicator';
 import { isMine, isFederationGlobeApplicable, userDisplayName } from '../../utils/identity';
 import { useDmViewer } from '../../hooks/useDmViewer';
@@ -286,6 +287,7 @@ export function MainContent() {
               )}
             </div>
             <div className={`flex items-center gap-1 flex-shrink-0 ${voiceFullscreen ? 'pointer-events-auto mr-24' : ''}`}>
+              <BookmarksButton />
               <TransferIndicator />
               <MemberListToggleButton />
             </div>
@@ -430,6 +432,7 @@ export function MainContent() {
                 <path d="M21.707 20.293l-5.395-5.395A7.457 7.457 0 0018 10.5 7.5 7.5 0 1010.5 18c1.575 0 3.027-.486 4.228-1.31l5.476 5.476a.997.997 0 001.414 0l.089-.089a1 1 0 000-1.414l.001-.37zM10.5 16a5.5 5.5 0 110-11 5.5 5.5 0 010 11z" />
               </svg>
             </button>
+            <BookmarksButton />
             <TransferIndicator />
             <div className="w-[1px] h-5 bg-border-soft mx-1" />
             <MemberListToggleButton />
@@ -457,6 +460,7 @@ export function MainContent() {
         <div className="h-12 px-5 flex items-center justify-between border-b border-border-hard">
           <span className="text-txt-tertiary">{t('spaces:main.selectChannel')}</span>
           <div className="flex items-center gap-1 flex-shrink-0">
+            <BookmarksButton />
             <TransferIndicator />
             <MemberListToggleButton />
           </div>
@@ -482,6 +486,7 @@ export function MainContent() {
               <span className="font-bold text-[15px] tracking-[-0.02em] text-txt-primary">{channel.name}</span>
             </div>
             <div className="flex items-center gap-1 flex-shrink-0">
+              <BookmarksButton />
               <TransferIndicator />
               <MemberListToggleButton />
             </div>
@@ -530,6 +535,7 @@ export function MainContent() {
             )}
           </div>
           <div className={`flex items-center gap-1 flex-shrink-0 ${voiceFullscreen ? 'pointer-events-auto mr-24' : ''}`}>
+            <BookmarksButton />
             <TransferIndicator />
             <MemberListToggleButton />
           </div>
@@ -570,6 +576,7 @@ export function MainContent() {
               <path d="M21.707 20.293l-5.395-5.395A7.457 7.457 0 0018 10.5 7.5 7.5 0 1010.5 18c1.575 0 3.027-.486 4.228-1.31l5.476 5.476a.997.997 0 001.414 0l.089-.089a1 1 0 000-1.414l.001-.37zM10.5 16a5.5 5.5 0 110-11 5.5 5.5 0 010 11z" />
             </svg>
           </button>
+          <BookmarksButton />
           <TransferIndicator />
           <div className="w-[1px] h-5 bg-border-soft mx-1" />
           <MemberListToggleButton />

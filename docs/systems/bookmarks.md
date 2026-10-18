@@ -80,7 +80,7 @@ A message shows the bookmark button in its hover bar and an entry in its menu (`
 
 ## The window
 
-Desktop: a bookmark button in the space sidebar (next to Explore) opens `BookmarksModal` (`activeModal: 'bookmarks'`). Mobile: a "Bookmarks" row on the You screen pushes the `bookmarks` screen (`MobileBookmarksScreen`). Both render `BookmarkList`.
+Desktop: a bookmark button in the chat top bar, to the left of the downloads indicator (`BookmarksButton`), opens `BookmarksModal` (`activeModal: 'bookmarks'`). Mobile: a "Bookmarks" row on the You screen pushes the `bookmarks` screen (`MobileBookmarksScreen`). Both render `BookmarkList`.
 
 `BookmarkList` reads the page's own instance (`''`) and every connected instance (`loadList`), merges the pages and orders them by when they were saved, newest first. "Show more" reads the next page of each instance that has one; an instance that failed shows a retry and does not hide the others.
 
