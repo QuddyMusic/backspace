@@ -133,12 +133,12 @@ describe('BookmarkList', () => {
     expect(screen.queryByText('list.showMore')).toBeNull();
   });
 
-  it('offers a retry when an instance did not answer', async () => {
-    list.mockRejectedValueOnce(new Error('down'));
+  it('leaves out an instance that did not answer, without an error message', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    list.mockResolvedValueOnce({ items: [bookmark('b1')], nextCursor: null });
+    list.mockRejectedValue(new Error('down'));
     render(<BookmarkList />);
-    fireEvent.click(await screen.findByText('list.retry'));
-    await screen.findByText('text b1');
+    await screen.findByText('list.empty');
+    expect(screen.queryByText('list.error')).toBeNull();
+    expect(screen.queryByText('list.retry')).toBeNull();
   });
 });

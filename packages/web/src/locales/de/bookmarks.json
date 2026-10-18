@@ -16,8 +16,6 @@
     "loading": "Wird geladen…",
     "empty": "Noch keine Lesezeichen",
     "emptyHint": "Setze ein Lesezeichen über die Leiste oder das Menü einer Nachricht, dann findest du sie hier.",
-    "error": "Die Lesezeichen einiger Instanzen konnten nicht geladen werden.",
-    "retry": "Erneut versuchen",
     "showMore": "Mehr anzeigen",
     "open": "Nachricht von {{name}} öffnen",
     "remove": "Lesezeichen entfernen"

@@ -82,7 +82,7 @@ A message shows the bookmark button in its hover bar and an entry in its menu (`
 
 Desktop: a bookmark button in the chat top bar, to the left of the downloads indicator (`BookmarksButton`), opens `BookmarksModal` (`activeModal: 'bookmarks'`). Mobile: a "Bookmarks" row on the You screen pushes the `bookmarks` screen (`MobileBookmarksScreen`). Both render `BookmarkList`.
 
-`BookmarkList` reads the page's own instance (`''`) and every connected instance (`loadList`), merges the pages and orders them by when they were saved, newest first. "Show more" reads the next page of each instance that has one; an instance that failed shows a retry and does not hide the others.
+`BookmarkList` reads the page's own instance (`''`) and every connected instance (`loadList`), merges the pages and orders them by when they were saved, newest first. "Show more" reads the next page of each instance that has one; an instance that cannot be read is left out without a message (the store logs it), and opening the window reads again.
 
 A row (`BookmarkRow`) shows the author, the instance host, space and channel, the date and time of the original, the saved text and its attachments by name and size (metadata only: a file whose original was deleted is marked "file deleted"). The author is drawn live: `useBookmarkAuthors` indexes the `userViews` cache by the issuing origin and the row id, so a changed avatar or name shows without a reload; an author the cache has not seen gets the saved name and initials. A status badge appears for `edited`, `deleted` and `unavailable` originals, with the saved copy kept.
 

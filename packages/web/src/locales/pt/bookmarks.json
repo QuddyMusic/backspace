@@ -16,8 +16,6 @@
     "loading": "Carregando…",
     "empty": "Ainda não há favoritos",
     "emptyHint": "Salve uma mensagem pela barra ou pelo menu dela para encontrá-la aqui.",
-    "error": "Não foi possível carregar os favoritos de algumas instâncias.",
-    "retry": "Tentar de novo",
     "showMore": "Mostrar mais",
     "open": "Abrir a mensagem de {{name}}",
     "remove": "Remover dos favoritos"

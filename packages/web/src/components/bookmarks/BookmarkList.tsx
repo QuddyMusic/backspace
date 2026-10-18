@@ -27,7 +27,8 @@ interface Entry {
 /**
  * The user's bookmarks from the page's own instance and every connected one,
  * newest saved first. Pages are read per instance; "show more" reads the next
- * page of each instance that has one.
+ * page of each instance that has one. An instance that cannot be read is left
+ * out without a message (the store logs it, and opening the window reads again).
  */
 export function BookmarkList({ onOpened }: BookmarkListProps) {
   const { t } = useTranslation('bookmarks');
@@ -51,7 +52,6 @@ export function BookmarkList({ onOpened }: BookmarkListProps) {
 
   const statuses = origins.map((origin) => lists.get(origin));
   const loading = statuses.some((list) => !list || list.status === 'loading') && entries.length === 0;
-  const failed = statuses.some((list) => list?.status === 'error');
   const hasMore = statuses.some((list) => list?.status === 'loaded' && list.nextCursor !== null);
   const loadingMore = statuses.some((list) => list?.loadingMore);
 
@@ -84,23 +84,13 @@ export function BookmarkList({ onOpened }: BookmarkListProps) {
     for (const origin of origins) void useBookmarkStore.getState().loadMore(origin);
   }, [origins]);
 
-  const retry = useCallback(() => {
-    void useBookmarkStore.getState().loadList(origins);
-  }, [origins]);
-
   if (loading) {
     return <div className="p-6 text-center text-[13px] text-txt-tertiary">{t('list.loading')}</div>;
   }
 
   return (
     <div className="flex flex-col">
-      {failed && (
-        <div className="m-3 px-3 py-2 rounded bg-accent-rose/10 text-accent-rose text-[12px] flex items-center gap-2">
-          <span className="flex-1">{t('list.error')}</span>
-          <button type="button" onClick={retry} className="underline">{t('list.retry')}</button>
-        </div>
-      )}
-      {entries.length === 0 && !failed && (
+      {entries.length === 0 && (
         <div className="p-8 text-center">
           <div className="text-[14px] text-txt-secondary">{t('list.empty')}</div>
           <div className="mt-1 text-[12px] text-txt-tertiary">{t('list.emptyHint')}</div>

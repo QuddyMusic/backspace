@@ -16,8 +16,6 @@
     "loading": "Loading…",
     "empty": "No bookmarks yet",
     "emptyHint": "Bookmark a message from its hover bar or menu to find it here.",
-    "error": "Could not load the bookmarks of some instances.",
-    "retry": "Retry",
     "showMore": "Show more",
     "open": "Open the message from {{name}}",
     "remove": "Remove bookmark"
