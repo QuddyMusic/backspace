@@ -83,6 +83,16 @@ describe('bookmarked messages of a conversation', () => {
     expect(isOn(HOME, 'm-1')).toBe(true);
   });
 
+  it('treats an instance without bookmarks (404) as having none marked, and does not ask again', async () => {
+    vi.mocked(console.error).mockClear();
+    keys.mockRejectedValue(Object.assign(new Error('Not Found'), { status: 404 }));
+    await useBookmarkStore.getState().loadConversation(NOVA, 'channel', 'ch-9');
+    await useBookmarkStore.getState().loadConversation(NOVA, 'channel', 'ch-9');
+    expect(keys).toHaveBeenCalledTimes(1);
+    expect(useBookmarkStore.getState().loadedConversations.has(bookmarkConversationKey(NOVA, 'channel', 'ch-9'))).toBe(true);
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
   it('drops an answer that belongs to the previous session', async () => {
     const pending = deferred<string[]>();
     keys.mockReturnValue(pending.promise);
@@ -162,6 +172,15 @@ describe('the list', () => {
     await useBookmarkStore.getState().loadList([HOME, NOVA]);
     expect(useBookmarkStore.getState().lists.get(HOME)?.status).toBe('loaded');
     expect(useBookmarkStore.getState().lists.get(NOVA)?.status).toBe('error');
+  });
+
+  it('shows an instance that runs a version without bookmarks (404) as empty, not as failed', async () => {
+    vi.mocked(console.error).mockClear();
+    list.mockImplementation(async () => { throw Object.assign(new Error('Not Found'), { status: 404 }); });
+    list.mockResolvedValueOnce({ items: [bookmark({ id: 'b-1' })], nextCursor: null });
+    await useBookmarkStore.getState().loadList([HOME, NOVA]);
+    expect(useBookmarkStore.getState().lists.get(NOVA)).toEqual({ items: [], nextCursor: null, status: 'loaded', loadingMore: false });
+    expect(console.error).not.toHaveBeenCalled();
   });
 
   it('ignores an older read of the same instance that lands late', async () => {

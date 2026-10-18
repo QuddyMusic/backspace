@@ -72,7 +72,7 @@ Per attachment, computed on read by checking the file in `UPLOAD_DIR`: `state: '
 `bookmarkStore` is keyed by origin, because ids are issued per instance. It holds two things and never the user's whole list, since there is no limit:
 
 - **`keys`**: the bookmarked messages of the conversations the user has opened, as `origin / kind / messageId`. `MessageList` mounts `useBookmarkedConversation`, which reads `GET /api/bookmarks/keys` from the instance that serves the conversation once per conversation (`origin` is `channelOriginMap`, `kind` is `isDmChannel`). Changes that arrive while that read is in flight are laid over its answer, so a push is never lost to a stale read.
-- **`lists`**: the window's list per origin, newest first, one page at a time (`loadList`, `loadMore`). A failed instance is marked `error` and does not hide the others.
+- **`lists`**: the window's list per origin, newest first, one page at a time (`loadList`, `loadMore`). A failed instance is marked `error` and does not hide the others. An instance that answers 404 runs a version without bookmarks: it is shown as empty, not as failed, and its conversations are not asked again.
 
 The sources are the user's own `add` / `remove` answers and `bookmark_added` / `bookmark_removed` from that instance's socket (`useWebSocket` files them under the origin of the socket that delivered them). When an instance's socket reports `ready` again, `resync(origin)` forgets what was read from it, because events sent while it was down were missed; the open conversation reads again by itself. `forgetOrigin` (an instance removed) and `reset` (sign-out) drop the rest, and `reset` also drops answers still in flight.
 

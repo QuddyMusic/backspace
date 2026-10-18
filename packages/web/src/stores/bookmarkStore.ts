@@ -38,6 +38,15 @@ export function bookmarkConversationKey(origin: string, kind: BookmarkKind, chan
   return `${origin}${SEP}${kind}${SEP}${channelId}`;
 }
 
+/**
+ * True when an instance answered 404: it runs a version without bookmarks, so
+ * it has none to show. That is not a failure of the list, and asking again
+ * would not change the answer.
+ */
+function lacksBookmarks(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'status' in err && err.status === 404;
+}
+
 function originOf(key: string): string {
   return key.slice(0, key.indexOf(SEP));
 }
@@ -149,6 +158,11 @@ export const useBookmarkStore = create<BookmarkState>((set, get) => {
           return { keys, loadedConversations };
         });
       } catch (err) {
+        if (lacksBookmarks(err) && generation === sessionGeneration) {
+          // An instance without bookmarks has none marked: remember that, so it is not asked on every open.
+          set((state) => ({ loadedConversations: new Set(state.loadedConversations).add(conversationKey) }));
+          return;
+        }
         // Without the answer no message shows as bookmarked; the next open asks again.
         console.error('[bookmarks] could not read the bookmarked messages of a conversation:', err);
       } finally {
@@ -186,6 +200,10 @@ export const useBookmarkStore = create<BookmarkState>((set, get) => {
           putList(origin, () => ({ items: page.items, nextCursor: page.nextCursor, status: 'loaded', loadingMore: false }));
         } catch (err) {
           if (generation !== sessionGeneration || listSeq.get(origin) !== seq) return;
+          if (lacksBookmarks(err)) {
+            putList(origin, () => ({ items: [], nextCursor: null, status: 'loaded', loadingMore: false }));
+            return;
+          }
           console.error('[bookmarks] could not read the list of an instance:', err);
           putList(origin, (list) => ({ ...list, status: 'error', loadingMore: false }));
         }
