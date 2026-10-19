@@ -573,6 +573,7 @@
     "dmUnreadMessagesOver99": "Mais de 99 mensagens diretas não lidas"
   },
   "channels": {
+    "resizeHandle": "Redimensionar lista de canais",
     "loading": "Carregando canais",
     "create": "Criar canal",
     "createCategory": "Criar categoria",

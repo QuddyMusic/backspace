@@ -79,6 +79,7 @@
     "createFailed": "Direktnachricht konnte nicht erstellt werden"
   },
   "list": {
+    "resizeHandle": "Breite der Direktnachrichten ändern",
     "title": "Nachrichten",
     "empty": "Noch keine Unterhaltungen.",
     "leaveGroup": "Gruppe verlassen",

@@ -22,7 +22,7 @@ export function firePointer(
   });
 }
 
-/** Drag the (single) right-column resize separator from `fromX` to `toX`. */
+/** Drag the (single) resize separator on screen from `fromX` to `toX`. */
 export function dragBorder(fromX: number, toX: number): void {
   const handle = screen.getByRole('separator');
   firePointer(handle, 'pointerdown', { pointerId: 7, clientX: fromX });

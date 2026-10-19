@@ -79,6 +79,7 @@
     "createFailed": "Failed to create DM"
   },
   "list": {
+    "resizeHandle": "Resize direct messages",
     "title": "Messages",
     "empty": "No conversations yet.",
     "leaveGroup": "Leave Group",
