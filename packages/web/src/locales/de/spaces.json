@@ -590,6 +590,7 @@
     "titleWithCount_one": "Mitglieder – {{count}}",
     "titleWithCount_other": "Mitglieder – {{count}}",
     "loading": "Mitglieder werden geladen",
+    "resizeHandle": "Breite der Mitgliederliste ändern",
     "groups": {
       "owner": "Besitzer"
     },

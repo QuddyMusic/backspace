@@ -43,7 +43,8 @@
   },
   "roster": {
     "owner": "Dono",
-    "sectionCount": "{{label}} — {{total}}"
+    "sectionCount": "{{label}} — {{total}}",
+    "resizeHandle": "Redimensionar lista de membros"
   },
   "kick": {
     "title": "Remover do grupo",

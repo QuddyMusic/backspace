@@ -44,7 +44,8 @@
   },
   "roster": {
     "owner": "Владелец",
-    "sectionCount": "{{label}} — {{total}}"
+    "sectionCount": "{{label}} — {{total}}",
+    "resizeHandle": "Изменить размер списка участников"
   },
   "kick": {
     "title": "Удалить из группы",

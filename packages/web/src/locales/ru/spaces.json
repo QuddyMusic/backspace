@@ -610,6 +610,7 @@
     "titleWithCount_many": "Участники — {{count}}",
     "titleWithCount_other": "Участники — {{count}}",
     "loading": "Загрузка участников",
+    "resizeHandle": "Изменить размер списка участников",
     "groups": {
       "owner": "Владелец"
     },

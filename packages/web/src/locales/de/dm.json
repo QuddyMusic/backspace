@@ -42,7 +42,8 @@
   },
   "roster": {
     "owner": "Besitzer",
-    "sectionCount": "{{label}} – {{total}}"
+    "sectionCount": "{{label}} – {{total}}",
+    "resizeHandle": "Breite der Mitgliederliste ändern"
   },
   "kick": {
     "title": "Aus Gruppe entfernen",

@@ -580,6 +580,7 @@
   "members": {
     "titleWithCount_other": "成员 — {{count}}",
     "loading": "正在加载成员",
+    "resizeHandle": "调整成员列表大小",
     "groups": {
       "owner": "拥有者"
     },

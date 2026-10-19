@@ -600,6 +600,7 @@
     "titleWithCount_many": "Membros — {{count}}",
     "titleWithCount_other": "Membros — {{count}}",
     "loading": "Carregando membros",
+    "resizeHandle": "Redimensionar lista de membros",
     "groups": {
       "owner": "Dono"
     },
