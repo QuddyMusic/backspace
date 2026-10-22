@@ -99,24 +99,19 @@ describe('useFileDropZone', () => {
     expect(screen.getByTestId('state')).toHaveTextContent('idle');
   });
 
-  it('clears a drag whose leave event never arrives once dragover stops', () => {
+  it('keeps the drag state for as long as the file is held over the region, even with no further events', () => {
     vi.useFakeTimers();
     render(<Harness enabled onDrop={vi.fn()} />);
     const region = screen.getByTestId('region');
 
     fireEvent.dragEnter(region, { dataTransfer: files });
+    fireEvent.dragOver(region, { dataTransfer: files });
     act(() => {
-      vi.advanceTimersByTime(1000);
-    });
-    fireEvent.dragOver(region, { dataTransfer: files }); // still over: timer restarts
-    act(() => {
-      vi.advanceTimersByTime(1000);
+      vi.advanceTimersByTime(60_000);
     });
     expect(screen.getByTestId('state')).toHaveTextContent('dragging');
 
-    act(() => {
-      vi.advanceTimersByTime(600);
-    });
+    fireEvent.dragLeave(region, { dataTransfer: files });
     expect(screen.getByTestId('state')).toHaveTextContent('idle');
   });
 });

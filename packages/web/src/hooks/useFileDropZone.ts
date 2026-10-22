@@ -1,13 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 
-/**
- * A drag that never reaches `drop` or `dragleave` (a child removed under the
- * pointer, Escape in some browsers) would leave the overlay up for good.
- * `dragover` repeats while a drag is over the region (Firefox: roughly every
- * 350 ms when the pointer is still), so this long without one means it left.
- */
-const DRAG_IDLE_MS = 1500;
-
 interface UseFileDropZoneOptions {
   /** When false no listener is attached and the browser keeps its default drop behaviour. */
   enabled: boolean;
@@ -28,7 +20,9 @@ function carriesFiles(dataTransfer: DataTransfer | null): boolean {
  * Turns `region` into a file drop target and reports whether a file drag is
  * currently over it. The region covers its descendants, so one listener set
  * serves the whole subtree and nested children do not make the state flicker
- * (enter/leave are counted).
+ * (enter/leave are counted). The state is held for as long as the drag stays
+ * over the region, however still the pointer is: `dragover` is not repeated
+ * on every platform, so nothing here may expire on a timer.
  */
 export function useFileDropZone(
   region: HTMLElement | null,
@@ -44,22 +38,10 @@ export function useFileDropZone(
     if (!region || !enabled) return undefined;
 
     let depth = 0;
-    let idleTimer: ReturnType<typeof setTimeout> | undefined;
 
-    const clearIdle = (): void => {
-      if (idleTimer !== undefined) {
-        clearTimeout(idleTimer);
-        idleTimer = undefined;
-      }
-    };
     const reset = (): void => {
       depth = 0;
-      clearIdle();
       setDragging(false);
-    };
-    const armIdle = (): void => {
-      clearIdle();
-      idleTimer = setTimeout(reset, DRAG_IDLE_MS);
     };
 
     const onDragEnter = (e: DragEvent): void => {
@@ -67,14 +49,12 @@ export function useFileDropZone(
       e.preventDefault();
       depth += 1;
       setDragging(true);
-      armIdle();
     };
     const onDragOver = (e: DragEvent): void => {
       if (!carriesFiles(e.dataTransfer)) return;
       // Without preventDefault the browser refuses the drop and opens the file instead.
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-      armIdle();
     };
     const onDragLeave = (e: DragEvent): void => {
       if (!carriesFiles(e.dataTransfer)) return;
