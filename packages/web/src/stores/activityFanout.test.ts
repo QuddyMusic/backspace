@@ -236,11 +236,6 @@ describe('activityStore fan-out', () => {
 
     // 10 seconds later, refresh occurs without a durationMs
     vi.setSystemTime(110_000);
-    const [initial] = activitiesFor(
-      useActivityStore.getState().userActivities,
-      { id: 'friend' },
-      '',
-    );
     // Subsequent push or anchor preserves timeline and advances position
     useActivityStore.getState().setUserActivities({ id: 'friend' }, '', [{
       type: 'listening',

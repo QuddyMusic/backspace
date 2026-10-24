@@ -18,8 +18,6 @@ import { pathToFileURL } from 'url';
 import {
   startActivityDetection,
   stopActivityDetection,
-  getCurrentActivity,
-  getCurrentActivities,
   getAllCurrentActivities,
   applyIpcActivity,
   listKnownGameNames,
@@ -28,6 +26,7 @@ import {
   setManualBinding,
   setManualBindings,
 } from './activityDetector';
+import type { Activity } from './activityDetector';
 import { resolveGameIcon } from './gameIcons';
 import { startRichPresenceIpcServer, stopRichPresenceIpcServer } from './richPresenceIpc';
 import {
@@ -36,7 +35,7 @@ import {
   getCurrentMediaActivity,
   type MediaSetupHint,
 } from './mediaDetector';
-import { loadActivitySettings, saveActivitySettings } from './activitySettings';
+import { loadActivitySettings, parseActivitySettingsUpdate, saveActivitySettings } from './activitySettings';
 import { KeybindManager } from './keybindManager';
 import { deriveStartMinimizedFromArgs, parseExecPathFromDesktopFile, shouldReapplyAppImage } from './autoLaunch';
 import {
@@ -1502,12 +1501,12 @@ if (!gotTheLock) {
     initAutoUpdater();
 
     // ─── Activity & Media Detection ────────────────────────────────────────
-    let latestProcessActivities: any[] = getAllCurrentActivities();
+    let latestProcessActivities: Activity[] = getAllCurrentActivities();
     let latestMediaActivity = getCurrentMediaActivity();
     let currentMediaSetupHint: MediaSetupHint | null = null;
 
-    const buildEffectiveActivities = (): any[] => {
-      const activities: any[] = [];
+    const buildEffectiveActivities = (): Activity[] => {
+      const activities: Activity[] = [];
       for (const proc of latestProcessActivities) {
         // Media players running in the background are not activities unless actively playing via mediaDetector.
         // Prevent background processes (e.g. cloudmusic.exe in tray) from injecting fake media activities.
@@ -1543,7 +1542,7 @@ if (!gotTheLock) {
     };
 
     startActivityDetection(
-      (_activity) => {
+      () => {
         // legacy single activity callback maintained
       },
       (activities) => {
@@ -1578,7 +1577,12 @@ if (!gotTheLock) {
     ipcMain.handle('get-current-activities', () => buildEffectiveActivities());
     ipcMain.handle('get-media-setup-hint', () => currentMediaSetupHint);
     ipcMain.handle('get-activity-settings', () => loadActivitySettings());
-    ipcMain.handle('set-activity-settings', (_event, settings: any) => { saveActivitySettings(settings); });
+    ipcMain.handle('set-activity-settings', (event, settings: unknown) => {
+      if (event.sender !== mainWindow?.webContents) return;
+      const update = parseActivitySettingsUpdate(settings);
+      if (!update) return;
+      saveActivitySettings({ ...loadActivitySettings(), ...update });
+    });
     ipcMain.handle('list-known-games', () => listKnownGameNames());
     ipcMain.handle('list-running-programs', () => listRunningPrograms());
     ipcMain.handle('get-unknown-wine-programs', () => getUnknownWinePrograms());

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import * as schema from '../db/schema.js';
 import { setWorkerId } from '../utils/snowflake.js';
 import type { Activity, ServerEvent } from '@backspace/shared';
+import type { WebSocket } from 'ws';
 
 setWorkerId(1);
 
@@ -104,8 +105,9 @@ describe("ready payload: friends' activities (#340)", () => {
 
   it('clears activities when the publishing socket disconnects, even if user has other connections', async () => {
     const { connectionManager } = await import('./handler.js');
-    const wsDesktop = { send: vi.fn(), readyState: 1 } as any;
-    const wsWeb = { send: vi.fn(), readyState: 1 } as any;
+    const wsDesktop = { send: vi.fn(), readyState: 1 } as unknown as WebSocket;
+    const webSend = vi.fn();
+    const wsWeb = { send: webSend, readyState: 1 } as unknown as WebSocket;
 
     connectionManager.addConnection('local-friend', wsDesktop);
     connectionManager.addConnection('local-friend', wsWeb);
@@ -119,8 +121,8 @@ describe("ready payload: friends' activities (#340)", () => {
     // Activities must be immediately cleared!
     expect(connectionManager.getUserActivities('local-friend')).toEqual([]);
     // And wsWeb must receive presence_update with activities: []
-    expect(wsWeb.send).toHaveBeenCalled();
-    const sent = JSON.parse(wsWeb.send.mock.calls[0][0]);
+    expect(webSend).toHaveBeenCalled();
+    const sent = JSON.parse(webSend.mock.calls[0]![0]);
     expect(sent.type).toBe('presence_update');
     expect(sent.activities).toEqual([]);
 

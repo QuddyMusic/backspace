@@ -49,6 +49,49 @@ describe('Media Detector - Canonical Track URLs', () => {
     expect(sanitizeTrackUrl('https://github.com/TheZwiss/backspace')).toBeUndefined();
     expect(sanitizeTrackUrl('https://google.com')).toBeUndefined();
   });
+
+  it('rejects look-alike hosts that merely contain a music domain', () => {
+    expect(sanitizeTrackUrl('https://music.apple.com.evil.tld/us/album/x/1?i=2')).toBeUndefined();
+    expect(sanitizeTrackUrl('https://evilapple.com/us/album/x/1')).toBeUndefined();
+    expect(sanitizeTrackUrl('https://x.apple.com/us/album/x/1')).toBeUndefined();
+    expect(sanitizeTrackUrl('https://notspotify.com/track/abc')).toBeUndefined();
+    expect(sanitizeTrackUrl('https://open.spotify.com.evil.tld/track/abc')).toBeUndefined();
+    expect(sanitizeTrackUrl('https://qq.com.evil.tld/n/ryqq/songDetail/1')).toBeUndefined();
+    expect(sanitizeTrackUrl('https://music.yandex.evil.tld/album/1/track/2')).toBeUndefined();
+    expect(sanitizeTrackUrl('https://evil.tld/.bandcamp.com/track/x')).toBeUndefined();
+    expect(sanitizeTrackUrl('https://music.163.com.evil.tld/#/song?id=1')).toBeUndefined();
+  });
+
+  it('rejects non-http schemes and malformed identifiers', () => {
+    expect(sanitizeTrackUrl('javascript:alert(1)')).toBeUndefined();
+    expect(sanitizeTrackUrl('file:///etc/passwd')).toBeUndefined();
+    expect(sanitizeTrackUrl('https://music.youtube.com/watch?v=a"onmouseover="x')).toBeUndefined();
+    expect(sanitizeTrackUrl('https://music.apple.com/us/album/x/1?i=12abc')).toBe(
+      'https://music.apple.com/us/album/x/1',
+    );
+    expect(sanitizeTrackUrl('https://music.163.com/#/song?id=abc')).toBeUndefined();
+  });
+
+  it('keeps genuine hosts of the other services', () => {
+    expect(sanitizeTrackUrl('https://music.yandex.ru/album/123/track/456?utm=1')).toBe(
+      'https://music.yandex.ru/album/123/track/456',
+    );
+    expect(sanitizeTrackUrl('https://y.qq.com/n/ryqq/songDetail/0039MnYb0qxYhV')).toBe(
+      'https://y.qq.com/n/ryqq/songDetail/0039MnYb0qxYhV',
+    );
+    expect(sanitizeTrackUrl('https://artist.bandcamp.com/track/some-song?from=x')).toBe(
+      'https://artist.bandcamp.com/track/some-song',
+    );
+    expect(sanitizeTrackUrl('https://soundcloud.com/user/track?si=1')).toBe(
+      'https://soundcloud.com/user/track',
+    );
+    expect(sanitizeTrackUrl('https://listen.tidal.com/browse/track/123')).toBe(
+      'https://tidal.com/track/123',
+    );
+    expect(sanitizeTrackUrl('https://www.deezer.com/en/track/789')).toBe(
+      'https://www.deezer.com/track/789',
+    );
+  });
 });
 
 describe('Media Detector - Window Title Parser', () => {

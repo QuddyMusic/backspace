@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import type { Activity } from '@backspace/shared';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -8,7 +8,6 @@ import { AppIcon } from './AppIcon';
 import {
   ActivityArtwork,
   PROFILE_ROW_ART,
-  activityTimeText,
   isRenderableActivityImage,
   useNowTick,
 } from './ActivityCard';
@@ -18,7 +17,7 @@ interface ProfileActivitiesProps {
   skipCustom?: boolean;
 }
 
-function formatElapsed(startMs: number, t: TFunction<any, any>): string {
+function formatElapsed(startMs: number, t: TFunction<['social', 'common']>): string {
   const elapsed = Date.now() - startMs;
   const minutes = Math.floor(elapsed / 60000);
   const hours = Math.floor(minutes / 60);
@@ -28,7 +27,10 @@ function formatElapsed(startMs: number, t: TFunction<any, any>): string {
   return t('common:time.elapsed', { duration });
 }
 
-export function formatPlayerName(player: string | undefined, t: TFunction<any, any>): string {
+/** Minimal translate signature so callers holding any namespace set can pass `t`. */
+type PlayerNameT = (key: string, options: { defaultValue: string }) => string;
+
+export function formatPlayerName(player: string | undefined, t: PlayerNameT): string {
   if (!player) return '';
   const key = player.toLowerCase().replace(/[\s\-_.]+/g, '');
   if (key === 'cloudmusic' || key === '网易云音乐' || key === 'neteasecloudmusic') {

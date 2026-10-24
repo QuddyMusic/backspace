@@ -19,12 +19,18 @@ export interface ActivityTimestamps {
   end?: number;
 }
 
+export interface ActivityPlayback {
+  positionMs: number;
+  durationMs?: number;
+}
+
 export interface Activity {
   type: string;
   name: string;
   details?: string;
   state?: string;
   timestamps?: ActivityTimestamps;
+  playback?: ActivityPlayback;
   assets?: ActivityAssets;
 }
 

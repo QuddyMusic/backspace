@@ -29,6 +29,18 @@ export function loadActivitySettings(): ActivitySettings {
   }
 }
 
+/**
+ * Validate a renderer-supplied settings patch. Only known keys with the right
+ * type survive; null when nothing usable was sent.
+ */
+export function parseActivitySettingsUpdate(raw: unknown): Partial<ActivitySettings> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  const update: Partial<ActivitySettings> = {};
+  if (typeof obj.enablePreemption === 'boolean') update.enablePreemption = obj.enablePreemption;
+  return Object.keys(update).length > 0 ? update : null;
+}
+
 export function saveActivitySettings(settings: ActivitySettings): void {
   try {
     fs.writeFileSync(getActivitySettingsPath(), JSON.stringify(settings));
