@@ -37,6 +37,11 @@ interface ActivityTimestamps {
   end?: number;    // epoch ms
 }
 
+interface ActivityPlayback {
+  positionMs: number;   // transport position, independent of any wall clock
+  durationMs?: number;  // absent for live/unknown length
+}
+
 interface ActivityAssets {
   largeImage?: string;
   largeText?: string;
@@ -50,6 +55,7 @@ interface Activity {
   details?: string;
   state?: string;
   timestamps?: ActivityTimestamps;
+  playback?: ActivityPlayback;   // media only (listening / watching)
   assets?: ActivityAssets;
   url?: string;
 }
@@ -81,7 +87,8 @@ The server validates every incoming `activity_update` payload, and the activitie
 5. `url` accepted only if it starts with `https://` or `http://` and is within `MAX_URL_LENGTH`
 6. `timestamps.start` and `timestamps.end` accepted if numbers in range `[0, 4102444800000]` (epoch ms cap ~2100)
 7. `assets` fields (`largeImage`, `smallImage`) validated against `MAX_URL_LENGTH`; text fields against `MAX_ASSET_TEXT_LENGTH`
-8. If any item fails validation, the entire payload is rejected (returns `null`)
+8. `playback.positionMs` is kept only when it is a finite number in `[0, 7 days]` (`MAX_PLAYBACK_MS`); `durationMs` only when finite and in `(0, 7 days]`, and then `positionMs` is clamped to it. An invalid `playback` is dropped, not a reason to reject the activity
+9. If any item fails validation, the entire payload is rejected (returns `null`)
 
 ---
 
@@ -222,8 +229,8 @@ Activities are **ephemeral** — stored only in server memory (`ConnectionManage
 Desktop Process Scanner (15s poll)
   → IPC 'activities-detected' (list; 'activity-detected' for older web clients) → preload bridge
     → activityBridge.ts → activityStore.pushActivities()
-      → 5s debounce → wsSendAll('activity_update')
-        → Server validates, rate-limits (3s)
+      → 5s debounce (500ms when an activity carries `playback`; an empty list is sent at once) → wsSendAll('activity_update')
+        → Server validates, rate-limits (3s; removing a published activity is exempt)
           → Stores in ConnectionManager.userActivities
             → Sends 'presence_update' to the user's profile audience (see Presence Broadcast Scope)
               → Client useWebSocket handler
@@ -239,6 +246,8 @@ Desktop Process Scanner (15s poll)
 | `userShowActivity` | userId | boolean | Cached from DB at auth, updated via REST `PATCH /users/me` |
 | `userStatuses` | userId | string | Cached from DB at auth, updated on `presence_update` |
 | `lastActivityUpdate` | userId | timestamp (ms) | Used for 3s rate limiting |
+| `activityObservedAt` | userId | timestamp (ms) | When the held `userActivities` were last set; `getUserActivities` advances every `playback.positionMs` by the time elapsed since (`projectActivityPlayback`, capped at `durationMs`), so a `ready` payload built later shows the current point, not the one last reported |
+| `activityWs` | userId | `WebSocket` | The socket that published the held activities. When that socket closes (the desktop app quit) the activities are cleared and `presence_update` goes out with `[]`, even if the user's other sockets (web) stay connected |
 
 ### Rate Limiting
 
@@ -249,7 +258,9 @@ Two independent throttling mechanisms prevent activity spam:
 | Client | Debounce timer in `activityStore.pushActivities()` | 5 seconds | `activityStore.ts:72` |
 | Server | `checkActivityRateLimit()` — rejects if `< 3000ms` since last update | 3 seconds | `ws/handler.ts:349-355` |
 
-The client debounce is a trailing-edge timer: each new `pushActivities()` call resets the 5s timer, and only the final state is sent. The server rate limit is a hard gate: updates arriving within 3s of the last accepted update are rejected with an error message.
+The client debounce is a trailing-edge timer: each new `pushActivities()` call resets the timer, and only the final state is sent. The delay is 5 seconds for games (a scan can briefly report one process with different metadata) and 500 ms (`MEDIA_ACTIVITY_PUSH_DELAY_MS`) when any activity carries `playback`, so a track change appears promptly. A call that leaves no effective activity (music paused, sharing off) cancels the timer and sends `activity_update` with `[]` immediately, bumping `pushSeq` so an icon upload in flight cannot send afterwards.
+
+The server rate limit is a hard gate: updates arriving within 3s of the last accepted update are rejected with an error message. The exception is an update that publishes fewer activities than the server holds (`checkActivityRateLimit(userId, removingPublishedActivities)`): without it a pause right after a track change was dropped and the old "listening" state stayed on other clients.
 
 ### Ready Payload — Initial Activity Snapshot
 
@@ -318,10 +329,15 @@ function handleActivityUpdate(event, userId) {
 
 This spec covers how detected activities enter the broadcast pipeline. The detection internals (process scanning, dictionary matching, local game sources, dictionary sync, the rich presence IPC server) live in `desktop.md` → Activity Detection, Local Game Sources and Rich Presence IPC Server.
 
-Detection combines two sources:
+Detection combines three sources:
 
 1. **Process scanning** — a curated process-name dictionary (`games.json`, synced from the repo) plus local install metadata for Steam, Flatpak and GOG games, so any installed title is detectable even when unlisted. The dictionary wins on conflicts; sources fill the gaps. Polled every 15s.
 2. **Rich presence IPC pushes** — games speaking the rich presence IPC protocol (osu!lazer & co.) push rich activities to the desktop's IPC server: details, state, absolute timestamps and art. Applied immediately as an overlay over the scan result; the last push wins.
+3. **Media detection** (`mediaDetector/`, `desktop.md` → Media Detection) — what is actually playing, read from the OS media session (Windows SMTC, Linux MPRIS, macOS Spotify / Apple Music notifications). Yields one `listening` (or `watching`, for video) activity with `playback`, a canonical track `url` (`sanitizeTrackUrl`, an allow-list of music services) and the player name in `assets.smallText`. A *running* media player found by the process scan (`type: listening | watching` in `games.json`) is **not** an activity by itself: `main.ts` drops those and only media detection can publish one, so a player idling in the tray shows nothing.
+
+The effective list sent to the renderer is process activities (minus listening/watching) followed by the media activity, so games keep their place at the front.
+
+**Playback and clock skew.** `playback.positionMs` is a position, not a time of day. The sender anchors `timestamps.start`/`end` to its own clock for local display; every receiving client re-anchors the position to *its* clock on receipt (`activityStore.anchorActivityPlayback`: keeps an existing timeline when the new position is within 2s of it or is `0`, a stale snapshot some browsers repeat, otherwise starts a new one at `now - positionMs`). Remote progress therefore does not jump when the two devices' clocks differ. Receivers that predate `playback` ignore it and use `timestamps`.
 
 ### Game preferences (`utils/gameOverrides.ts`, `ActivityGameSection`)
 
@@ -438,6 +454,16 @@ Renders the primary activity for a user. Used inside both `ActivityPanel` and `M
 
 **Elapsed time format** (`formatElapsed`): `"Xh Ym"` if hours > 0, otherwise `"Xm"`.
 
+**Media rows.** A `listening` activity renders as a music card: artwork, title, artist, a progress bar from `timestamps.start/end` and, when `url` is set, an "Open" link. A shared `useNowTick` drives the clocks. The player name (`assets.smallText`) is shown through `formatPlayerName` (NetEase, QQ Music, KuGou, Kuwo, Spotify, Apple Music, Yandex Music, localized). The rich row of a member expands and collapses with the `activity-card-expand` grid-rows transition (`0fr` → `1fr`, `globals.css`; opacity only under `prefers-reduced-motion`) and keeps a constant border width so the row does not jump.
+
+### ProfileActivities (`ui/ProfileActivities.tsx`)
+
+The activity block at the top of the full profile's About tab and the profile popout, replacing the old "Playing now" list. It shows the custom status (unless the profile shows its own), then one card per non-custom activity ordered by `ACTIVITY_PRIORITY` (streaming, playing, watching, listening): music cards for `listening`, process cards headed "Playing a Game" / "Watching" / "Streaming" for the rest, each with its own timer, art and link. Art goes through `ActivityArtwork` (no empty box on a failed load) and `AppIcon` draws a placeholder per app type. Only `playing` activities get a game icon looked up and uploaded (`GAME_ICON_TYPES` in `activityStore`); media art comes from the player.
+
+### MediaSetupHint (`ui/MediaSetupHint.tsx`)
+
+A one-time Windows hint: NetEase Cloud Music is running with a track title in its window but has published no SMTC session, so nothing can be detected until its "Windows media controls" option is enabled. The desktop reports it over `get-media-setup-hint` / `media-setup-hint`; the hint is dismissible for the app run (`sessionStorage`) or permanently (`localStorage`, `backspace_netease_smtc_hint_dismissed`).
+
 ### Helper Functions (exported from `ActivityCard.tsx`)
 
 | Function | Returns | Purpose |
@@ -510,7 +536,7 @@ See websocket.md for full wire format. Summary of activity-related events:
 | Event | Fields | Notes |
 |-------|--------|-------|
 | `presence_update` | `status: 'online' \| 'idle' \| 'dnd'` | Persisted as the chosen status (`applyChosenStatus`) |
-| `activity_update` | `activities: Activity[]` | Rate-limited 3s server-side; rejected if `showActivity=false` |
+| `activity_update` | `activities: Activity[]` | Rate-limited 3s server-side (an update that removes a published activity is exempt); rejected if `showActivity=false` |
 
 ### Server to Client
 

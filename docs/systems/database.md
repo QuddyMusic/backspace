@@ -150,7 +150,7 @@ The composite primary key (user_id, sticker_id) makes collection idempotent; one
 
 ### game_icon_assets and game_icons
 
-Migration `0032_game_icons` adds only these two tables; no activity or user column changes (an icon is an `assets.largeImage` URL on a transient activity, see [uploads.md](uploads.md#15-game-icons) and [activity-presence.md](activity-presence.md#game-icons)).
+Migration `0036_game_icons` (renumbered from `0032` to follow the migrations other pending work already claims; drizzle applies by journal `when`, so a database that already ran `0032_game_icons` skips it) adds only these two tables; no activity or user column changes (an icon is an `assets.largeImage` URL on a transient activity, see [uploads.md](uploads.md#15-game-icons) and [activity-presence.md](activity-presence.md#game-icons)).
 
 | Table | Column | Type | Notes |
 |-------|--------|------|-------|
