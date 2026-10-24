@@ -15,9 +15,28 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { pathToFileURL } from 'url';
-import { startActivityDetection, stopActivityDetection, getCurrentActivity, getCurrentActivities, applyIpcActivity, listKnownGameNames, listRunningPrograms, getUnknownWinePrograms, setManualBinding, setManualBindings } from './activityDetector';
+import {
+  startActivityDetection,
+  stopActivityDetection,
+  getCurrentActivity,
+  getCurrentActivities,
+  getAllCurrentActivities,
+  applyIpcActivity,
+  listKnownGameNames,
+  listRunningPrograms,
+  getUnknownWinePrograms,
+  setManualBinding,
+  setManualBindings,
+} from './activityDetector';
 import { resolveGameIcon } from './gameIcons';
 import { startRichPresenceIpcServer, stopRichPresenceIpcServer } from './richPresenceIpc';
+import {
+  startMediaDetection,
+  stopMediaDetection,
+  getCurrentMediaActivity,
+  type MediaSetupHint,
+} from './mediaDetector';
+import { loadActivitySettings, saveActivitySettings } from './activitySettings';
 import { KeybindManager } from './keybindManager';
 import { deriveStartMinimizedFromArgs, parseExecPathFromDesktopFile, shouldReapplyAppImage } from './autoLaunch';
 import {
@@ -1239,6 +1258,10 @@ if (process.platform === 'win32') {
  */
 export function requestQuit(): void {
   isQuitting = true;
+  stopMediaDetection();
+  stopActivityDetection();
+  mainWindow?.webContents.send('activities-detected', []);
+  mainWindow?.webContents.send('activity-detected', null);
   app.quit();
 }
 
@@ -1478,13 +1501,65 @@ if (!gotTheLock) {
 
     initAutoUpdater();
 
-    // ─── Activity Detection ────────────────────────────────────────────────
+    // ─── Activity & Media Detection ────────────────────────────────────────
+    let latestProcessActivities: any[] = getAllCurrentActivities();
+    let latestMediaActivity = getCurrentMediaActivity();
+    let currentMediaSetupHint: MediaSetupHint | null = null;
+
+    const buildEffectiveActivities = (): any[] => {
+      const activities: any[] = [];
+      for (const proc of latestProcessActivities) {
+        // Media players running in the background are not activities unless actively playing via mediaDetector.
+        // Prevent background processes (e.g. cloudmusic.exe in tray) from injecting fake media activities.
+        if (proc.type === 'listening' || proc.type === 'watching') continue;
+        activities.push(proc);
+      }
+      if (latestMediaActivity) {
+        const now = Date.now();
+        const start = latestMediaActivity.timestamps?.start;
+        const durationMs = latestMediaActivity.playback?.durationMs;
+        if (typeof start === 'number' && latestMediaActivity.playback) {
+          const positionMs = durationMs !== undefined
+            ? Math.min(durationMs, Math.max(0, now - start))
+            : Math.max(0, now - start);
+          activities.push({
+            ...latestMediaActivity,
+            playback: {
+              ...latestMediaActivity.playback,
+              positionMs,
+            },
+          });
+        } else {
+          activities.push(latestMediaActivity);
+        }
+      }
+      return activities;
+    };
+
+    const broadcastActivities = () => {
+      const activities = buildEffectiveActivities();
+      mainWindow?.webContents.send('activities-detected', activities);
+      mainWindow?.webContents.send('activity-detected', activities[0] || null);
+    };
+
     startActivityDetection(
-      (activity) => {
-        mainWindow?.webContents.send('activity-detected', activity);
+      (_activity) => {
+        // legacy single activity callback maintained
       },
       (activities) => {
-        mainWindow?.webContents.send('activities-detected', activities);
+        latestProcessActivities = activities;
+        broadcastActivities();
+      },
+    );
+
+    startMediaDetection(
+      (media) => {
+        latestMediaActivity = media;
+        broadcastActivities();
+      },
+      (hint) => {
+        currentMediaSetupHint = hint;
+        mainWindow?.webContents.send('media-setup-hint', hint);
       },
     );
 
@@ -1496,8 +1571,14 @@ if (!gotTheLock) {
       console.warn('[main] Rich presence IPC server failed to start:', err);
     });
 
-    ipcMain.handle('get-current-activity', () => getCurrentActivity());
-    ipcMain.handle('get-current-activities', () => getCurrentActivities());
+    ipcMain.handle('get-current-activity', () => {
+      const activities = buildEffectiveActivities();
+      return activities[0] || null;
+    });
+    ipcMain.handle('get-current-activities', () => buildEffectiveActivities());
+    ipcMain.handle('get-media-setup-hint', () => currentMediaSetupHint);
+    ipcMain.handle('get-activity-settings', () => loadActivitySettings());
+    ipcMain.handle('set-activity-settings', (_event, settings: any) => { saveActivitySettings(settings); });
     ipcMain.handle('list-known-games', () => listKnownGameNames());
     ipcMain.handle('list-running-programs', () => listRunningPrograms());
     ipcMain.handle('get-unknown-wine-programs', () => getUnknownWinePrograms());
@@ -1574,6 +1655,9 @@ if (!gotTheLock) {
     isQuitting = true;
     stopActivityDetection();
     stopRichPresenceIpcServer();
+    stopMediaDetection();
     keybindManager.stop();
+    mainWindow?.webContents.send('activities-detected', []);
+    mainWindow?.webContents.send('activity-detected', null);
   });
 }

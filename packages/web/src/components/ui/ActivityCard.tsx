@@ -1,14 +1,47 @@
 import type { Activity } from '@backspace/shared';
 import { getPrimaryActivity } from '@backspace/shared/src/activities.js';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { replaceEmojiShortcodes, useEmojiShortcodeNames } from '../../utils/emojiShortcodes';
 import { useFormatters } from '../../i18n/formatters';
+import { AppIcon } from './AppIcon';
+import { formatPlayerName } from './ProfileActivities';
 
 interface ActivityCardProps {
   activities: Activity[];
   fallbackCustomStatus?: string | null;
+}
+
+/**
+ * Legacy elapsed-time formatter for backwards compatibility with tests.
+ */
+export function formatElapsed(startMs: number, t: TFunction<'common'>): string {
+  const elapsed = Date.now() - startMs;
+  const minutes = Math.floor(elapsed / 60000);
+  const hours = Math.floor(minutes / 60);
+  const duration = hours > 0
+    ? t('time.hoursMinutesShort', { hours, minutes: minutes % 60 })
+    : t('time.minutesShort', { minutes });
+  return t('time.elapsed', { duration });
+}
+
+/**
+ * Returns true if activities contain a rich (non-custom) activity.
+ */
+export function hasRichActivity(activities: Activity[]): boolean {
+  return activities.some((a) => a.type !== 'custom');
+}
+
+/** Returns the accent border color class for an activity type */
+export function getActivityAccentClass(type: Activity['type']): string {
+  switch (type) {
+    case 'playing': return 'border-l-accent-mint';
+    case 'listening': return 'border-l-accent-sky';
+    case 'watching': return 'border-l-accent-lavender';
+    case 'streaming': return 'border-l-accent-rose';
+    default: return '';
+  }
 }
 
 /**
@@ -21,7 +54,7 @@ export function isRenderableActivityImage(url: string | undefined): url is strin
 }
 
 /** A ticking "now", re-rendering every second while `active`. */
-function useNowTick(active: boolean, intervalMs = 1000): number {
+export function useNowTick(active: boolean, intervalMs = 1000): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active) return;
@@ -46,21 +79,21 @@ export function activityTimeText(
   if (typeof end === 'number' && end > now) {
     return t('time.left', { duration: formatDuration((end - now) / 1000) });
   }
-  if (typeof start === 'number' && start <= now) {
-    return t('time.elapsed', { duration: formatDuration((now - start) / 1000) });
+  if (typeof start === 'number') {
+    return t('time.elapsed', { duration: formatDuration(Math.max(0, now - start) / 1000) });
   }
   return null;
 }
 
 /** The class sets of one artwork size: the wrapper, the large image, the badge and a lone image. */
-interface ArtworkSize {
+export interface ArtworkSize {
   wrapper: string;
   large: string;
   badge: string;
   single: string;
 }
 
-const PROFILE_ROW_ART: ArtworkSize = {
+export const PROFILE_ROW_ART: ArtworkSize = {
   wrapper: 'relative shrink-0 w-10 h-10',
   large: 'w-10 h-10 rounded-lg object-cover bg-white/[0.04]',
   badge: 'absolute -bottom-1 -right-1 w-4 h-4 rounded-full object-cover bg-[#13131a] ring-2 ring-[rgba(20,20,26,0.85)]',
@@ -68,7 +101,7 @@ const PROFILE_ROW_ART: ArtworkSize = {
 };
 
 /** Stand-in for a game without an icon: keeps the rows' text aligned. It is only drawn, never cached or uploaded. */
-function GameIconPlaceholder() {
+export function GameIconPlaceholder() {
   return (
     <div
       data-testid="game-icon-placeholder"
@@ -83,14 +116,14 @@ function GameIconPlaceholder() {
   );
 }
 
-const POPOUT_ART: ArtworkSize = {
+export const POPOUT_ART: ArtworkSize = {
   wrapper: 'relative shrink-0 w-[60px] h-[60px]',
   large: 'w-[60px] h-[60px] rounded-[10px] object-cover bg-white/[0.04]',
   badge: 'absolute -bottom-1.5 -right-1.5 w-[22px] h-[22px] rounded-full object-cover bg-[#13131a] ring-2 ring-[rgba(20,20,26,0.85)]',
   single: 'w-[60px] h-[60px] rounded-[10px] object-cover bg-white/[0.04]',
 };
 
-interface ActivityArtworkProps {
+export interface ActivityArtworkProps {
   largeImage: string | null;
   smallImage: string | null;
   largeAlt: string;
@@ -107,7 +140,7 @@ interface ActivityArtworkProps {
  * image is promoted to the full-size image. With nothing left to show it
  * renders nothing at all.
  */
-function ActivityArtwork({ largeImage, smallImage, largeAlt, smallAlt, size, placeholder }: ActivityArtworkProps) {
+export function ActivityArtwork({ largeImage, smallImage, largeAlt, smallAlt, size, placeholder }: ActivityArtworkProps) {
   const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
   const markFailed = (src: string) => setFailed((prev) => new Set(prev).add(src));
 
@@ -115,121 +148,174 @@ function ActivityArtwork({ largeImage, smallImage, largeAlt, smallAlt, size, pla
   const small = smallImage && !failed.has(smallImage) ? smallImage : null;
   if (!large && !small) return placeholder ? <>{placeholder}</> : null;
 
+  if (large && small) {
+    return (
+      <div className={size.wrapper} data-testid="activity-artwork">
+        <img key={large} src={large} alt={largeAlt} className={`${size.large} transition-opacity duration-300 animate-fade-in`} onError={() => markFailed(large)} />
+        <img key={small} src={small} alt={smallAlt ?? ''} className={`${size.badge} transition-opacity duration-300 animate-fade-in`} onError={() => markFailed(small)} />
+      </div>
+    );
+  }
+
+  const lone = (large ?? small)!;
+  const alt = large ? largeAlt : (smallAlt ?? largeAlt);
   return (
-    <div className={size.wrapper}>
-      {large && (
-        <img src={large} alt={largeAlt} title={largeAlt} className={size.large} onError={() => markFailed(large)} loading="lazy" />
-      )}
-      {small && (
-        <img
-          src={small}
-          alt={smallAlt ?? ''}
-          title={smallAlt}
-          className={large ? size.badge : size.single}
-          onError={() => markFailed(small)}
-          loading="lazy"
-        />
-      )}
+    <div className={size.wrapper} data-testid="activity-artwork">
+      <img key={lone} src={lone} alt={alt} className={`${size.single} transition-opacity duration-300 animate-fade-in`} onError={() => markFailed(lone)} />
     </div>
   );
 }
 
-/** Returns the accent border color class for an activity type */
-export function getActivityAccentClass(type: Activity['type']): string {
-  switch (type) {
-    case 'playing': return 'border-l-accent-mint';
-    case 'listening': return 'border-l-accent-sky';
-    case 'watching': return 'border-l-accent-lavender';
-    case 'streaming': return 'border-l-accent-rose';
-    default: return '';
-  }
-}
-
-/** How many more games the user is playing besides the one shown. */
-export function otherGamesCount(activities: Activity[], primary: Activity): number {
-  if (primary.type !== 'playing') return 0;
-  return activities.filter((activity) => activity.type === 'playing' && activity !== primary).length;
+function otherGamesCount(activities: Activity[], primary: Activity): number {
+  return activities.filter((a) => a.type === 'playing' && a !== primary && a.name).length;
 }
 
 function otherGameNames(activities: Activity[], primary: Activity): string {
-  return activities.filter((activity) => activity.type === 'playing' && activity !== primary).map((activity) => activity.name).join(', ');
-}
-
-/** Returns whether an activity should get the glass card row treatment */
-export function hasRichActivity(activities: Activity[]): boolean {
-  const primary = getPrimaryActivity(activities);
-  return !!primary && primary.type !== 'custom';
+  return activities
+    .filter((a) => a.type === 'playing' && a !== primary && a.name)
+    .map((a) => a.name)
+    .join(', ');
 }
 
 /**
- * Renders the activity as a list row: app name (with "+N" when the user is
- * playing more games), details/state lines and a live elapsed/countdown time
- * line. No art: lists stay text-only, the profile popout shows the artwork.
+ * Renders activity details (app name + elapsed time, or music info, or dual status).
  * The glass card wrapper is applied by the parent row container.
  */
 export function ActivityCard({ activities, fallbackCustomStatus }: ActivityCardProps) {
   useEmojiShortcodeNames();
   const { t } = useTranslation('common');
   const { formatDuration } = useFormatters();
-  const primary = getPrimaryActivity(activities);
 
-  // Hooks stay above the early returns below (Rules of Hooks)
-  const hasTimer = !!primary && primary.type !== 'custom' &&
-    (typeof primary.timestamps?.start === 'number' || typeof primary.timestamps?.end === 'number');
+  const music = activities.find((a) => a.type === 'listening');
+  const processActivity =
+    activities.find((a) => a.type === 'streaming') ||
+    activities.find((a) => a.type === 'playing') ||
+    activities.find((a) => a.type === 'watching');
+  const custom = activities.find((a) => a.type === 'custom');
+
+  // Music players can provide a live position even when they expose no duration,
+  // so either activity needs to keep the shared clock ticking.
+  const activeStart = processActivity?.timestamps?.start ?? music?.timestamps?.start;
+  const activeEnd = processActivity?.timestamps?.end ?? music?.timestamps?.end;
+  const hasTimer = typeof activeStart === 'number' || typeof activeEnd === 'number';
   const now = useNowTick(hasTimer);
 
-  if (!primary) {
-    if (fallbackCustomStatus) {
-      return <div className="text-[11px] leading-[1.3] text-txt-tertiary truncate">{replaceEmojiShortcodes(fallbackCustomStatus)}</div>;
-    }
-    return null;
-  }
+  let content: ReactNode = null;
 
-  // Custom status — plain text, no card treatment
-  if (primary.type === 'custom') {
-    return <div className="text-[11px] leading-[1.3] text-txt-tertiary truncate">{replaceEmojiShortcodes(primary.name)}</div>;
-  }
+  if (processActivity && music) {
+    const musicLine = `${music.name}${music.details ? ` · ${music.details}` : ''}`;
+    content = (
+      <div className="flex flex-col min-w-0">
+        <div className="text-[11px] leading-[1.3] text-txt-secondary truncate flex items-center gap-1.5" title={processActivity.name}>
+          <AppIcon name={processActivity.name} type={processActivity.type} size={11} className="flex-shrink-0" />
+          <span className="truncate">{processActivity.name}</span>
+        </div>
+        <div
+          className="text-[10px] leading-[1.3] text-accent-sky truncate flex items-center gap-1"
+          title={musicLine}
+        >
+          <AppIcon name={music.assets?.smallText || music.name} type="listening" size={10} fallbackEmoji="🎵" className="flex-shrink-0" />
+          <span className="truncate">{musicLine}</span>
+        </div>
+      </div>
+    );
+  } else if (music) {
+    const musicLine = `${music.name}${music.details ? ` · ${music.details}` : ''}`;
+    const musicTime = activityTimeText(music.timestamps ?? {}, now, t, formatDuration)
+      ?? (typeof music.playback?.positionMs === 'number'
+        ? t('time.elapsed', { duration: formatDuration(Math.max(0, music.playback.positionMs) / 1000) })
+        : null);
+    content = (
+      <div className="flex flex-col min-w-0">
+        <div className="text-[11px] leading-[1.3] text-txt-secondary truncate flex items-center gap-1.5" title={musicLine}>
+          <AppIcon name={music.assets?.smallText || music.name} type="listening" size={11} fallbackEmoji="🎵" className="flex-shrink-0" />
+          <span className="truncate">{musicLine}</span>
+        </div>
+        {musicTime ? (
+          <div className="text-[10px] leading-[1.3] text-txt-tertiary tabular-nums">
+            {musicTime}
+          </div>
+        ) : music.assets?.smallText ? (
+          <div className="text-[10px] leading-[1.3] text-txt-tertiary truncate">
+            {formatPlayerName(music.assets.smallText, t)}
+          </div>
+        ) : null}
+      </div>
+    );
+  } else if (processActivity) {
+    const timeText = processActivity.timestamps?.end && processActivity.timestamps.end > now
+      ? t('time.left', { duration: formatDuration((processActivity.timestamps.end - now) / 1000) })
+      : processActivity.timestamps?.start
+        ? formatElapsed(processActivity.timestamps.start, t)
+        : null;
+    const moreGames = otherGamesCount(activities, processActivity);
 
-  const timeText = activityTimeText(primary.timestamps ?? {}, now, t, formatDuration);
-  const moreGames = otherGamesCount(activities, primary);
-
-  // Rich activity — text only: name (+N more games), details/state and time
-  // (card wrapper is on the parent row). Art belongs to the profile view.
-  return (
-    <div className="flex items-center gap-1.5 min-w-0">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-1 min-w-0 text-[11px] leading-[1.3] text-txt-secondary">
-          <span className="truncate">{primary.name}</span>
+    content = (
+      <div className="flex flex-col min-w-0">
+        <div className="text-[11px] leading-[1.3] text-txt-secondary truncate flex items-center gap-1.5" title={processActivity.name}>
+          <AppIcon name={processActivity.name} type={processActivity.type} size={11} className="flex-shrink-0" />
+          <span className="truncate" title={processActivity.name}>{processActivity.name}</span>
           {moreGames > 0 && (
-            <span className="shrink-0 text-txt-tertiary tabular-nums" title={otherGameNames(activities, primary)}>+{moreGames}</span>
+            <span className="shrink-0 text-[10px] font-normal text-txt-tertiary tabular-nums" title={otherGameNames(activities, processActivity)}>
+              +{moreGames}
+            </span>
           )}
         </div>
-        {primary.details && (
-          <div className="text-[10px] leading-[1.3] text-txt-tertiary truncate">
-            {replaceEmojiShortcodes(primary.details)}
-          </div>
-        )}
-        {primary.state && (
-          <div className="text-[10px] leading-[1.3] text-txt-tertiary truncate">
-            {replaceEmojiShortcodes(primary.state)}
-          </div>
-        )}
         {timeText && (
           <div className="text-[10px] leading-[1.3] text-txt-tertiary tabular-nums">
             {timeText}
           </div>
         )}
       </div>
+    );
+  } else {
+    const rawStatus = custom?.name || fallbackCustomStatus;
+    if (rawStatus) {
+      const statusText = replaceEmojiShortcodes(rawStatus);
+      content = (
+        <div className="text-[11px] leading-[1.3] text-txt-tertiary truncate" title={statusText}>
+          {statusText}
+        </div>
+      );
+    }
+  }
+
+  const lastContentRef = useRef<ReactNode>(null);
+  if (content !== null) {
+    lastContentRef.current = content;
+  }
+
+  const [isExiting, setIsExiting] = useState(false);
+
+  useEffect(() => {
+    if (content === null && lastContentRef.current !== null) {
+      setIsExiting(true);
+      const timer = setTimeout(() => {
+        setIsExiting(false);
+        lastContentRef.current = null;
+      }, 220);
+      return () => clearTimeout(timer);
+    }
+    if (content !== null) {
+      setIsExiting(false);
+    }
+  }, [content]);
+
+  const activeNode = content ?? (isExiting ? lastContentRef.current : null);
+  const isOpen = content !== null;
+
+  return (
+    <div className="activity-card-expand" data-open={isOpen ? 'true' : 'false'}>
+      <div className="activity-card-expand-inner">
+        {activeNode}
+      </div>
     </div>
   );
 }
 
 /**
- * The profile popout's activity card: the full rich presence view. Shows the
- * headline, the details/state lines, a live elapsed/countdown time line and
- * the asset images — the large image with the small badge overlay — when the
- * push carried them. Art is rendered only for remote http(s) URLs and each
- * image hides itself when it fails to load, matching the row treatment.
+ * The rich card showing activity details — headline, details, state,
+ * running time, and the large image with the small badge overlay.
  */
 export function ActivityDetailCard({ activities }: { activities: Activity[] }) {
   useEmojiShortcodeNames();
@@ -237,15 +323,12 @@ export function ActivityDetailCard({ activities }: { activities: Activity[] }) {
   const { formatDuration } = useFormatters();
   const primary = getPrimaryActivity(activities);
 
-  // Hooks stay above the early returns below (Rules of Hooks)
   const hasTimer = !!primary && primary.type !== 'custom' &&
     (typeof primary.timestamps?.start === 'number' || typeof primary.timestamps?.end === 'number');
   const now = useNowTick(hasTimer);
 
   if (!primary || primary.type === 'custom') return null;
 
-  // The RPC wire format has no app name, so a push can arrive without one;
-  // its details then stand in as the headline.
   const headline = primary.name || primary.details;
   if (!headline) return null;
 
@@ -256,13 +339,18 @@ export function ActivityDetailCard({ activities }: { activities: Activity[] }) {
   const moreGames = otherGamesCount(activities, primary);
 
   return (
-    <div className="flex gap-3 items-start">
+    <div className="flex gap-3 items-start transition-all duration-200">
       <ActivityArtwork
         largeImage={largeImage}
         smallImage={smallImage}
         largeAlt={assets?.largeText || headline}
         smallAlt={assets?.smallText}
         size={POPOUT_ART}
+        placeholder={
+          <div className="w-[60px] h-[60px] rounded-[10px] bg-white/[0.06] flex items-center justify-center text-txt-secondary">
+            <AppIcon name={headline} type={primary.type} size={28} />
+          </div>
+        }
       />
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-1.5 min-w-0 text-[13px] font-medium leading-[1.3] text-txt-primary">
@@ -293,8 +381,7 @@ export function ActivityDetailCard({ activities }: { activities: Activity[] }) {
 
 /**
  * The full profile's list of everything the person is playing: one row per
- * game with its icon and its own running time, in the order the person set
- * (the first is the one the lists show).
+ * game with its icon and its own running time.
  */
 export function ProfileGamesList({ activities }: { activities: Activity[] }) {
   useEmojiShortcodeNames();
