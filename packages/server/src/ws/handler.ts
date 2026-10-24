@@ -385,8 +385,9 @@ class ConnectionManager implements ReplicaSessionHost {
 
   /** The per-session state a user's last disconnect drops. */
   private forgetSessionState(userId: string): void {
-    this.userActivities.delete(userId);
-    this.activityObservedAt.delete(userId);
+    // userActivities / activityObservedAt are not session state: a native user's
+    // were already cleared by finalizeDisconnect, and a replicated user's are
+    // what the home relayed, which must outlive a session here.
     this.activityWs.delete(userId);
     this.userShowActivity.delete(userId);
     this.userStatuses.delete(userId);
