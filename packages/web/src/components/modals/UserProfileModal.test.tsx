@@ -76,10 +76,12 @@ describe('UserProfileModal', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText('Playing now')).toBeInTheDocument();
+    // One card per game, each headed by the activity type (the old single
+    // "Playing now" section header was replaced by ProfileActivities).
+    expect(screen.getAllByText('Playing a Game')).toHaveLength(2);
     expect(screen.getByText('Honkai: Star Rail')).toBeInTheDocument();
     expect(screen.getByText('Stardew Valley')).toBeInTheDocument();
-    expect(document.querySelectorAll('li .tabular-nums')).toHaveLength(2);
+    expect(document.querySelectorAll('.tabular-nums')).toHaveLength(2);
   });
 
   it('Add Friend on a federated user sends their home identity, not only the stub username (issue #339)', async () => {
